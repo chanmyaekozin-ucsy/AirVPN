@@ -141,6 +141,26 @@ class PanelClient:
         expiry_days: int,
         remark: str | None = None,
     ) -> tuple[str, str, str]:
+        try:
+            return await self._add_or_update_client_once(
+                email, telegram_id, total_bytes, expiry_days, remark
+            )
+        except PanelError as exc:
+            if not self._is_duplicate_email_error(str(exc)):
+                raise
+            await self._purge_orphan_client(email)
+            return await self._add_or_update_client_once(
+                email, telegram_id, total_bytes, expiry_days, remark
+            )
+
+    async def _add_or_update_client_once(
+        self,
+        email: str,
+        telegram_id: int,
+        total_bytes: int,
+        expiry_days: int,
+        remark: str | None = None,
+    ) -> tuple[str, str, str]:
         inbound = await self.get_inbound()
         settings = json.loads(inbound["settings"])
         stream = json.loads(inbound["streamSettings"])
@@ -165,10 +185,9 @@ class PanelClient:
             existing["enable"] = True
             client_uuid = existing["id"]
         else:
-            # Reuse UUID from panel traffic stats when the client was removed
-            # from inbound settings but still exists in client_traffics (avoids
-            # UNIQUE constraint failed: client_traffics.email).
-            client_uuid = self._uuid_for_email(inbound, email) or str(uuid.uuid4())
+            client_uuid = await self._resolve_client_uuid(inbound, email, clients)
+            if not client_uuid:
+                client_uuid = str(uuid.uuid4())
             clients.append(
                 {
                     "id": client_uuid,
@@ -215,6 +234,11 @@ class PanelClient:
         return client_uuid, email, vless_key
 
     @staticmethod
+    def _is_duplicate_email_error(message: str) -> bool:
+        lowered = message.lower()
+        return "unique constraint" in lowered and "client_traffics.email" in lowered
+
+    @staticmethod
     def _uuid_for_email(inbound: dict[str, Any], email: str) -> str | None:
         for stat in inbound.get("clientStats") or []:
             if stat.get("email") == email:
@@ -223,7 +247,41 @@ class PanelClient:
                     return str(uid)
         return None
 
-    async def get_client_traffic_bytes(self, email: str) -> int | None:
+    async def _resolve_client_uuid(
+        self,
+        inbound: dict[str, Any],
+        email: str,
+        clients: list[dict],
+    ) -> str | None:
+        existing = next((c for c in clients if c.get("email") == email), None)
+        if existing and existing.get("id"):
+            return str(existing["id"])
+
+        uid = self._uuid_for_email(inbound, email)
+        if uid:
+            return uid
+
+        traffic = await self.get_client_traffic_record(email)
+        if traffic:
+            for key in ("id", "uuid", "clientId"):
+                if traffic.get(key):
+                    return str(traffic[key])
+        return None
+
+    async def _purge_orphan_client(self, email: str) -> None:
+        inbound = await self.get_inbound()
+        client_uuid = await self._resolve_client_uuid(
+            inbound, email, json.loads(inbound["settings"]).get("clients", [])
+        )
+        if client_uuid and await self.delete_client(email, client_uuid):
+            return
+        if await self.delete_client_by_email(email):
+            return
+        raise PanelError(
+            f"Could not remove orphaned panel client {email!r}; delete it in 3x-ui"
+        )
+
+    async def get_client_traffic_record(self, email: str) -> dict[str, Any] | None:
         await self._ensure_login()
         encoded = quote(email, safe="")
         resp = await self._client.get(
@@ -232,8 +290,31 @@ class PanelClient:
         body = resp.json()
         if not body.get("success"):
             return None
-        obj = body.get("obj") or {}
-        return int(obj.get("up") or 0) + int(obj.get("down") or 0)
+        obj = body.get("obj")
+        if isinstance(obj, dict):
+            return obj
+        if isinstance(obj, list):
+            for item in obj:
+                if isinstance(item, dict) and item.get("email") == email:
+                    return item
+            return obj[0] if obj and isinstance(obj[0], dict) else None
+        return None
+
+    async def get_client_traffic_bytes(self, email: str) -> int | None:
+        record = await self.get_client_traffic_record(email)
+        if not record:
+            return None
+        return int(record.get("up") or 0) + int(record.get("down") or 0)
+
+    async def delete_client_by_email(self, email: str) -> bool:
+        await self._ensure_login()
+        inbound_id = self.server.panel_inbound_id
+        encoded = quote(email, safe="")
+        resp = await self._client.post(
+            f"{self.base}/panel/api/inbounds/{inbound_id}/delClientByEmail/{encoded}"
+        )
+        body = resp.json()
+        return bool(body.get("success"))
 
     async def delete_client(self, email: str, client_uuid: str) -> bool:
         await self._ensure_login()
