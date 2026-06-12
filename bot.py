@@ -64,7 +64,7 @@ def main() -> None:
     app.add_handler(TypeHandler(Update, _log_update, block=False), group=-1)
 
     for handler in build_group_payment_handlers():
-        app.add_handler(handler, group=0)
+        app.add_handler(handler, group=-1)
     for handler in build_admin_handlers():
         app.add_handler(handler, group=0)
     for handler in build_user_handlers():

@@ -9,7 +9,7 @@ from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, fil
 import config
 import database as db
 from handlers.keyboards import is_admin
-from locales import t, t_plain
+from locales import t
 from services.payment_approve import approve_and_deliver
 from services.payment_proofs import update_payment_proof
 from utils.formatting import PARSE_MODE, md2
@@ -34,11 +34,25 @@ def _parse_proof_payment_id(data: str, prefix: str) -> int | None:
     return int(tail)
 
 
-def _in_proofs_group(update: Update) -> bool:
-    if not config.PAYMENTS_PROOFS_GROUP_ID:
-        return True
+async def _answer_callback(query, text: str | None = None, *, alert: bool = False) -> None:
+    """Telegram requires answer() within ~10s or the button stays on Loading."""
+    try:
+        if alert:
+            await query.answer(text or "…", show_alert=True)
+        elif text:
+            await query.answer(text)
+        else:
+            await query.answer()
+    except Exception:
+        logger.exception("callback answer failed for data=%r", query.data)
+
+
+def _callback_chat_id(update: Update) -> int | None:
+    query = update.callback_query
+    if query and query.message:
+        return query.message.chat_id
     chat = update.effective_chat
-    return bool(chat and chat.id == config.PAYMENTS_PROOFS_GROUP_ID)
+    return chat.id if chat else None
 
 
 async def proof_payment_callback(
@@ -47,37 +61,31 @@ async def proof_payment_callback(
     query = update.callback_query
     if not query:
         return
-    if not _in_proofs_group(update):
-        return
 
-    user = update.effective_user
-    if not user or not is_admin(user.id):
-        try:
-            await query.answer(t_plain("my", "access_denied"), show_alert=True)
-        except Exception:
-            logger.exception("proof_ok access_denied answer failed")
-        return
+    chat_id = _callback_chat_id(update)
+    logger.info(
+        "proof_ok callback data=%r user=%s chat=%s",
+        query.data,
+        update.effective_user.id if update.effective_user else "?",
+        chat_id,
+    )
 
     payment_id = _parse_proof_payment_id(query.data or "", "proof_ok_")
     if payment_id is None:
-        try:
-            await query.answer("Invalid payment button", show_alert=True)
-        except Exception:
-            logger.exception("proof_ok invalid answer failed")
+        await _answer_callback(query, "Invalid payment button", alert=True)
+        return
+
+    await _answer_callback(query, "Approving payment…")
+
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        await query.message.reply_text("Access denied.")
         return
 
     payment = await db.get_payment(payment_id)
     if not payment or payment["status"] != "pending":
-        try:
-            await query.answer("Already processed", show_alert=True)
-        except Exception:
-            logger.exception("proof_ok processed answer failed")
+        await query.message.reply_text("Payment already processed.")
         return
-
-    try:
-        await query.answer("Approving payment…")
-    except Exception:
-        logger.exception("proof_ok answer failed for payment %s", payment_id)
 
     logger.info("Group approve payment #%s by admin %s", payment_id, user.id)
 
@@ -115,44 +123,47 @@ async def proof_reject_callback(
     query = update.callback_query
     if not query:
         return
-    if not _in_proofs_group(update):
-        return
 
-    user = update.effective_user
-    if not user or not is_admin(user.id):
-        try:
-            await query.answer(t_plain("my", "access_denied"), show_alert=True)
-        except Exception:
-            logger.exception("proof_no access_denied answer failed")
-        return
+    chat_id = _callback_chat_id(update)
+    logger.info(
+        "proof_no callback data=%r user=%s chat=%s",
+        query.data,
+        update.effective_user.id if update.effective_user else "?",
+        chat_id,
+    )
 
     payment_id = _parse_proof_payment_id(query.data or "", "proof_no_")
     if payment_id is None:
-        try:
-            await query.answer("Invalid payment button", show_alert=True)
-        except Exception:
-            logger.exception("proof_no invalid answer failed")
+        await _answer_callback(query, "Invalid payment button", alert=True)
+        return
+
+    await _answer_callback(query)
+
+    user = update.effective_user
+    if not user or not is_admin(user.id):
+        await query.message.reply_text("Access denied.")
         return
 
     payment = await db.get_payment(payment_id)
     if not payment or payment["status"] != "pending":
-        try:
-            await query.answer("Already processed", show_alert=True)
-        except Exception:
-            logger.exception("proof_no processed answer failed")
+        await query.message.reply_text("Payment already processed.")
         return
-
-    try:
-        await query.answer()
-    except Exception:
-        logger.exception("proof_no answer failed for payment %s", payment_id)
 
     logger.info("Group reject payment #%s by admin %s", payment_id, user.id)
     context.chat_data["group_reject_payment_id"] = payment_id
+    context.user_data["group_reject_payment_id"] = payment_id
     lang = await _lang(update)
-    await query.message.reply_text(
-        t(lang, "admin_reject_reason_group", payment_id=payment_id)
-    )
+    try:
+        await query.message.reply_text(
+            t(lang, "admin_reject_reason_group", payment_id=payment_id)
+        )
+    except Exception:
+        logger.exception("proof_no prompt failed for payment %s", payment_id)
+        await context.bot.send_message(
+            chat_id=query.message.chat_id,
+            text=t(lang, "admin_reject_reason_group", payment_id=payment_id),
+            reply_to_message_id=query.message.message_id,
+        )
 
 
 async def group_reject_reason(
@@ -160,6 +171,8 @@ async def group_reject_reason(
 ) -> None:
     """Capture rejection reason typed in the proofs group."""
     payment_id = context.chat_data.get("group_reject_payment_id")
+    if not payment_id:
+        payment_id = context.user_data.get("group_reject_payment_id")
     if not payment_id:
         return
 
@@ -169,6 +182,7 @@ async def group_reject_reason(
 
     reason = (update.message.text or "").strip() or "—"
     context.chat_data.pop("group_reject_payment_id", None)
+    context.user_data.pop("group_reject_payment_id", None)
 
     await reject_payment_from_group(
         update.get_bot(), payment_id, user.id, reason
