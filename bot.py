@@ -38,13 +38,16 @@ async def on_error(update: object, context) -> None:
 
 
 async def _log_update(update: Update, context) -> None:
+    user = update.effective_user
+    uid = user.id if user else "?"
     if update.callback_query:
-        user = update.effective_user
         logger.info(
             "Update callback_query data=%r user=%s",
             update.callback_query.data,
-            user.id if user else "?",
+            uid,
         )
+    elif update.message and update.message.text:
+        logger.info("Update message text=%r user=%s", update.message.text, uid)
 
 
 def main() -> None:

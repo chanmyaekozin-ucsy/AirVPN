@@ -161,6 +161,7 @@ async def _guard(update: Update, context: ContextTypes.DEFAULT_TYPE | None = Non
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
+    _clear_payment_flow(context)
     user = update.effective_user
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = row["language"]
@@ -981,5 +982,5 @@ def build_user_handlers() -> list:
         MessageHandler(filters.Regex("^Admin$"), admin_panel),
         MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
         MessageHandler(filters.PHOTO, receipt_photo),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, receipt_tx_id),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, receipt_tx_id, block=False),
     ]

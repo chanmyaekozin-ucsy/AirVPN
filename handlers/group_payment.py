@@ -132,6 +132,15 @@ async def group_reject_reason(
     await update.message.reply_text(f"Payment #{payment_id} rejected.")
 
 
+def _proofs_group_text_filter():
+    """Only the proofs group — never match private-chat menu button presses."""
+    base = filters.TEXT & ~filters.COMMAND
+    gid = config.PAYMENTS_PROOFS_GROUP_ID
+    if gid:
+        return base & filters.Chat(gid)
+    return base & filters.ChatType.GROUPS
+
+
 async def reject_payment_from_group(
     bot,
     payment_id: int,
@@ -166,9 +175,5 @@ def build_group_payment_handlers() -> list:
     return [
         CallbackQueryHandler(proof_payment_callback, pattern="^proof_ok_"),
         CallbackQueryHandler(proof_reject_callback, pattern="^proof_no_"),
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            group_reject_reason,
-            block=False,
-        ),
+        MessageHandler(_proofs_group_text_filter(), group_reject_reason),
     ]
