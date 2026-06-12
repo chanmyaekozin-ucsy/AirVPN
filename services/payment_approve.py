@@ -8,7 +8,7 @@ from telegram import Bot
 import database as db
 from locales import t
 from utils.formatting import md2
-from utils.vless_delivery import deliver_vless_key
+from utils.vless_delivery import deliver_vpn_access
 from vps.panel_client import PanelError, provision_vless
 
 logger = logging.getLogger(__name__)
@@ -67,10 +67,11 @@ async def approve_and_deliver(
             days=payment["duration_days"],
         )
         sub = await db.get_subscription_by_payment_id(payment_id)
-        await deliver_vless_key(
+        await deliver_vpn_access(
             bot=bot,
             chat_id=payment["telegram_id"],
             lang=u_lang,
+            user=user_row,
             vless_key=vless_key,
             prefix_text=summary,
             sub_id=sub["id"] if sub else None,

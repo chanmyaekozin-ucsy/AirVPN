@@ -11,7 +11,6 @@ from telegram import (
     ReplyKeyboardMarkup,
 )
 from telegram.ext import filters
-from telegram.ext import filters
 
 import config
 from locales import t
@@ -333,6 +332,33 @@ def vless_download_keyboard(lang: str) -> InlineKeyboardMarkup:
     return vpn_app_links_keyboard(lang)
 
 
+def subscription_link_keyboard(
+    lang: str, sub_url: str, user_id: int | None = None
+) -> InlineKeyboardMarkup:
+    """Copy subscription URL + VPN app download links."""
+    rows: list[list[InlineKeyboardButton]] = []
+    if len(sub_url) <= MAX_COPY_TEXT:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "sub_copy_hint"),
+                    copy_text=CopyTextButton(text=sub_url),
+                )
+            ]
+        )
+    elif user_id is not None:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "sub_copy_hint"),
+                    callback_data=f"sub_{user_id}",
+                )
+            ]
+        )
+    rows.extend(vless_download_keyboard(lang).inline_keyboard)
+    return InlineKeyboardMarkup(rows)
+
+
 def vless_key_keyboard(
     lang: str, vless_key: str, sub_id: int | None = None
 ) -> InlineKeyboardMarkup:
@@ -363,3 +389,16 @@ def vless_key_keyboard(
 def vless_copy_keyboard(lang: str, vless_key: str) -> InlineKeyboardMarkup:
     """Legacy alias."""
     return vless_key_keyboard(lang, vless_key)
+
+
+def raw_vless_key_keyboard(lang: str, sub_id: int) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "sub_raw_key_hint"),
+                    callback_data=f"vk_{sub_id}",
+                )
+            ]
+        ]
+    )

@@ -38,7 +38,12 @@ from services.usage_sync import sync_subscriptions_usage
 from utils.formatting import PARSE_MODE, md2, md2_code
 from utils.rate_limit import allow as rate_allow
 from utils.security import validate_language
-from utils.vless_delivery import deliver_vless_key
+from services.subscription import subscription_limit_gb, user_subscription_url
+from utils.vless_delivery import (
+    deliver_subscription_link,
+    deliver_vless_key,
+    deliver_vpn_access,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +54,7 @@ WAITING_TX_ID = "waiting_tx_id"
 USER_CALLBACK_PATTERN = (
     r"^(buy_plan|back_main|cancel|copy_vless_key|"
     r"dl_menu|dl_android|dl_ios|dl_android_key|dl_ios_key|"
-    r"plan_\d+|acct_\d+_\d+|vk_\d+)$"
+    r"plan_\d+|acct_\d+_\d+|vk_\d+|sub_\d+)$"
 )
 
 
@@ -68,13 +73,8 @@ async def _owned_pending_payment(payment_id: int, user_row: dict) -> dict | None
     return payment
 
 
-def _subscription_limit_gb(sub: dict) -> float:
-    bonus_gb = sub.get("bonus_data_mb", 0) / 1024
-    return sub["data_limit_gb"] + bonus_gb
-
-
 def _sub_key_summary(lang: str, sub: dict, paid_index: int | None) -> str:
-    limit_gb = _subscription_limit_gb(sub)
+    limit_gb = subscription_limit_gb(sub)
     used_gb = md2(f"{sub['data_used_gb']:.2f}")
     limit = md2(f"{limit_gb:.2f}")
     expires = md2(sub["expires_at"][:10])
@@ -91,23 +91,44 @@ def _sub_key_summary(lang: str, sub: dict, paid_index: int | None) -> str:
     )
 
 
-async def _send_all_keys(message, lang: str, subs: list) -> None:
+async def _send_all_keys(message, lang: str, subs: list, user_row: dict) -> None:
+    sub_url = user_subscription_url(user_row)
+    title_key = "my_keys_sub_title" if sub_url else "my_keys_title"
     await message.reply_text(
-        t(lang, "my_keys_title", count=len(subs)),
+        t(lang, title_key, count=len(subs)),
         parse_mode=PARSE_MODE,
     )
+
+    if sub_url:
+        await deliver_subscription_link(
+            message=message,
+            lang=lang,
+            sub_url=sub_url,
+            user_id=user_row["id"],
+        )
+        await message.reply_text(t(lang, "sub_usage_note"), parse_mode=PARSE_MODE)
+
     paid_n = 0
     for sub in subs:
         if not sub.get("is_free"):
             paid_n += 1
         prefix = _sub_key_summary(lang, sub, paid_n if not sub.get("is_free") else None)
-        await deliver_vless_key(
-            message=message,
-            lang=lang,
-            vless_key=sub["vless_key"],
-            prefix_text=prefix,
-            sub_id=sub["id"],
-        )
+        if sub_url:
+            from handlers.keyboards import raw_vless_key_keyboard
+
+            await message.reply_text(
+                prefix,
+                parse_mode=PARSE_MODE,
+                reply_markup=raw_vless_key_keyboard(lang, sub["id"]),
+            )
+        else:
+            await deliver_vless_key(
+                message=message,
+                lang=lang,
+                vless_key=sub["vless_key"],
+                prefix_text=prefix,
+                sub_id=sub["id"],
+            )
 
 
 async def _lang(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
@@ -178,10 +199,8 @@ async def daily_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         + t(lang, "daily_free_note")
     )
 
-    vless_key = None
     vpn = await sync_free_vpn_after_claim(row["id"], user.id, result["mb"])
-    if vpn.get("provisioned") and vpn.get("vless_key"):
-        vless_key = vpn["vless_key"]
+    if vpn.get("provisioned"):
         text += "\n\n" + t(lang, "daily_free_key")
     elif vpn.get("error"):
         text += "\n\n" + t(lang, "daily_key_error")
@@ -191,12 +210,13 @@ async def daily_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         parse_mode=PARSE_MODE,
         **admin_contact_reply_kwargs(lang) if vpn.get("error") else {},
     )
-    if vless_key:
+    if vpn.get("provisioned"):
         free_sub = await db.get_active_free_subscription(row["id"])
-        await deliver_vless_key(
+        await deliver_vpn_access(
             message=update.message,
             lang=lang,
-            vless_key=vless_key,
+            user=row,
+            vless_key=vpn.get("vless_key"),
             sub_id=free_sub["id"] if free_sub else None,
         )
 
@@ -217,7 +237,7 @@ async def my_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         logger.warning("Usage sync timed out for user %s", row["id"])
     except Exception:
         logger.exception("Usage sync failed for user %s", row["id"])
-    await _send_all_keys(update.message, lang, subs)
+    await _send_all_keys(update.message, lang, subs, row)
 
 
 async def download_apps_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -591,9 +611,30 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if subs:
             subs = await sync_subscriptions_usage(subs)
             await query.answer()
-            await _send_all_keys(query.message, lang, subs)
+            await _send_all_keys(query.message, lang, subs, row)
         else:
             await query.answer(t_plain(lang, "no_subscription"), show_alert=True)
+        return
+
+    if data.startswith("sub_"):
+        try:
+            user_id = int(data[4:])
+        except ValueError:
+            return
+        if user_id != row["id"]:
+            await query.answer(t_plain(lang, "no_subscription"), show_alert=True)
+            return
+        sub_url = user_subscription_url(row)
+        if not sub_url:
+            await query.answer(t_plain(lang, "no_subscription"), show_alert=True)
+            return
+        await query.answer()
+        await deliver_subscription_link(
+            message=query.message,
+            lang=lang,
+            sub_url=sub_url,
+            user_id=row["id"],
+        )
         return
 
     if data.startswith("vk_"):

@@ -73,6 +73,12 @@ UNLIMITED_PLAN_DAYS: int = int(os.getenv("UNLIMITED_PLAN_DAYS", "36500"))
 # Myanmar timezone offset (UTC+6:30)
 MMT_OFFSET_HOURS: float = 6.5
 
+# Per-user VPN subscription URL (v2rayNG / Hiddify auto-update + usage display)
+SUB_PUBLIC_BASE_URL: str = os.getenv("SUB_PUBLIC_BASE_URL", "").rstrip("/")
+SUB_SERVER_HOST: str = os.getenv("SUB_SERVER_HOST", "0.0.0.0")
+SUB_SERVER_PORT: int = int(os.getenv("SUB_SERVER_PORT", "8080"))
+SUB_ENABLED: bool = bool(SUB_PUBLIC_BASE_URL)
+
 # ─── KBZPay auto-verify ───────────────────────────────────────────────────────
 KBZ_AUTO_VERIFY: bool = os.getenv("KBZ_AUTO_VERIFY", "true").lower() in (
     "1",

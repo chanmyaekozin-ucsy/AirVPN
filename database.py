@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, AsyncIterator, Optional
@@ -19,6 +20,10 @@ def mmt_now() -> datetime:
 
 def mmt_today() -> str:
     return mmt_now().strftime("%Y-%m-%d")
+
+
+def new_sub_token() -> str:
+    return secrets.token_urlsafe(24)
 
 
 @asynccontextmanager
@@ -174,6 +179,25 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
                    VALUES ('အခမဲ့ နေ့စဉ်', 0, 0, 1, 1, 1, 0)"""
             )
 
+    async with db.execute("PRAGMA table_info(users)") as cur:
+        user_cols = {r[1] for r in await cur.fetchall()}
+    if "sub_token" not in user_cols:
+        await db.execute(
+            "ALTER TABLE users ADD COLUMN sub_token TEXT"
+        )
+        await db.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_sub_token ON users(sub_token)"
+        )
+        async with db.execute(
+            "SELECT id FROM users WHERE sub_token IS NULL OR sub_token = ''"
+        ) as cur:
+            rows = await cur.fetchall()
+        for row in rows:
+            await db.execute(
+                "UPDATE users SET sub_token = ? WHERE id = ?",
+                (new_sub_token(), row[0]),
+            )
+
 
 # ─── Users ───────────────────────────────────────────────────────────────────
 
@@ -188,17 +212,39 @@ async def get_or_create_user(
         ) as cur:
             row = await cur.fetchone()
         if row:
-            return dict(row)
+            user = dict(row)
+            if not user.get("sub_token"):
+                token = new_sub_token()
+                await db.execute(
+                    "UPDATE users SET sub_token = ? WHERE id = ?",
+                    (token, user["id"]),
+                )
+                await db.commit()
+                user["sub_token"] = token
+            return user
+        token = new_sub_token()
         await db.execute(
-            """INSERT INTO users (telegram_id, username, first_name, language)
-               VALUES (?, ?, ?, 'my')""",
-            (telegram_id, username, first_name),
+            """INSERT INTO users (telegram_id, username, first_name, language, sub_token)
+               VALUES (?, ?, ?, 'my', ?)""",
+            (telegram_id, username, first_name, token),
         )
         await db.commit()
         async with db.execute(
             "SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)
         ) as cur:
             return dict(await cur.fetchone())
+
+
+async def get_user_by_sub_token(sub_token: str) -> dict[str, Any] | None:
+    token = (sub_token or "").strip()
+    if not token:
+        return None
+    async with _db() as db:
+        async with db.execute(
+            "SELECT * FROM users WHERE sub_token = ?", (token,)
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
 
 
 async def set_user_language(telegram_id: int, language: str) -> None:

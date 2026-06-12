@@ -112,6 +112,36 @@ STRINGS: dict[str, dict[str, str]] = {
         "my": "<b>အခမဲ့ VPN Key (VLESS)</b>",
         "en": "<b>Your free VPN key (VLESS)</b>",
     },
+    "sub_link_header": {
+        "my": (
+            "<b>VPN Subscription Link</b>\n\n"
+            "အောက်က လင့်ခ်ကို v2rayNG / Hiddify မှာ <b>Subscription</b> အဖြစ် ထည့်ပါ။\n"
+            "ဒေတာကျ량နဲ့ သက်တမ်းကို App ထဲမှာ တိုက်ရိုက် ကြည့်နိုင်ပါတယ်။"
+        ),
+        "en": (
+            "<b>VPN Subscription Link</b>\n\n"
+            "Add the link below in v2rayNG / Hiddify as a <b>Subscription</b>.\n"
+            "Your app will show remaining data and expiry automatically."
+        ),
+    },
+    "sub_copy_hint": {
+        "my": "Subscription Link ကူးမည်",
+        "en": "Copy subscription link",
+    },
+    "sub_usage_note": {
+        "my": (
+            "<i>Key တစ်ခုချင်းစီရဲ့ အသုံးပြုမှု — Subscription ထဲမှာ App က "
+            "ဒေတာကျ량/သက်တမ်း ပြပေးပါလိမ့်မယ်။</i>"
+        ),
+        "en": (
+            "<i>Per-key usage below — your VPN app reads data left and expiry "
+            "from the subscription link.</i>"
+        ),
+    },
+    "sub_raw_key_hint": {
+        "my": "ကိုယ်တိုင် Key ထည့်ချင်ရင် အောက်က ခလုတ်ကို နှိပ်ပါ",
+        "en": "Tap below if you need the raw VLESS key instead",
+    },
     "daily_key_error": {
         "my": (
             "စနစ်ချို့ယွင်းချက်ကြောင့် VPN Key ထုတ်ပေးလို့ မရသေးပါဘူးခင်ဗျာ။ "
@@ -313,6 +343,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "my_keys_title": {
         "my": "<b>ကျွန်ုပ်၏ VPN Key များ</b> ({count} ခု)",
         "en": "<b>My VPN Key(s)</b> ({count})",
+    },
+    "my_keys_sub_title": {
+        "my": "<b>ကျွန်ုပ်၏ VPN Subscription</b> ({count} key)",
+        "en": "<b>My VPN Subscription</b> ({count} key(s))",
     },
     "my_key_paid": {
         "my": (
