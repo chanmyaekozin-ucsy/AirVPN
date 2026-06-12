@@ -60,12 +60,12 @@ def main() -> None:
     app.add_error_handler(on_error)
     app.add_handler(TypeHandler(Update, _log_update, block=False), group=-1)
 
+    for handler in build_group_payment_handlers():
+        app.add_handler(handler, group=0)
     for handler in build_admin_handlers():
         app.add_handler(handler, group=0)
     for handler in build_user_handlers():
         app.add_handler(handler, group=0)
-    for handler in build_group_payment_handlers():
-        app.add_handler(handler, group=1)
 
     logger.info("AirVPN bot starting…")
     app.run_polling(drop_pending_updates=True)

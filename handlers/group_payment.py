@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 
 from telegram import Update
-from telegram.ext import CallbackQueryHandler, ContextTypes
+from telegram.ext import CallbackQueryHandler, ContextTypes, ConversationHandler
 
 import database as db
 from handlers.keyboards import is_admin
@@ -40,7 +40,6 @@ async def proof_payment_callback(
     lang = await _lang(update)
 
     if data.startswith("proof_ok_"):
-        await query.answer()
         payment_id = int(data.split("_")[2])
         payment = await db.get_payment(payment_id)
         if not payment or payment["status"] != "pending":
@@ -56,7 +55,7 @@ async def proof_payment_callback(
         )
         if not ok:
             logger.error("Group approve failed for payment %s: %s", payment_id, msg)
-            await query.answer("Approval failed. Check server logs.", show_alert=True)
+            await query.answer(f"Approval failed: {msg}", show_alert=True)
             return
 
         await update_payment_proof(
@@ -65,6 +64,7 @@ async def proof_payment_callback(
             "approved",
             note=f"By admin {user.id}",
         )
+        await query.answer(f"Payment #{payment_id} approved.")
         return
 
 REJECT_REASON = 1
@@ -78,16 +78,18 @@ async def proof_reject_entry(
     if not query or not query.data:
         return REJECT_REASON
 
-    await query.answer()
     user = update.effective_user
     if not user or not is_admin(user.id):
-        return REJECT_REASON
+        await query.answer(t_plain("my", "access_denied"), show_alert=True)
+        return ConversationHandler.END
 
     payment_id = int(query.data.split("_")[2])
     payment = await db.get_payment(payment_id)
     if not payment or payment["status"] != "pending":
         await query.answer("Already processed", show_alert=True)
-        return REJECT_REASON
+        return ConversationHandler.END
+
+    await query.answer()
 
     context.user_data["reject_payment_id"] = payment_id
     lang = await _lang(update)

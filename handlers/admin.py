@@ -644,6 +644,7 @@ def build_admin_handlers() -> list:
         fallbacks=[CommandHandler("cancel", notify_cancel)],
         per_chat=True,
         per_user=True,
+        per_message=True,
     )
 
     ban_conv = ConversationHandler(

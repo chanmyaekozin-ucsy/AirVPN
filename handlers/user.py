@@ -49,6 +49,7 @@ logger = logging.getLogger(__name__)
 
 WAITING_RECEIPT = "waiting_receipt"
 WAITING_TX_ID = "waiting_tx_id"
+TX_ID_RE = re.compile(r"^\d{20}$")
 
 # User callbacks (lang_* handled by language_callback).
 USER_CALLBACK_PATTERN = (
@@ -863,9 +864,11 @@ async def receipt_tx_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     trans_id = (update.message.text or "").strip()
-    if not trans_id:
+    if not TX_ID_RE.fullmatch(trans_id):
         await update.message.reply_text(t(lang, "pay_ask_tx_id"), parse_mode=PARSE_MODE)
         return
+
+    await db.try_claim_tx_id(payment_id, trans_id)
 
     if not rate_allow(
         f"kbz:{user.id}",
@@ -970,7 +973,7 @@ def build_user_handlers() -> list:
         MessageHandler(menu_text_filter("menu_buy"), buy_plan_message),
         MessageHandler(menu_text_filter("back"), back_to_main),
         MessageHandler(filters.Regex("^Admin$"), admin_panel),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
         MessageHandler(filters.PHOTO, receipt_photo),
         MessageHandler(filters.TEXT & ~filters.COMMAND, receipt_tx_id),
     ]
