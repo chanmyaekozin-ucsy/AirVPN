@@ -175,41 +175,52 @@ async def daily_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = row["language"]
 
-    if not rate_allow(
-        f"daily:{user.id}",
-        max_calls=config.RATE_DAILY_CLAIM_PER_DAY,
-        window_sec=86400,
-    ):
-        await update.message.reply_text(t(lang, "rate_limited"))
+    preview = await db.preview_daily_gift(row["id"])
+    if preview.get("reason") == "no_user":
         return
 
-    result = await db.claim_daily_gift(row["id"])
-    if not result["ok"]:
+    free_sub = await db.get_active_free_subscription(row["id"])
+    recovery = (
+        not preview["ok"]
+        and preview.get("reason") == "already_claimed"
+        and not free_sub
+    )
+
+    if not preview["ok"] and not recovery:
         await update.message.reply_text(t(lang, "daily_already"))
         return
 
-    text = (
-        t(
-            lang,
-            "daily_claimed",
-            mb=result["mb"],
-            streak=result["streak"],
-        )
-        + "\n\n"
-        + t(lang, "daily_free_note")
-    )
+    mb = preview["mb"]
+    streak = preview["streak"]
 
-    vpn = await sync_free_vpn_after_claim(row["id"], user.id, result["mb"])
+    vpn = await sync_free_vpn_after_claim(row["id"], user.id, mb)
+    if vpn.get("error"):
+        await update.message.reply_text(
+            t(lang, "daily_key_error"),
+            parse_mode=PARSE_MODE,
+            **admin_contact_reply_kwargs(lang),
+        )
+        return
+
+    if not recovery:
+        result = await db.claim_daily_gift(row["id"])
+        if not result["ok"]:
+            await update.message.reply_text(t(lang, "daily_already"))
+            return
+
+    if recovery:
+        text = t(lang, "daily_key_recovered", mb=mb, streak=streak)
+    else:
+        text = (
+            t(lang, "daily_claimed", mb=mb, streak=streak)
+            + "\n\n"
+            + t(lang, "daily_free_note")
+        )
+
     if vpn.get("provisioned"):
         text += "\n\n" + t(lang, "daily_free_key")
-    elif vpn.get("error"):
-        text += "\n\n" + t(lang, "daily_key_error")
 
-    await update.message.reply_text(
-        text,
-        parse_mode=PARSE_MODE,
-        **admin_contact_reply_kwargs(lang) if vpn.get("error") else {},
-    )
+    await update.message.reply_text(text, parse_mode=PARSE_MODE)
     if vpn.get("provisioned"):
         free_sub = await db.get_active_free_subscription(row["id"])
         await deliver_vpn_access(

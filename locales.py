@@ -149,6 +149,18 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "en": "Could not generate VPN key. Try again later or contact admin.",
     },
+    "daily_key_recovered": {
+        "my": (
+            "<b>VPN Key ပြန်ထုတ်ပေးလိုက်ပါပြီနော်။</b>\n\n"
+            "ဒီနေ့အတွက် ဒေတာ: <b>{mb} MB</b>\n"
+            "ရက်ဆက် ရယူမှု: <b>{streak} ရက်မြောက်</b>"
+        ),
+        "en": (
+            "<b>Your VPN key is ready.</b>\n\n"
+            "Today's data: <b>{mb} MB</b>\n"
+            "Streak: <b>{streak} days</b>"
+        ),
+    },
     "servers_title": {
         "my": "<b>ဆာဗာ တည်နေရာ ရွေးချယ်ပါ</b>",
         "en": "<b>Choose Server</b>",

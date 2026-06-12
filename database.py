@@ -343,6 +343,39 @@ async def list_users_with_key_counts(
 
 # ─── Daily gift ──────────────────────────────────────────────────────────────
 
+def _daily_gift_preview(user: aiosqlite.Row | dict[str, Any]) -> dict[str, Any]:
+    """Compute today's gift without writing. Used before VPN provisioning."""
+    today = mmt_today()
+    if user["last_daily_claim"] == today:
+        return {
+            "ok": False,
+            "reason": "already_claimed",
+            "mb": user["bonus_data_mb"],
+            "streak": user["daily_streak"],
+            "total_mb": user["bonus_data_mb"],
+        }
+
+    yesterday = (mmt_now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    streak = user["daily_streak"]
+    if user["last_daily_claim"] == yesterday:
+        streak = min(streak + 1, config.MAX_DAILY_STREAK)
+    else:
+        streak = 1
+
+    bonus_mb = config.DAILY_GIFT_MB
+    return {"ok": True, "mb": bonus_mb, "streak": streak, "total_mb": bonus_mb}
+
+
+async def preview_daily_gift(user_id: int) -> dict[str, Any]:
+    """Returns gift preview; ok=False with reason=already_claimed if claimed today."""
+    async with _db() as db:
+        async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cur:
+            user = await cur.fetchone()
+    if not user:
+        return {"ok": False, "reason": "no_user"}
+    return _daily_gift_preview(user)
+
+
 async def claim_daily_gift(user_id: int) -> dict[str, Any]:
     """Returns {'ok': bool, 'reason'?: str, 'mb'?: int, 'streak'?: int, 'total_mb'?: int}"""
     today = mmt_today()
@@ -351,31 +384,24 @@ async def claim_daily_gift(user_id: int) -> dict[str, Any]:
             user = await cur.fetchone()
         if not user:
             return {"ok": False, "reason": "no_user"}
-        if user["last_daily_claim"] == today:
-            return {"ok": False, "reason": "already_claimed"}
 
-        yesterday = (mmt_now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        streak = user["daily_streak"]
-        if user["last_daily_claim"] == yesterday:
-            streak = min(streak + 1, config.MAX_DAILY_STREAK)
-        else:
-            streak = 1
-
-        bonus_mb = config.DAILY_GIFT_MB
+        preview = _daily_gift_preview(user)
+        if not preview["ok"]:
+            return preview
 
         await db.execute(
             """UPDATE users SET last_daily_claim = ?, daily_streak = ?, bonus_data_mb = ?
                WHERE id = ?""",
-            (today, streak, bonus_mb, user_id),
+            (today, preview["streak"], preview["mb"], user_id),
         )
         # Reset daily bonus on paid subs (do not stack with previous claims)
         await db.execute(
             """UPDATE subscriptions SET bonus_data_mb = ?
                WHERE user_id = ? AND is_active = 1 AND is_free = 0""",
-            (bonus_mb, user_id),
+            (preview["mb"], user_id),
         )
         await db.commit()
-        return {"ok": True, "mb": bonus_mb, "streak": streak, "total_mb": bonus_mb}
+        return preview
 
 
 async def has_active_subscription(user_id: int) -> bool:
