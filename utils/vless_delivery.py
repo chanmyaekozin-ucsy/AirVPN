@@ -93,27 +93,27 @@ async def deliver_vless_key(
     if message is None and (bot is None or chat_id is None):
         raise ValueError("Provide message or bot+chat_id")
 
-    from handlers.keyboards import vless_key_keyboard
+    from handlers.keyboards import MAX_COPY_TEXT, vless_key_keyboard
 
-    markup = vless_key_keyboard(lang, vless_key, sub_id=sub_id)
+    can_copy = len(vless_key) <= MAX_COPY_TEXT
+    markup = vless_key_keyboard(lang, vless_key, sub_id=sub_id) if can_copy else None
 
-    if prefix_text:
+    if can_copy:
+        body = prefix_text or t_plain(lang, "key_copy_plain")
         if message:
             await message.reply_text(
-                prefix_text, parse_mode=PARSE_MODE, reply_markup=markup
+                body, parse_mode=PARSE_MODE, reply_markup=markup
             )
         else:
             await bot.send_message(
-                chat_id, prefix_text, parse_mode=PARSE_MODE, reply_markup=markup
+                chat_id, body, parse_mode=PARSE_MODE, reply_markup=markup
             )
-    else:
-        header = t_plain(lang, "key_copy_plain")
-        if message:
-            await message.reply_text(header, parse_mode=None, reply_markup=markup)
-        else:
-            await bot.send_message(chat_id, header, parse_mode=None, reply_markup=markup)
+        return
 
+    # Reality keys exceed Telegram's 256-char copy limit — show key to long-press copy.
+    header = prefix_text or t_plain(lang, "key_copy_plain")
+    body = f"{header}\n\n{vless_key}"
     if message:
-        await message.reply_text(vless_key, parse_mode=None)
+        await message.reply_text(body, parse_mode=PARSE_MODE)
     else:
-        await bot.send_message(chat_id, vless_key, parse_mode=None)
+        await bot.send_message(chat_id, body, parse_mode=PARSE_MODE)

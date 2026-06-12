@@ -119,7 +119,9 @@ async def _send_all_keys(message, lang: str, subs: list, user_row: dict) -> None
             await message.reply_text(
                 prefix,
                 parse_mode=PARSE_MODE,
-                reply_markup=raw_vless_key_keyboard(lang, sub["id"]),
+                reply_markup=raw_vless_key_keyboard(
+                    lang, sub["id"], sub["vless_key"]
+                ),
             )
         else:
             await deliver_vless_key(
@@ -458,12 +460,6 @@ async def _start_kbzpayout(
         parse_mode=PARSE_MODE,
         reply_markup=account_copy_keyboard(lang, account_number),
     )
-    admin = is_admin(from_user.id) if from_user else False
-    await message.reply_text(
-        t(lang, "pay_waiting_receipt"),
-        parse_mode=PARSE_MODE,
-        reply_markup=main_menu(lang, admin),
-    )
 
 
 async def _handle_plan_callback(
@@ -659,19 +655,10 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.answer(t_plain(lang, "no_subscription"), show_alert=True)
             return
         await query.answer()
-        paid_n = None
-        if not sub.get("is_free"):
-            paid_subs = await db.get_active_paid_subscriptions(row["id"])
-            for i, ps in enumerate(paid_subs, 1):
-                if ps["id"] == sub_id:
-                    paid_n = i
-                    break
-        prefix = _sub_key_summary(lang, sub, paid_n)
         await deliver_vless_key(
             message=query.message,
             lang=lang,
             vless_key=sub["vless_key"],
-            prefix_text=prefix,
             sub_id=sub_id,
         )
         return

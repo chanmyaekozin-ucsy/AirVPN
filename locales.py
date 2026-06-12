@@ -71,7 +71,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "daily_already": {
         "my": (
             "ဒီနေ့အတွက် လက်ဆောင်ကို ရယူပြီးသွားပါပြီ။\n"
-            "မနက်ဖြန်ကျရင်စ်ပြန်ယူဖို့ မမေ့နဲ့နော်။"
+            "မနက်ဖြန်ကျရင်ပြန်ယူဖို့ မမေ့နဲ့နော်။"
         ),
         "en": "You already claimed today's gift.\nCome back tomorrow!",
     },
@@ -80,7 +80,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "<b>လက်ဆောင်လေး ပေးလိုက်ပါပြီနော်။</b>\n\n"
             "ဒီနေ့အတွက် ရရှိတဲ့ဒေတာ: <b>{mb} MB</b>\n"
             "ရက်ဆက် ရယူမှု: <b>{streak} ရက်မြောက်</b>\n"
-            "<i>(နေ့စဉ် ၅၀၀ MB အထိပဲ အလိုအလျောက် ပြန်ဖြည့်ပေးတာမို့ ရက်ကျော်ရင် စုဆောင်းသွားမှာ မဟုတ်ပါဘူးခင်ဗျာ)</i>"
+            "<i>(နေ့စဉ် ၅၀၀ MB အထိပဲ အလိုအလျောက် ပြန်ဖြည့်ပေးမှာမို့ မနက်ဖြန် ပြန်လာ Claim ဖို့ မမေ့ပါနဲ့နော်။)</i>"
         ),
         "en": (
             "<b>Gift claimed!</b>\n\n"
@@ -131,8 +131,8 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "sub_usage_note": {
         "my": (
-            "<i>Key တစ်ခုချင်းစီရဲ့ အသုံးပြုမှု — Subscription ထဲမှာ App က "
-            "ဒေတာကျ량/သက်တမ်း ပြပေးပါလိမ့်မယ်။</i>"
+            "<i>Key တစ်ခုချင်းစီရဲ့ လက်ကျန်နဲ့သက်တမ်းကို VPN App ထဲမှာ "
+            "တိုက်ရိုက် ပြပေးပါလိမ့်မယ်။</i>"
         ),
         "en": (
             "<i>Per-key usage below — your VPN app reads data left and expiry "
@@ -140,8 +140,12 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
     },
     "sub_raw_key_hint": {
-        "my": "ကိုယ်တိုင် Key ထည့်ချင်ရင် အောက်က ခလုတ်ကို နှိပ်ပါ",
-        "en": "Tap below if you need the raw VLESS key instead",
+        "my": "Tap to Copy",
+        "en": "Tap to Copy",
+    },
+    "sub_raw_key_show": {
+        "my": "Key ပြမည်",
+        "en": "Show key",
     },
     "daily_key_error": {
         "my": (

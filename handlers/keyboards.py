@@ -379,7 +379,7 @@ def vless_key_keyboard(
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=t(lang, "key_copy_hint"),
+                    text=t(lang, "sub_raw_key_show"),
                     callback_data=f"vk_{sub_id}",
                 )
             ]
@@ -393,12 +393,26 @@ def vless_copy_keyboard(lang: str, vless_key: str) -> InlineKeyboardMarkup:
     return vless_key_keyboard(lang, vless_key)
 
 
-def raw_vless_key_keyboard(lang: str, sub_id: int) -> InlineKeyboardMarkup:
+def raw_vless_key_keyboard(
+    lang: str, sub_id: int, vless_key: str
+) -> InlineKeyboardMarkup:
+    """Per-key copy under subscription flow — real CopyTextButton when Telegram allows."""
+    if len(vless_key) <= MAX_COPY_TEXT:
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        text=t(lang, "sub_raw_key_hint"),
+                        copy_text=CopyTextButton(text=vless_key),
+                    )
+                ]
+            ]
+        )
     return InlineKeyboardMarkup(
         [
             [
                 InlineKeyboardButton(
-                    text=t(lang, "sub_raw_key_hint"),
+                    text=t(lang, "sub_raw_key_show"),
                     callback_data=f"vk_{sub_id}",
                 )
             ]
