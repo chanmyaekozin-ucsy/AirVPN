@@ -148,7 +148,7 @@ class PanelClient:
         except PanelError as exc:
             if not self._is_duplicate_email_error(str(exc)):
                 raise
-            await self._purge_orphan_client(email)
+            await self._clear_stale_email(email)
             return await self._add_or_update_client_once(
                 email, telegram_id, total_bytes, expiry_days, remark
             )
@@ -179,27 +179,66 @@ class PanelClient:
         )
 
         existing = next((c for c in clients if c.get("email") == email), None)
-        if existing:
-            existing["totalGB"] = total_bytes
-            existing["expiryTime"] = expiry_ms
-            existing["enable"] = True
-            client_uuid = existing["id"]
-        else:
-            client_uuid = await self._resolve_client_uuid(inbound, email, clients)
-            if not client_uuid:
-                client_uuid = str(uuid.uuid4())
-            clients.append(
-                {
-                    "id": client_uuid,
-                    "email": email,
-                    "enable": True,
-                    "expiryTime": expiry_ms,
-                    "totalGB": total_bytes,
-                    "limitIp": 2,
-                    "flow": flow,
-                }
-            )
+        client_obj = {
+            "id": existing["id"] if existing else str(uuid.uuid4()),
+            "email": email,
+            "enable": True,
+            "expiryTime": expiry_ms,
+            "totalGB": total_bytes,
+            "limitIp": 2,
+            "flow": flow,
+        }
 
+        if existing:
+            await self._update_client_via_api(inbound["id"], client_obj)
+            client_uuid = client_obj["id"]
+        else:
+            if await self.get_client_traffic_record(email):
+                await self._clear_stale_email(email)
+                client_obj["id"] = str(uuid.uuid4())
+            await self._add_client_via_api(inbound["id"], client_obj)
+            client_uuid = client_obj["id"]
+
+        vless_key = build_vless_url(
+            uuid=client_uuid,
+            host=self.server.vps_host,
+            port=self.server.vps_port or inbound["port"],
+            remark=tag,
+            stream=stream,
+            server=self.server,
+        )
+        return client_uuid, email, vless_key
+
+    async def _add_client_via_api(self, inbound_id: int, client: dict[str, Any]) -> None:
+        await self._ensure_login()
+        resp = await self._client.post(
+            f"{self.base}/panel/api/inbounds/addClient",
+            json={
+                "id": inbound_id,
+                "settings": json.dumps({"clients": [client]}),
+            },
+        )
+        body = resp.json()
+        if not body.get("success"):
+            raise PanelError(f"addClient failed: {body.get('msg')}")
+
+    async def _update_client_via_api(self, inbound_id: int, client: dict[str, Any]) -> None:
+        await self._ensure_login()
+        resp = await self._client.post(
+            f"{self.base}/panel/api/inbounds/updateClient",
+            json={
+                "id": inbound_id,
+                "settings": json.dumps({"clients": [client]}),
+            },
+        )
+        body = resp.json()
+        if not body.get("success"):
+            raise PanelError(f"updateClient failed: {body.get('msg')}")
+
+    async def _save_inbound_clients(
+        self, inbound: dict[str, Any], clients: list[dict]
+    ) -> None:
+        settings = json.loads(inbound["settings"])
         settings["clients"] = clients
         payload = {
             "id": inbound["id"],
@@ -214,72 +253,41 @@ class PanelClient:
             "protocol": inbound["protocol"],
             "tag": inbound.get("tag", ""),
         }
-
         resp = await self._client.post(
             f"{self.base}/panel/api/inbounds/update/{inbound['id']}",
             json=payload,
         )
         body = resp.json()
         if not body.get("success"):
-            raise PanelError(f"update client failed: {body.get('msg')}")
-
-        vless_key = build_vless_url(
-            uuid=client_uuid,
-            host=self.server.vps_host,
-            port=self.server.vps_port or inbound["port"],
-            remark=tag,
-            stream=stream,
-            server=self.server,
-        )
-        return client_uuid, email, vless_key
+            raise PanelError(f"update inbound failed: {body.get('msg')}")
 
     @staticmethod
     def _is_duplicate_email_error(message: str) -> bool:
         lowered = message.lower()
         return "unique constraint" in lowered and "client_traffics.email" in lowered
 
-    @staticmethod
-    def _uuid_for_email(inbound: dict[str, Any], email: str) -> str | None:
-        for stat in inbound.get("clientStats") or []:
-            if stat.get("email") == email:
-                uid = stat.get("id") or stat.get("uuid")
-                if uid:
-                    return str(uid)
-        return None
-
-    async def _resolve_client_uuid(
-        self,
-        inbound: dict[str, Any],
-        email: str,
-        clients: list[dict],
-    ) -> str | None:
-        existing = next((c for c in clients if c.get("email") == email), None)
-        if existing and existing.get("id"):
-            return str(existing["id"])
-
-        uid = self._uuid_for_email(inbound, email)
-        if uid:
-            return uid
-
-        traffic = await self.get_client_traffic_record(email)
-        if traffic:
-            for key in ("id", "uuid", "clientId"):
-                if traffic.get(key):
-                    return str(traffic[key])
-        return None
-
-    async def _purge_orphan_client(self, email: str) -> None:
+    async def _clear_stale_email(self, email: str) -> None:
+        """Remove panel records for email from inbound JSON and client_traffics."""
         inbound = await self.get_inbound()
-        client_uuid = await self._resolve_client_uuid(
-            inbound, email, json.loads(inbound["settings"]).get("clients", [])
-        )
-        if client_uuid and await self.delete_client(email, client_uuid):
-            return
-        if await self.delete_client_by_email(email):
-            return
-        raise PanelError(
-            f"Could not remove orphaned panel client {email!r}; delete it in 3x-ui"
-        )
+        clients = json.loads(inbound["settings"]).get("clients", [])
+        filtered = [c for c in clients if c.get("email") != email]
+        if len(filtered) != len(clients):
+            await self._save_inbound_clients(inbound, filtered)
+            inbound = await self.get_inbound()
+
+        for stat in inbound.get("clientStats") or []:
+            if stat.get("email") != email:
+                continue
+            uid = stat.get("id") or stat.get("uuid")
+            if uid:
+                await self.delete_client(email, str(uid))
+
+        await self.delete_client_by_email(email)
+
+        if await self.get_client_traffic_record(email):
+            raise PanelError(
+                f"Panel still has stale client {email!r}; delete it manually in 3x-ui"
+            )
 
     async def get_client_traffic_record(self, email: str) -> dict[str, Any] | None:
         await self._ensure_login()
