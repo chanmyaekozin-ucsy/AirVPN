@@ -165,7 +165,10 @@ class PanelClient:
             existing["enable"] = True
             client_uuid = existing["id"]
         else:
-            client_uuid = str(uuid.uuid4())
+            # Reuse UUID from panel traffic stats when the client was removed
+            # from inbound settings but still exists in client_traffics (avoids
+            # UNIQUE constraint failed: client_traffics.email).
+            client_uuid = self._uuid_for_email(inbound, email) or str(uuid.uuid4())
             clients.append(
                 {
                     "id": client_uuid,
@@ -210,6 +213,15 @@ class PanelClient:
             server=self.server,
         )
         return client_uuid, email, vless_key
+
+    @staticmethod
+    def _uuid_for_email(inbound: dict[str, Any], email: str) -> str | None:
+        for stat in inbound.get("clientStats") or []:
+            if stat.get("email") == email:
+                uid = stat.get("id") or stat.get("uuid")
+                if uid:
+                    return str(uid)
+        return None
 
     async def get_client_traffic_bytes(self, email: str) -> int | None:
         await self._ensure_login()
