@@ -335,7 +335,7 @@ def vless_download_keyboard(lang: str) -> InlineKeyboardMarkup:
 def subscription_link_keyboard(
     lang: str, sub_url: str, user_id: int | None = None
 ) -> InlineKeyboardMarkup:
-    """Copy subscription URL + VPN app download links."""
+    """Copy subscription URL + VPN app download links (URL never shown in chat)."""
     rows: list[list[InlineKeyboardButton]] = []
     if len(sub_url) <= MAX_COPY_TEXT:
         rows.append(
@@ -355,6 +355,8 @@ def subscription_link_keyboard(
                 )
             ]
         )
+    else:
+        raise ValueError("subscription link exceeds copy limit; user_id is required")
     rows.extend(vless_download_keyboard(lang).inline_keyboard)
     return InlineKeyboardMarkup(rows)
 

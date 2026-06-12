@@ -26,18 +26,16 @@ async def deliver_subscription_link(
     from handlers.keyboards import subscription_link_keyboard
 
     markup = subscription_link_keyboard(lang, sub_url, user_id=user_id)
-    header = prefix_text or t_plain(lang, "sub_link_header")
+    body = prefix_text or t_plain(lang, "sub_link_header")
 
     if message:
         await message.reply_text(
-            header, parse_mode=PARSE_MODE, reply_markup=markup
+            body, parse_mode=PARSE_MODE, reply_markup=markup
         )
-        await message.reply_text(sub_url, parse_mode=None)
     else:
         await bot.send_message(
-            chat_id, header, parse_mode=PARSE_MODE, reply_markup=markup
+            chat_id, body, parse_mode=PARSE_MODE, reply_markup=markup
         )
-        await bot.send_message(chat_id, sub_url, parse_mode=None)
 
 
 async def deliver_vpn_access(

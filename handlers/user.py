@@ -217,7 +217,8 @@ async def daily_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             + t(lang, "daily_free_note")
         )
 
-    if vpn.get("provisioned"):
+    has_sub_url = bool(user_subscription_url(row))
+    if vpn.get("provisioned") and not has_sub_url:
         text += "\n\n" + t(lang, "daily_free_key")
 
     await update.message.reply_text(text, parse_mode=PARSE_MODE)

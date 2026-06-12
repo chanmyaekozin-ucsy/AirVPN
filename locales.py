@@ -115,12 +115,13 @@ STRINGS: dict[str, dict[str, str]] = {
     "sub_link_header": {
         "my": (
             "<b>VPN Subscription Link</b>\n\n"
-            "အောက်က လင့်ခ်ကို v2rayNG / Hiddify မှာ <b>Subscription</b> အဖြစ် ထည့်ပါ။\n"
-            "ဒေတာကျ량နဲ့ သက်တမ်းကို App ထဲမှာ တိုက်ရိုက် ကြည့်နိုင်ပါတယ်။"
+            "အောက်က <b>Subscription Link ကူးမည်</b> ခလုတ်ကို နှိပ်ပြီး Link ကို Copy ယူပါ။\n"
+            "v2rayNG / Hiddify မှာ <b>Subscription</b> အဖြစ် ထည့်သွင်းနိုင်ပါတယ်။\n"
+            "ဒေတာလက်ကျန်နဲ့ သက်တမ်းကို App ထဲမှာ တိုက်ရိုက် ကြည့်နိုင်ပါတယ်။"
         ),
         "en": (
             "<b>VPN Subscription Link</b>\n\n"
-            "Add the link below in v2rayNG / Hiddify as a <b>Subscription</b>.\n"
+            "Tap <b>Copy subscription link</b> below, then add it in v2rayNG / Hiddify.\n"
             "Your app will show remaining data and expiry automatically."
         ),
     },
