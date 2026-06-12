@@ -169,5 +169,6 @@ def build_group_payment_handlers() -> list:
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             group_reject_reason,
+            block=False,
         ),
     ]
