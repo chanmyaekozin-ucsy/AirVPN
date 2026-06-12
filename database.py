@@ -642,6 +642,26 @@ async def get_payment(payment_id: int) -> dict[str, Any] | None:
     return dict(row) if row else None
 
 
+async def get_latest_pending_payment(user_id: int) -> dict[str, Any] | None:
+    """Most recent pending payment for a user (internal user id)."""
+    async with _db() as db:
+        async with db.execute(
+            """
+            SELECT p.*, u.telegram_id, u.first_name, u.username,
+                   pl.title AS plan_title, pl.data_gb, pl.duration_days
+            FROM payments p
+            JOIN users u ON u.id = p.user_id
+            JOIN plans pl ON pl.id = p.plan_id
+            WHERE p.user_id = ? AND p.status = 'pending'
+            ORDER BY p.created_at DESC
+            LIMIT 1
+            """,
+            (user_id,),
+        ) as cur:
+            row = await cur.fetchone()
+    return dict(row) if row else None
+
+
 async def get_pending_payments() -> list[dict[str, Any]]:
     async with _db() as db:
         async with db.execute(

@@ -233,6 +233,26 @@ STRINGS: dict[str, dict[str, str]] = {
             "To cancel, tap /cancel"
         ),
     },
+    "pay_no_pending": {
+        "my": (
+            "လက်ရှိ စောင့်ဆိုင်းနေတဲ့ ငွေပေးချေမှု မရှိပါဘူးခင်ဗျာ။\n"
+            "ပလန် ဝယ်ယူမယ် ကို နှိပ်ပြီး ပြန်စပေးပါ။"
+        ),
+        "en": (
+            "No pending payment found.\n"
+            "Tap Buy Plan to start again."
+        ),
+    },
+    "pay_already_processed": {
+        "my": (
+            "ဒီငွေပေးချေမှုကို စီမံပြီးသွားပါပြီ။\n"
+            "ပလန် ဝယ်ယူမယ် ကို နှိပ်ပြီးစ်ပြန်စပေးပါ။"
+        ),
+        "en": (
+            "This payment was already processed.\n"
+            "Tap Buy Plan to start a new one."
+        ),
+    },
     "pay_ask_tx_id": {
         "my": (
             "ပြေစာပေါ်မှာ QR Code မတွေ့ရလို့ပါခင်ဗျာ။\n"

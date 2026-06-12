@@ -74,6 +74,35 @@ async def _owned_pending_payment(payment_id: int, user_row: dict) -> dict | None
     return payment
 
 
+def _infer_payment_state(payment: dict) -> str:
+    if payment.get("receipt_file_id"):
+        return WAITING_TX_ID
+    if payment.get("verify_status") == "needs_tx_id":
+        return WAITING_TX_ID
+    return WAITING_RECEIPT
+
+
+async def _resolve_pending_payment(
+    context: ContextTypes.DEFAULT_TYPE, user_row: dict
+) -> dict | None:
+    """Restore in-memory payment flow from DB when bot restarts or updates split."""
+    payment_id = context.user_data.get("pending_payment_id")
+    if payment_id:
+        payment = await _owned_pending_payment(payment_id, user_row)
+        if payment:
+            state = context.user_data.get("payment_state")
+            if state not in (WAITING_RECEIPT, WAITING_TX_ID):
+                context.user_data["payment_state"] = _infer_payment_state(payment)
+            return payment
+
+    payment = await db.get_latest_pending_payment(user_row["id"])
+    if not payment:
+        return None
+    context.user_data["pending_payment_id"] = payment["id"]
+    context.user_data["payment_state"] = _infer_payment_state(payment)
+    return payment
+
+
 def _sub_key_summary(lang: str, sub: dict, paid_index: int | None) -> str:
     limit_gb = subscription_limit_gb(sub)
     used_gb = md2(f"{sub['data_used_gb']:.2f}")
@@ -677,6 +706,9 @@ async def _process_kbzpayout_verification(
     payment = await _owned_pending_payment(payment_id, user_row)
     if not payment:
         _clear_payment_flow(context)
+        await update.message.reply_text(
+            t(lang, "pay_already_processed"), parse_mode=PARSE_MODE
+        )
         return
 
     await db.set_payment_verification(
@@ -772,16 +804,15 @@ async def _process_kbzpayout_verification(
 
 
 async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if context.user_data.get("payment_state") != WAITING_RECEIPT:
-        return
     if not await _guard(update, context):
         return
-    lang = await _lang(update, context)
     user = update.effective_user
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
-    payment_id = context.user_data.get("pending_payment_id")
-    if not payment_id:
+    payment = await _resolve_pending_payment(context, row)
+    if not payment:
         return
+    payment_id = payment["id"]
+    lang = await _lang(update, context)
 
     photo = update.message.photo[-1] if update.message.photo else None
     if not photo:
@@ -798,12 +829,8 @@ async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(t(lang, "rate_limited_receipt"))
         return
 
-    payment = await _owned_pending_payment(payment_id, row)
-    if not payment:
-        _clear_payment_flow(context)
-        return
-
     await db.attach_receipt(payment_id, photo.file_id)
+    context.user_data["payment_state"] = WAITING_RECEIPT
 
     payment = await db.get_payment(payment_id) or payment
 
@@ -838,39 +865,44 @@ async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     await update.message.reply_text(t(lang, "pay_verifying"))
-    tg_file = await context.bot.get_file(photo.file_id)
-    image_bytes = bytes(await tg_file.download_as_bytearray())
-
-    result = await verify_receipt_image(image_bytes, payment["amount_ks"])
+    try:
+        tg_file = await context.bot.get_file(photo.file_id)
+        image_bytes = bytes(await tg_file.download_as_bytearray())
+        result = await verify_receipt_image(image_bytes, payment["amount_ks"])
+    except Exception:
+        logger.exception("Receipt verify failed for payment %s", payment_id)
+        await update.message.reply_text(
+            t(lang, "pay_submitted"), parse_mode=PARSE_MODE
+        )
+        await update_payment_proof(context.bot, payment_id, "manual_review")
+        _clear_payment_flow(context)
+        return
     await _process_kbzpayout_verification(
         update, context, payment_id, result, row
     )
 
 
 async def receipt_tx_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    state = context.user_data.get("payment_state")
-    if state not in (WAITING_TX_ID, WAITING_RECEIPT):
-        return
     if not await _guard(update, context):
         return
-    lang = await _lang(update, context)
     user = update.effective_user
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
-    payment_id = context.user_data.get("pending_payment_id")
-    if not payment_id:
-        return
-
-    payment = await _owned_pending_payment(payment_id, row)
-    if not payment:
-        _clear_payment_flow(context)
-        return
+    lang = await _lang(update, context)
 
     trans_id = (update.message.text or "").strip()
     if not TX_ID_RE.fullmatch(trans_id):
-        await update.message.reply_text(t(lang, "pay_ask_tx_id"), parse_mode=PARSE_MODE)
         return
 
+    payment = await _resolve_pending_payment(context, row)
+    if not payment:
+        await update.message.reply_text(t(lang, "pay_no_pending"), parse_mode=PARSE_MODE)
+        return
+
+    payment_id = payment["id"]
+    logger.info("Tx ID %s for payment #%s user %s", trans_id, payment_id, user.id)
+
     if not await db.try_claim_tx_id(payment_id, trans_id):
+        _clear_payment_flow(context)
         await update.message.reply_text(
             t(lang, "pay_rejected_generic"),
             **admin_contact_reply_kwargs(lang),
@@ -886,7 +918,16 @@ async def receipt_tx_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
 
     await update.message.reply_text(t(lang, "pay_verifying"))
-    result = await verify_transaction_id(trans_id, payment["amount_ks"])
+    try:
+        result = await verify_transaction_id(trans_id, payment["amount_ks"])
+    except Exception:
+        logger.exception("Tx ID verify failed for payment %s", payment_id)
+        await update.message.reply_text(
+            t(lang, "pay_submitted"), parse_mode=PARSE_MODE
+        )
+        await update_payment_proof(context.bot, payment_id, "manual_review")
+        _clear_payment_flow(context)
+        return
     await _process_kbzpayout_verification(
         update, context, payment_id, result, row
     )
@@ -980,7 +1021,10 @@ def build_user_handlers() -> list:
         MessageHandler(menu_text_filter("menu_buy"), buy_plan_message),
         MessageHandler(menu_text_filter("back"), back_to_main),
         MessageHandler(filters.Regex("^Admin$"), admin_panel),
+        MessageHandler(
+            filters.TEXT & filters.Regex(r"^\d{10,}$") & ~filters.COMMAND,
+            receipt_tx_id,
+        ),
         MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
-        MessageHandler(filters.PHOTO, receipt_photo),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, receipt_tx_id, block=False),
+        MessageHandler(filters.PHOTO, receipt_photo, block=False),
     ]
