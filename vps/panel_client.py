@@ -19,6 +19,16 @@ class PanelError(Exception):
 class PanelClient:
     """Minimal 3x-ui API wrapper for adding VLESS clients."""
 
+    @staticmethod
+    def _parse_json_response(resp: httpx.Response, action: str) -> dict[str, Any]:
+        if resp.status_code >= 400:
+            raise PanelError(f"{action} failed: HTTP {resp.status_code}")
+        try:
+            return resp.json()
+        except json.JSONDecodeError:
+            snippet = (resp.text or "")[:200]
+            raise PanelError(f"{action} failed: non-JSON response ({snippet!r})")
+
     def __init__(self, server: VpnServer | None = None) -> None:
         self.server = server or get_default_server()
         if not self.server.panel_url:
@@ -211,29 +221,50 @@ class PanelClient:
 
     async def _add_client_via_api(self, inbound_id: int, client: dict[str, Any]) -> None:
         await self._ensure_login()
+        payload = {
+            "id": inbound_id,
+            "settings": json.dumps({"clients": [client]}),
+        }
         resp = await self._client.post(
             f"{self.base}/panel/api/inbounds/addClient",
-            json={
-                "id": inbound_id,
-                "settings": json.dumps({"clients": [client]}),
-            },
+            data=payload,
         )
-        body = resp.json()
+        body = self._parse_json_response(resp, "addClient")
         if not body.get("success"):
             raise PanelError(f"addClient failed: {body.get('msg')}")
 
     async def _update_client_via_api(self, inbound_id: int, client: dict[str, Any]) -> None:
         await self._ensure_login()
+        client_uuid = client.get("id")
+        if not client_uuid:
+            raise PanelError("updateClient failed: missing client id")
+
+        payload = {
+            "id": inbound_id,
+            "settings": json.dumps({"clients": [client]}),
+        }
+        encoded_uuid = quote(str(client_uuid), safe="")
         resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/updateClient",
-            json={
-                "id": inbound_id,
-                "settings": json.dumps({"clients": [client]}),
-            },
+            f"{self.base}/panel/api/inbounds/updateClient/{encoded_uuid}",
+            data=payload,
         )
-        body = resp.json()
-        if not body.get("success"):
-            raise PanelError(f"updateClient failed: {body.get('msg')}")
+        body = self._parse_json_response(resp, "updateClient")
+        if body.get("success"):
+            return
+
+        # Older panels: fall back to rewriting the inbound client list.
+        inbound = await self.get_inbound(inbound_id)
+        settings = json.loads(inbound["settings"])
+        clients: list[dict] = settings.get("clients", [])
+        replaced = False
+        for i, existing in enumerate(clients):
+            if existing.get("email") == client.get("email") or existing.get("id") == client_uuid:
+                clients[i] = client
+                replaced = True
+                break
+        if not replaced:
+            clients.append(client)
+        await self._save_inbound_clients(inbound, clients)
 
     async def _save_inbound_clients(
         self, inbound: dict[str, Any], clients: list[dict]
@@ -268,21 +299,29 @@ class PanelClient:
 
     async def _clear_stale_email(self, email: str) -> None:
         """Remove panel records for email from inbound JSON and client_traffics."""
-        inbound = await self.get_inbound()
+        traffic = await self.get_client_traffic_record(email)
+        stale_inbound_id = int(traffic["inboundId"]) if traffic and traffic.get("inboundId") else None
+
+        inbound = await self.get_inbound(stale_inbound_id)
         clients = json.loads(inbound["settings"]).get("clients", [])
         filtered = [c for c in clients if c.get("email") != email]
         if len(filtered) != len(clients):
             await self._save_inbound_clients(inbound, filtered)
-            inbound = await self.get_inbound()
+            inbound = await self.get_inbound(stale_inbound_id)
 
+        delete_inbound_id = stale_inbound_id or self.server.panel_inbound_id
         for stat in inbound.get("clientStats") or []:
             if stat.get("email") != email:
                 continue
             uid = stat.get("id") or stat.get("uuid")
             if uid:
-                await self.delete_client(email, str(uid))
+                await self.delete_client(email, str(uid), inbound_id=delete_inbound_id)
 
-        await self.delete_client_by_email(email)
+        await self.delete_client_by_email(email, inbound_id=delete_inbound_id)
+        if traffic:
+            uid = traffic.get("uuid") or traffic.get("id")
+            if uid:
+                await self.delete_client(email, str(uid), inbound_id=delete_inbound_id)
 
         if await self.get_client_traffic_record(email):
             raise PanelError(
@@ -314,27 +353,31 @@ class PanelClient:
             return None
         return int(record.get("up") or 0) + int(record.get("down") or 0)
 
-    async def delete_client_by_email(self, email: str) -> bool:
+    async def delete_client_by_email(
+        self, email: str, *, inbound_id: int | None = None
+    ) -> bool:
         await self._ensure_login()
-        inbound_id = self.server.panel_inbound_id
+        iid = inbound_id or self.server.panel_inbound_id
         encoded = quote(email, safe="")
         resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/{inbound_id}/delClientByEmail/{encoded}"
+            f"{self.base}/panel/api/inbounds/{iid}/delClientByEmail/{encoded}"
         )
         body = resp.json()
         return bool(body.get("success"))
 
-    async def delete_client(self, email: str, client_uuid: str) -> bool:
+    async def delete_client(
+        self, email: str, client_uuid: str, *, inbound_id: int | None = None
+    ) -> bool:
         await self._ensure_login()
-        inbound_id = self.server.panel_inbound_id
+        iid = inbound_id or self.server.panel_inbound_id
         resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/{inbound_id}/delClient/{client_uuid}"
+            f"{self.base}/panel/api/inbounds/{iid}/delClient/{client_uuid}"
         )
         body = resp.json()
         if body.get("success"):
             return True
 
-        inbound = await self.get_inbound()
+        inbound = await self.get_inbound(iid)
         settings = json.loads(inbound["settings"])
         clients = settings.get("clients", [])
         filtered = [
