@@ -6,7 +6,6 @@ import re
 
 from telegram import Update
 from telegram.ext import (
-    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
@@ -15,7 +14,7 @@ from telegram.ext import (
 )
 
 import database as db
-from handlers.group_payment import proof_reject_entry, reject_payment_from_group
+from handlers.group_payment import reject_payment_from_group
 from handlers.keyboards import (
     ADMIN_USERS_PAGE_SIZE,
     admin_menu,
@@ -634,7 +633,6 @@ def build_admin_handlers() -> list:
     reject_conv = ConversationHandler(
         entry_points=[
             MessageHandler(admin_text_filter("admin_reject"), admin_reject_start),
-            CallbackQueryHandler(proof_reject_entry, pattern="^proof_no_"),
         ],
         states={
             REJECT_REASON: [
@@ -644,7 +642,6 @@ def build_admin_handlers() -> list:
         fallbacks=[CommandHandler("cancel", notify_cancel)],
         per_chat=True,
         per_user=True,
-        per_message=True,
     )
 
     ban_conv = ConversationHandler(

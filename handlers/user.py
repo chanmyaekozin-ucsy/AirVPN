@@ -49,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 WAITING_RECEIPT = "waiting_receipt"
 WAITING_TX_ID = "waiting_tx_id"
-TX_ID_RE = re.compile(r"^\d{20}$")
+TX_ID_RE = re.compile(r"^\d{10,}$")
 
 # User callbacks (lang_* handled by language_callback).
 USER_CALLBACK_PATTERN = (
@@ -847,7 +847,8 @@ async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def receipt_tx_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if context.user_data.get("payment_state") != WAITING_TX_ID:
+    state = context.user_data.get("payment_state")
+    if state not in (WAITING_TX_ID, WAITING_RECEIPT):
         return
     if not await _guard(update, context):
         return
@@ -868,7 +869,12 @@ async def receipt_tx_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text(t(lang, "pay_ask_tx_id"), parse_mode=PARSE_MODE)
         return
 
-    await db.try_claim_tx_id(payment_id, trans_id)
+    if not await db.try_claim_tx_id(payment_id, trans_id):
+        await update.message.reply_text(
+            t(lang, "pay_rejected_generic"),
+            **admin_contact_reply_kwargs(lang),
+        )
+        return
 
     if not rate_allow(
         f"kbz:{user.id}",

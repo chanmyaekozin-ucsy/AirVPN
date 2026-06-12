@@ -4,8 +4,9 @@ from __future__ import annotations
 import logging
 
 from telegram import Update
-from telegram.ext import CallbackQueryHandler, ContextTypes, ConversationHandler
+from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
+import config
 import database as db
 from handlers.keyboards import is_admin
 from locales import t, t_plain
@@ -37,15 +38,18 @@ async def proof_payment_callback(
         return
 
     data = query.data
-    lang = await _lang(update)
+    if not data.startswith("proof_ok_"):
+        return
 
-    if data.startswith("proof_ok_"):
-        payment_id = int(data.split("_")[2])
-        payment = await db.get_payment(payment_id)
-        if not payment or payment["status"] != "pending":
-            await query.answer("Already processed", show_alert=True)
-            return
+    payment_id = int(data.split("_")[2])
+    payment = await db.get_payment(payment_id)
+    if not payment or payment["status"] != "pending":
+        await query.answer("Already processed", show_alert=True)
+        return
 
+    await query.answer("Approving payment…")
+
+    try:
         ok, msg = await approve_and_deliver(
             context.bot,
             payment_id,
@@ -53,50 +57,79 @@ async def proof_payment_callback(
             auto=False,
             tx_id=payment.get("receipt_tx_id"),
         )
-        if not ok:
-            logger.error("Group approve failed for payment %s: %s", payment_id, msg)
-            await query.answer(f"Approval failed: {msg}", show_alert=True)
-            return
-
-        await update_payment_proof(
-            context.bot,
-            payment_id,
-            "approved",
-            note=f"By admin {user.id}",
-        )
-        await query.answer(f"Payment #{payment_id} approved.")
+    except Exception:
+        logger.exception("Group approve failed for payment %s", payment_id)
+        await query.message.reply_text("Approval failed: internal error")
         return
 
-REJECT_REASON = 1
+    if not ok:
+        logger.error("Group approve failed for payment %s: %s", payment_id, msg)
+        await query.message.reply_text(f"Approval failed: {msg}")
+        return
+
+    await update_payment_proof(
+        context.bot,
+        payment_id,
+        "approved",
+        note=f"By admin {user.id}",
+    )
+    await query.message.reply_text(f"Payment #{payment_id} approved.")
 
 
-async def proof_reject_entry(
+async def proof_reject_callback(
     update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    """Conversation entry when admin taps Reject on a group proof post."""
+) -> None:
+    """Admin taps Reject on a group proof post."""
     query = update.callback_query
     if not query or not query.data:
-        return REJECT_REASON
+        return
 
     user = update.effective_user
     if not user or not is_admin(user.id):
         await query.answer(t_plain("my", "access_denied"), show_alert=True)
-        return ConversationHandler.END
+        return
 
     payment_id = int(query.data.split("_")[2])
     payment = await db.get_payment(payment_id)
     if not payment or payment["status"] != "pending":
         await query.answer("Already processed", show_alert=True)
-        return ConversationHandler.END
+        return
 
     await query.answer()
 
-    context.user_data["reject_payment_id"] = payment_id
+    context.user_data["group_reject_payment_id"] = payment_id
     lang = await _lang(update)
     await query.message.reply_text(
         t(lang, "admin_reject_reason_group", payment_id=payment_id)
     )
-    return REJECT_REASON
+
+
+async def group_reject_reason(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Capture rejection reason typed in the proofs group."""
+    payment_id = context.user_data.get("group_reject_payment_id")
+    if not payment_id:
+        return
+
+    if (
+        config.PAYMENTS_PROOFS_GROUP_ID
+        and update.effective_chat
+        and update.effective_chat.id != config.PAYMENTS_PROOFS_GROUP_ID
+    ):
+        return
+
+    user = update.effective_user
+    if not user or not is_admin(user.id) or not update.message:
+        return
+
+    reason = (update.message.text or "").strip() or "—"
+    context.user_data.pop("group_reject_payment_id", None)
+
+    await reject_payment_from_group(
+        update.get_bot(), payment_id, user.id, reason
+    )
+    await update.message.reply_text(f"Payment #{payment_id} rejected.")
 
 
 async def reject_payment_from_group(
@@ -132,4 +165,9 @@ async def reject_payment_from_group(
 def build_group_payment_handlers() -> list:
     return [
         CallbackQueryHandler(proof_payment_callback, pattern="^proof_ok_"),
+        CallbackQueryHandler(proof_reject_callback, pattern="^proof_no_"),
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            group_reject_reason,
+        ),
     ]
