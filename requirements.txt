@@ -1,0 +1,9 @@
+python-telegram-bot==21.10
+python-dotenv==1.0.1
+aiosqlite==0.20.0
+httpx==0.28.1
+requests==2.32.3
+opencv-python-headless==4.10.0.84
+numpy==2.0.2
+pycryptodome==3.21.0
+cryptography==44.0.0

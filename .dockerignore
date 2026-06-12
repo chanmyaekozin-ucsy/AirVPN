@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.sqlite3
+kbz_session.json
+.git/
+.gitignore
+.DS_Store
+*.md
+docs/
+scripts/
+terminals/

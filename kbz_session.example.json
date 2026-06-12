@@ -1,0 +1,15 @@
+{
+  "deviceID": "DEV_019eb28fc7a575a29f9db6e3ce8a09dc",
+  "imei": "48e3afe7a08cf553",
+  "version": "5.8.5",
+  "language": "en",
+  "platform": "Android",
+  "encoding": "unicode",
+  "initiatorMSISDN": "09948999939",
+  "token": "YOUR_KBZ_SESSION_TOKEN",
+  "deviceProfile": {
+    "brand": "Redmi",
+    "deviceModel": "M2101K7AG",
+    "deviceToken": "YOUR_FCM_DEVICE_TOKEN"
+  }
+}
