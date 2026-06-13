@@ -36,6 +36,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "menu_download": {"my": "App ဒေါင်းလုတ်ဆွဲရန်", "en": "Download VPN Apps"},
     "menu_support": {"my": "အကူအညီ တောင်းရန်", "en": "Support"},
     "menu_lang": {"my": "ဘာသာစကား ပြောင်းရန်", "en": "Language"},
+    "menu_restored": {
+        "my": "အောက်က မီနူးကနေ ဆက်အသုံးပြုနိုင်ပါတယ်။",
+        "en": "Use the menu below to continue.",
+    },
     "download_title": {
         "my": (
             "<b>VPN App ဒေါင်းလုတ်ဆွဲရန်</b>\n\n"

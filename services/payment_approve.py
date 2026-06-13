@@ -6,6 +6,7 @@ import logging
 from telegram import Bot
 
 import database as db
+from handlers.keyboards import restore_main_menu
 from locales import t
 from utils.formatting import md2
 from utils.vless_delivery import deliver_vpn_access
@@ -78,5 +79,11 @@ async def approve_and_deliver(
         )
     except Exception:
         logger.exception("Failed to notify user %s", payment["telegram_id"])
+    try:
+        await restore_main_menu(
+            bot, payment["telegram_id"], u_lang, payment["telegram_id"]
+        )
+    except Exception:
+        logger.exception("Failed to restore menu for user %s", payment["telegram_id"])
 
     return True, "approved"

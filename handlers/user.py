@@ -24,6 +24,7 @@ from handlers.keyboards import (
     lang_reply_keyboard,
     main_menu,
     plans_reply_keyboard,
+    restore_main_menu,
     servers_reply_keyboard,
     resolve_language_choice,
     vpn_app_links_keyboard,
@@ -76,6 +77,31 @@ def _start_buy_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
     clear_replace_flow(context)
     _clear_payment_flow(context)
     context.user_data["buy_flow"] = True
+
+
+async def _reply_and_restore_menu(
+    update: Update,
+    lang: str,
+    text: str,
+    context: ContextTypes.DEFAULT_TYPE | None = None,
+    *,
+    clear_payment: bool = True,
+    **reply_kwargs,
+) -> None:
+    """Send a payment/outcome message and bring back the main reply keyboard."""
+    user = update.effective_user
+    chat = update.effective_chat
+    if not user or not chat or not update.message:
+        return
+    if clear_payment and context is not None:
+        _clear_payment_flow(context)
+        _clear_buy_flow(context)
+    has_inline = bool(reply_kwargs.get("reply_markup"))
+    if not has_inline:
+        reply_kwargs["reply_markup"] = main_menu(lang, is_admin(user.id))
+    await update.message.reply_text(text, parse_mode=PARSE_MODE, **reply_kwargs)
+    if has_inline:
+        await restore_main_menu(update.get_bot(), chat.id, lang, user.id)
 
 
 async def _owned_pending_payment(payment_id: int, user_row: dict) -> dict | None:
@@ -751,9 +777,11 @@ async def _process_kbzpayout_verification(
     lang = await _lang(update, context)
     payment = await _owned_pending_payment(payment_id, user_row)
     if not payment:
-        _clear_payment_flow(context)
-        await update.message.reply_text(
-            t(lang, "pay_already_processed"), parse_mode=PARSE_MODE
+        await _reply_and_restore_menu(
+            update,
+            lang,
+            t(lang, "pay_already_processed"),
+            context,
         )
         return
 
@@ -791,25 +819,35 @@ async def _process_kbzpayout_verification(
         elif msg == "Transaction ID already used":
             await db.reject_payment(payment_id, 0, msg)
             logger.warning("Tx replay blocked for payment %s", payment_id)
-            await update.message.reply_text(
+            await _reply_and_restore_menu(
+                update,
+                lang,
                 t(lang, "pay_rejected_generic"),
+                context,
                 **admin_contact_reply_kwargs(lang),
             )
             await update_payment_proof(
                 context.bot, payment_id, "auto_rejected", note="Duplicate transaction ID"
             )
         else:
-            await update.message.reply_text(
-                t(lang, "pay_submitted"), parse_mode=PARSE_MODE
+            await _reply_and_restore_menu(
+                update,
+                lang,
+                t(lang, "pay_submitted"),
+                context,
             )
             await update_payment_proof(context.bot, payment_id, "manual_review")
-        _clear_payment_flow(context)
+        if ok:
+            _clear_payment_flow(context)
+            _clear_buy_flow(context)
         return
 
     if verify_result.status == "token_invalid":
-        await update.message.reply_text(
+        await _reply_and_restore_menu(
+            update,
+            lang,
             t(lang, "pay_manual_token_invalid"),
-            parse_mode=PARSE_MODE,
+            context,
             **admin_contact_reply_kwargs(lang),
         )
         await update_payment_proof(
@@ -818,7 +856,6 @@ async def _process_kbzpayout_verification(
             "manual_review",
             note="KBZ auto-verify unavailable",
         )
-        _clear_payment_flow(context)
         return
 
     if verify_result.status == "failed":
@@ -833,20 +870,24 @@ async def _process_kbzpayout_verification(
             if is_stale_tx_failure(verify_result)
             else "pay_rejected_generic"
         )
-        await update.message.reply_text(
+        await _reply_and_restore_menu(
+            update,
+            lang,
             t(lang, reject_key),
+            context,
             **admin_contact_reply_kwargs(lang),
         )
         await update_payment_proof(context.bot, payment_id, "auto_rejected")
-        _clear_payment_flow(context)
         return
 
     # error / manual review
-    await update.message.reply_text(
-        t(lang, "pay_submitted"), parse_mode=PARSE_MODE
+    await _reply_and_restore_menu(
+        update,
+        lang,
+        t(lang, "pay_submitted"),
+        context,
     )
     await update_payment_proof(context.bot, payment_id, "manual_review")
-    _clear_payment_flow(context)
 
 
 async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -889,8 +930,13 @@ async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             status="manual_review",
         )
         _clear_payment_flow(context)
-        await update.message.reply_text(
-            t(lang, "pay_submitted"), parse_mode=PARSE_MODE
+        _clear_buy_flow(context)
+        await _reply_and_restore_menu(
+            update,
+            lang,
+            t(lang, "pay_submitted"),
+            context,
+            clear_payment=False,
         )
         return
 
@@ -917,11 +963,13 @@ async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         result = await verify_receipt_image(image_bytes, payment["amount_ks"])
     except Exception:
         logger.exception("Receipt verify failed for payment %s", payment_id)
-        await update.message.reply_text(
-            t(lang, "pay_submitted"), parse_mode=PARSE_MODE
+        await _reply_and_restore_menu(
+            update,
+            lang,
+            t(lang, "pay_submitted"),
+            context,
         )
         await update_payment_proof(context.bot, payment_id, "manual_review")
-        _clear_payment_flow(context)
         return
     await _process_kbzpayout_verification(
         update, context, payment_id, result, row
@@ -943,16 +991,23 @@ async def receipt_tx_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     payment = await _resolve_pending_payment(context, row)
     if not payment:
-        await update.message.reply_text(t(lang, "pay_no_pending"), parse_mode=PARSE_MODE)
+        await _reply_and_restore_menu(
+            update,
+            lang,
+            t(lang, "pay_no_pending"),
+            context,
+        )
         return
 
     payment_id = payment["id"]
     logger.info("Tx ID %s for payment #%s user %s", trans_id, payment_id, user.id)
 
     if not await db.try_claim_tx_id(payment_id, trans_id):
-        _clear_payment_flow(context)
-        await update.message.reply_text(
+        await _reply_and_restore_menu(
+            update,
+            lang,
             t(lang, "pay_rejected_generic"),
+            context,
             **admin_contact_reply_kwargs(lang),
         )
         return
@@ -970,11 +1025,13 @@ async def receipt_tx_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         result = await verify_transaction_id(trans_id, payment["amount_ks"])
     except Exception:
         logger.exception("Tx ID verify failed for payment %s", payment_id)
-        await update.message.reply_text(
-            t(lang, "pay_submitted"), parse_mode=PARSE_MODE
+        await _reply_and_restore_menu(
+            update,
+            lang,
+            t(lang, "pay_submitted"),
+            context,
         )
         await update_payment_proof(context.bot, payment_id, "manual_review")
-        _clear_payment_flow(context)
         return
     await _process_kbzpayout_verification(
         update, context, payment_id, result, row

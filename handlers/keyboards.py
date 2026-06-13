@@ -342,6 +342,18 @@ def admin_contact_reply_kwargs(lang: str) -> dict:
     return {"reply_markup": kb} if kb else {}
 
 
+async def restore_main_menu(bot, chat_id: int, lang: str, telegram_id: int) -> None:
+    """Re-show the reply keyboard after one-time keyboards or inline-only messages."""
+    from utils.formatting import PARSE_MODE
+
+    await bot.send_message(
+        chat_id,
+        t(lang, "menu_restored"),
+        parse_mode=PARSE_MODE,
+        reply_markup=main_menu(lang, is_admin(telegram_id)),
+    )
+
+
 def account_copy_keyboard(lang: str, account_number: str) -> InlineKeyboardMarkup:
     """Inline button to copy payment account number to clipboard."""
     return InlineKeyboardMarkup(

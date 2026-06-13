@@ -220,10 +220,15 @@ async def reject_payment_from_group(
     user_row = await db.get_or_create_user(payment["telegram_id"])
     u_lang = user_row.get("language", "my")
     try:
+        from handlers.keyboards import restore_main_menu
+
         await bot.send_message(
             payment["telegram_id"],
             t(u_lang, "pay_rejected_user", reason=md2(reason)),
             parse_mode=PARSE_MODE,
+        )
+        await restore_main_menu(
+            bot, payment["telegram_id"], u_lang, payment["telegram_id"]
         )
     except Exception:
         logger.exception("notify user reject failed")
