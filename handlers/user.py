@@ -1062,11 +1062,6 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     """Reply keyboard: pick server, then plan."""
     if context.user_data.get("replace_state"):
         return
-    buy_flow = context.user_data.get("buy_flow")
-    if context.user_data.get("payment_state") and not buy_flow:
-        return
-    if not buy_flow:
-        return
     if not await _guard(update, context):
         return
 
@@ -1082,24 +1077,27 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     lang = await _lang(update, context)
+    server = match_server_label(text)
+
+    # Recognize server labels even when buy_flow was cleared (bot restart, stale keyboard).
+    if server and not context.user_data.get("payment_state"):
+        context.user_data["buy_flow"] = True
+        context.user_data["buy_server_id"] = server.id
+        await _show_plans_for_server(update.message, lang, server.id)
+        return
+
+    if not context.user_data.get("buy_flow"):
+        return
+    if context.user_data.get("payment_state"):
+        return
+
     server_id = context.user_data.get("buy_server_id")
     if not server_id:
-        server = match_server_label(text)
-        if server:
-            context.user_data["buy_server_id"] = server.id
-            await _show_plans_for_server(update.message, lang, server.id)
-            return
         await update.message.reply_text(
             t(lang, "servers_title"),
             parse_mode=PARSE_MODE,
             reply_markup=servers_reply_keyboard(lang, list_servers()),
         )
-        return
-
-    server = match_server_label(text)
-    if server:
-        context.user_data["buy_server_id"] = server.id
-        await _show_plans_for_server(update.message, lang, server.id)
         return
 
     plans = await db.get_active_plans(server_id)

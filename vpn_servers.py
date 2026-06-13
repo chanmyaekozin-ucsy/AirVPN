@@ -2,18 +2,23 @@
 from __future__ import annotations
 
 import os
+import re
 import unicodedata
 from dataclasses import dataclass, field
 
 import config
 
 _MYANMAR_DIGITS = str.maketrans("၀၁၂၃၄၅၆၇၈၉", "0123456789")
+_HYPHEN_RE = re.compile(r"[\u2010-\u2015\u2212\u002d\uFE58\uFE63\uFF0D]+")
 
 
 def normalize_server_label(text: str) -> str:
-    """Normalize reply-keyboard labels (spacing, Myanmar digits → ASCII)."""
+    """Normalize reply-keyboard labels (spacing, dashes, Myanmar digits → ASCII)."""
     raw = unicodedata.normalize("NFKC", (text or "").strip())
-    return raw.translate(_MYANMAR_DIGITS)
+    raw = raw.translate(_MYANMAR_DIGITS)
+    raw = _HYPHEN_RE.sub("-", raw)
+    raw = re.sub(r"\s+", " ", raw)
+    return raw.strip()
 
 
 def _labels_match(a: str, b: str) -> bool:
