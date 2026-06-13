@@ -10,6 +10,10 @@ MENU_ALIASES: dict[str, tuple[str, ...]] = {
         "My VPN Key",
         "ကျွန်ုပ်၏ VPN Key",
     ),
+    "menu_replace": (
+        "Change Server",
+        "ဆာဗာ ပြောင်းမယ်",
+    ),
 }
 
 STRINGS: dict[str, dict[str, str]] = {
@@ -28,7 +32,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "menu_daily": {"my": "နေ့စဉ် လက်ဆောင်ယူမယ်", "en": "Daily Gift"},
     "menu_buy": {"my": "ပလန် ဝယ်ယူမယ်", "en": "Buy Plan"},
     "menu_my_key": {"my": "ကျွန်ုပ်၏ VPN Key များ", "en": "My VPN Key(s)"},
-    "menu_replace": {"my": "ဆာဗာ ပြောင်းမယ်", "en": "Change Server"},
+    "menu_replace": {"my": "Key ပြန်လဲမယ်", "en": "Replace Key"},
     "menu_download": {"my": "App ဒေါင်းလုတ်ဆွဲရန်", "en": "Download VPN Apps"},
     "menu_support": {"my": "အကူအညီ တောင်းရန်", "en": "Support"},
     "menu_lang": {"my": "ဘာသာစကား ပြောင်းရန်", "en": "Language"},
