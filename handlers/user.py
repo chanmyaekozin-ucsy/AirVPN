@@ -1060,9 +1060,9 @@ def _plan_label(plan: dict, lang: str) -> str:
 
 async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply keyboard: pick server, then plan."""
-    buy_flow = context.user_data.get("buy_flow")
-    if context.user_data.get("replace_state") and not buy_flow:
+    if context.user_data.get("replace_state"):
         return
+    buy_flow = context.user_data.get("buy_flow")
     if context.user_data.get("payment_state") and not buy_flow:
         return
     if not buy_flow:
@@ -1154,11 +1154,11 @@ def build_user_handlers() -> list:
         MessageHandler(menu_text_filter("menu_buy"), buy_plan_message),
         MessageHandler(menu_text_filter("back"), back_to_main),
         MessageHandler(filters.Regex("^Admin$"), admin_panel),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
     ]
     handlers.extend(build_key_replacement_handlers())
     handlers.extend(
         [
+        MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
         MessageHandler(
             filters.TEXT & filters.Regex(r"^\d{10,}$") & ~filters.COMMAND,
             receipt_tx_id,
