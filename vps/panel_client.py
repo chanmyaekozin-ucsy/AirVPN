@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from typing import Any
@@ -11,6 +12,8 @@ import httpx
 
 import config
 from vpn_servers import VpnServer, get_default_server, get_free_keys_server, get_server
+
+logger = logging.getLogger(__name__)
 
 
 class PanelError(Exception):
@@ -481,28 +484,14 @@ class PanelClient:
         self, email: str, *, inbound_id: int | None = None
     ) -> bool:
         iid = inbound_id or self.server.panel_inbound_id
-        encoded = quote(email, safe="")
-        resp = await self._post(f"/panel/api/inbounds/{iid}/delClientByEmail/{encoded}")
-        if resp.status_code == 404 or not (resp.text or "").strip():
-            return False
-        try:
-            body = resp.json()
-        except json.JSONDecodeError:
-            return False
-        return bool(body.get("success"))
+        return await self._try_del_client_by_email(iid, email)
 
     async def delete_client(
         self, email: str, client_uuid: str, *, inbound_id: int | None = None
     ) -> bool:
         iid = inbound_id or self.server.panel_inbound_id
-        resp = await self._post(f"/panel/api/inbounds/{iid}/delClient/{client_uuid}")
-        if resp.status_code != 404:
-            try:
-                body = resp.json()
-                if body.get("success"):
-                    return True
-            except json.JSONDecodeError:
-                pass
+        if await self._try_del_client_api(iid, client_uuid):
+            return True
 
         inbound = await self.get_inbound(iid)
         settings = _parse_json_field(inbound["settings"], field="settings")
@@ -513,10 +502,139 @@ class PanelClient:
             if c.get("email") != email and c.get("id") != client_uuid
         ]
         if len(filtered) == len(clients):
-            return False
+            return await self._try_del_client_by_email(iid, email)
 
         await self._save_inbound_clients(inbound, filtered)
+        await self._try_del_client_by_email(iid, email)
         return True
+
+    async def remove_client_for_replacement(
+        self, email: str, client_uuid: str | None = None
+    ) -> bool:
+        """Remove a client from inbound settings, traffic stats, and panel DB."""
+        traffic = await self.get_client_traffic_record(email)
+        inbound_ids: list[int] = []
+        if traffic and traffic.get("inboundId"):
+            inbound_ids.append(int(traffic["inboundId"]))
+        if self.server.panel_inbound_id not in inbound_ids:
+            inbound_ids.append(self.server.panel_inbound_id)
+
+        for iid in inbound_ids:
+            await self._remove_client_on_inbound(iid, email, client_uuid)
+
+        if await self.get_client_traffic_record(email):
+            try:
+                await self._clear_stale_email(email)
+            except PanelError:
+                logger.exception(
+                    "Failed final stale cleanup for %s on %s",
+                    email,
+                    self.server.id,
+                )
+            if await self.get_client_traffic_record(email):
+                return False
+
+        return not await self._client_exists_on_panel(email, client_uuid)
+
+    async def _client_exists_on_panel(
+        self, email: str, client_uuid: str | None
+    ) -> bool:
+        inbound_ids = [self.server.panel_inbound_id]
+        traffic = await self.get_client_traffic_record(email)
+        if traffic and traffic.get("inboundId"):
+            iid = int(traffic["inboundId"])
+            if iid not in inbound_ids:
+                inbound_ids.insert(0, iid)
+        for iid in inbound_ids:
+            try:
+                inbound = await self.get_inbound(iid)
+            except PanelError:
+                continue
+            settings = _parse_json_field(inbound["settings"], field="settings")
+            for client in settings.get("clients", []):
+                if client.get("email") == email:
+                    return True
+                if client_uuid and str(client.get("id")) == str(client_uuid):
+                    return True
+        return False
+
+    async def _remove_client_on_inbound(
+        self,
+        iid: int,
+        email: str,
+        client_uuid: str | None,
+    ) -> bool:
+        removed = False
+        try:
+            inbound = await self.get_inbound(iid)
+        except PanelError:
+            return False
+
+        settings = _parse_json_field(inbound["settings"], field="settings")
+        clients: list[dict] = settings.get("clients", [])
+        filtered = [
+            c
+            for c in clients
+            if c.get("email") != email
+            and (not client_uuid or str(c.get("id")) != str(client_uuid))
+        ]
+        if len(filtered) != len(clients):
+            await self._save_inbound_clients(inbound, filtered)
+            removed = True
+
+        if await self._try_del_client_by_email(iid, email):
+            removed = True
+
+        uuids: set[str] = set()
+        if client_uuid:
+            uuids.add(str(client_uuid))
+        for client in clients:
+            if client.get("email") == email and client.get("id"):
+                uuids.add(str(client["id"]))
+
+        try:
+            inbound = await self.get_inbound(iid)
+            for stat in inbound.get("clientStats") or []:
+                if stat.get("email") != email:
+                    continue
+                uid = stat.get("id") or stat.get("uuid")
+                if uid:
+                    uuids.add(str(uid))
+        except PanelError:
+            pass
+
+        for uid in uuids:
+            if await self._try_del_client_api(iid, uid):
+                removed = True
+
+        if await self._try_del_client_by_email(iid, email):
+            removed = True
+
+        return removed
+
+    async def _try_del_client_api(self, iid: int, client_uuid: str) -> bool:
+        encoded = quote(str(client_uuid), safe="")
+        resp = await self._post(f"/panel/api/inbounds/{iid}/delClient/{encoded}")
+        if resp.status_code == 404 or not (resp.text or "").strip():
+            return False
+        try:
+            body = resp.json()
+            return bool(body.get("success"))
+        except json.JSONDecodeError:
+            return False
+
+    async def _try_del_client_by_email(self, iid: int, email: str) -> bool:
+        encoded = quote(email, safe="")
+        resp = await self._post(
+            f"/panel/api/inbounds/{iid}/delClientByEmail/{encoded}"
+        )
+        if resp.status_code == 404 or not (resp.text or "").strip():
+            return False
+        try:
+            body = resp.json()
+            return bool(body.get("success"))
+        except json.JSONDecodeError:
+            return False
 
     async def get_clients_usage_gb(self, emails: list[str]) -> dict[str, float]:
         if not emails:

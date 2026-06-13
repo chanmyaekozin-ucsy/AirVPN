@@ -30,7 +30,15 @@ async def delete_panel_client(sub: dict) -> bool:
 
     client = PanelClient(server)
     try:
-        return await client.delete_client(email, client_uuid)
+        ok = await client.remove_client_for_replacement(email, client_uuid)
+        if not ok:
+            logger.error(
+                "Panel client still present after delete sub=%s email=%s server=%s",
+                sub.get("id"),
+                email,
+                server.id,
+            )
+        return ok
     except PanelError:
         logger.exception(
             "Failed to delete panel client %s on %s", email, server.id
@@ -126,10 +134,11 @@ async def replace_subscription_server(
 
     deleted = await delete_panel_client(sub)
     if not deleted:
-        logger.warning(
-            "Old panel client not deleted sub=%s server=%s",
+        logger.error(
+            "Old panel client not deleted sub=%s server=%s email=%s",
             sub.get("id"),
             from_server,
+            sub.get("panel_email"),
         )
 
     await db.update_subscription_after_server_change(
