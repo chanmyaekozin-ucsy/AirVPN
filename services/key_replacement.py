@@ -75,6 +75,9 @@ async def replace_subscription_server(
     telegram_id: int,
     target_server_id: str,
     feedback: str,
+    *,
+    adjusted_gb: float | None = None,
+    adjusted_expires_at: str | None = None,
 ) -> tuple[bool, str, dict | None]:
     """
     Provision on target server, delete old panel client, update DB.
@@ -89,11 +92,20 @@ async def replace_subscription_server(
     if not target or not target.is_configured():
         return False, "replace_server_unavailable", None
 
+    source = get_server(from_server)
+    if not source:
+        return False, "replace_server_unavailable", None
+
     quota = await compute_remaining_quota(sub)
     if not quota:
         return False, "replace_no_quota", None
 
     remaining_gb, expires_at = quota
+    if adjusted_gb is not None:
+        remaining_gb = adjusted_gb
+    if adjusted_expires_at is not None:
+        expires_at = adjusted_expires_at
+
     total_bytes = max(MIN_REMAINING_BYTES, int(remaining_gb * 1024**3))
     expiry_ms = _expiry_ms(expires_at)
 

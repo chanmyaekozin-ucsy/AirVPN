@@ -472,6 +472,50 @@ STRINGS: dict[str, dict[str, str]] = {
         "my": "အဲဒီ Server မှာပဲ ရှိနေပါတယ် — အခြား Server ရွေးပေးပါ။",
         "en": "That's your current server — pick a different one.",
     },
+    "replace_adjust_intro": {
+        "my": (
+            "<b>{server}</b> သို့ ပြောင်းမည်။\n"
+            "Server စျေးနှုန်း မတူညီသောကြောင့် လက်ကျန်ကို ညီမျှစွာ ပြင်ဆင်ပေးရပါမည်။\n\n"
+            "လက်ရှိ: <b>{current_gb} GB</b> · <b>{current_days}</b> ရက်\n"
+            "({from_price} Ks → {to_price} Ks)\n\n"
+            "ရွေးချယ်စရာ ၂ ခု — တစ်ခု ရွေးပါ:"
+        ),
+        "en": (
+            "Moving to <b>{server}</b>.\n"
+            "Plan prices differ, so your remaining quota will be adjusted fairly.\n\n"
+            "Current: <b>{current_gb} GB</b> · <b>{current_days}</b> days\n"
+            "({from_price} Ks → {to_price} Ks)\n\n"
+            "Pick one of two options:"
+        ),
+    },
+    "replace_adjust_option_keep_days": {
+        "my": "{n}) {gb} GB · {days} ရက် (သက်တမ်းထားမည်)",
+        "en": "{n}) {gb} GB · {days} days (keep expiry)",
+    },
+    "replace_adjust_option_keep_data": {
+        "my": "{n}) {gb} GB · {days} ရက် (ဒေတာထားမည်)",
+        "en": "{n}) {gb} GB · {days} days (keep data)",
+    },
+    "replace_adjust_pick": {
+        "my": "အောက်ပါ ရွေးချယ်စရာ ၂ ခုထဲက တစ်ခု ရွေးပါ။",
+        "en": "Please pick one of the two options below.",
+    },
+    "replace_adjust_failed": {
+        "my": "Quota ပြင်ဆင်၍ မရပါ — Admin ထံအကူအညီ တောင်းပါ။",
+        "en": "Could not calculate a fair adjustment — contact admin for help.",
+    },
+    "replace_ask_feedback_adjusted": {
+        "my": (
+            "<b>{server}</b> သို့ ပြောင်းမည်။\n"
+            "ရွေးထားသော quota: <b>{gb} GB</b> · <b>{days}</b> ရက်\n\n"
+            "ဘာကြောင့် Server ပြောင်းချင်တာလဲ — တိုတိုလေး ရိုက်ပြပေးပါ။"
+        ),
+        "en": (
+            "Moving to <b>{server}</b>.\n"
+            "Selected quota: <b>{gb} GB</b> · <b>{days} days</b>\n\n"
+            "Please tell us why you're switching (short feedback):"
+        ),
+    },
     "replace_no_quota": {
         "my": "ဒေတာ လက်ကျန်မရှိတော့ပါ (သို့) သက်တမ်းကုန်သွားပါပြီ။",
         "en": "No data left or subscription expired.",

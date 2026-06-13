@@ -118,6 +118,12 @@ def replace_server_keyboard(lang: str, servers: list) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
 
+def replace_adjust_keyboard(lang: str, labels: list[str]) -> ReplyKeyboardMarkup:
+    rows = [[KeyboardButton(label)] for label in labels]
+    rows.append([KeyboardButton(t(lang, "back"))])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
+
+
 def payment_methods(lang: str, plan_id: int) -> InlineKeyboardMarkup:
     """Single KBZPay account — kept for back-navigation only."""
     return InlineKeyboardMarkup(

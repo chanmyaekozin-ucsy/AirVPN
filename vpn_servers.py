@@ -272,3 +272,50 @@ def match_server_label(text: str) -> VpnServer | None:
 
 def is_active_server(server: VpnServer) -> bool:
     return server.id in _SERVERS
+
+
+def plan_price_signature(server: VpnServer) -> tuple[tuple[int, int, float, int], ...]:
+    """Plan tiers comparable across servers (sort_order, price_ks, data_gb, duration_days)."""
+    return tuple(
+        (p.sort_order, p.price_ks, p.data_gb, p.duration_days) for p in server.plans
+    )
+
+
+def servers_have_same_pricing(
+    a: VpnServer | None, b: VpnServer | None
+) -> bool:
+    if not a or not b or not a.plans or not b.plans:
+        return False
+    return plan_price_signature(a) == plan_price_signature(b)
+
+
+def list_replace_target_servers(from_server_id: str) -> list[VpnServer]:
+    """Active servers available as a replacement target (excluding source)."""
+    source = get_server(from_server_id)
+    if not source:
+        return []
+    fid = from_server_id.strip().lower()
+    return [s for s in list_servers() if s.id != fid]
+
+
+def list_replace_compatible_servers(from_server_id: str) -> list[VpnServer]:
+    """Servers with identical plan pricing (direct transfer, no adjustment)."""
+    source = get_server(from_server_id)
+    if not source:
+        return []
+    fid = from_server_id.strip().lower()
+    return [
+        s
+        for s in list_servers()
+        if s.id != fid and servers_have_same_pricing(source, s)
+    ]
+
+
+def get_env_plan_by_sort(server_id: str, sort_order: int) -> VpnPlan | None:
+    server = get_server(server_id)
+    if not server:
+        return None
+    for plan in server.plans:
+        if plan.sort_order == sort_order:
+            return plan
+    return None

@@ -512,14 +512,20 @@ async def server_label_select(
         return
 
     from handlers.key_replacement import (
-        REPLACE_FEEDBACK,
+        REPLACE_SELECT_ADJUST,
         REPLACE_SELECT_SERVER,
         REPLACE_SELECT_SUB,
         clear_replace_flow,
+        continue_replace_after_server_pick,
         replace_sub_keyboard,
     )
-    from handlers.keyboards import replace_server_keyboard
-    from vpn_servers import is_active_server, list_servers, match_server_label
+    from handlers.keyboards import replace_adjust_keyboard, replace_server_keyboard
+    from vpn_servers import (
+        is_active_server,
+        list_replace_target_servers,
+        list_servers,
+        match_server_label,
+    )
 
     text = (update.message.text or "").strip()
     server = match_server_label(text)
@@ -538,26 +544,35 @@ async def server_label_select(
         )
         return
 
+    if state == REPLACE_SELECT_ADJUST:
+        option_map = context.user_data.get("replace_option_map") or {}
+        labels = list(option_map.keys())
+        await update.message.reply_text(
+            t(lang, "replace_adjust_pick"),
+            parse_mode=PARSE_MODE,
+            reply_markup=replace_adjust_keyboard(lang, labels),
+        )
+        return
+
     if state == REPLACE_SELECT_SERVER:
+        from_server_id = context.user_data.get("replace_from_server") or "sg"
         if not is_active_server(server):
-            from_server = context.user_data.get("replace_from_server") or "sg"
-            servers = [s for s in list_servers() if s.id != from_server]
+            servers = list_replace_target_servers(from_server_id)
             await update.message.reply_text(
                 t(lang, "server_not_in_list"),
                 parse_mode=PARSE_MODE,
                 reply_markup=replace_server_keyboard(lang, servers),
             )
             return
-        if server.id == context.user_data.get("replace_from_server"):
-            await update.message.reply_text(t(lang, "replace_same_server"))
+        sub_id = context.user_data.get("replace_sub_id")
+        if not sub_id:
             return
-        context.user_data["replace_target_server"] = server.id
-        context.user_data["replace_state"] = REPLACE_FEEDBACK
-        context.user_data.pop("buy_flow", None)
-        context.user_data.pop("buy_server_id", None)
-        await update.message.reply_text(
-            t(lang, "replace_ask_feedback", server=md2(server.name(lang))),
-            parse_mode=PARSE_MODE,
+        sub = await db.get_subscription_by_id(sub_id)
+        if not sub:
+            clear_replace_flow(context)
+            return
+        await continue_replace_after_server_pick(
+            update.message, lang, context, server, sub
         )
         return
 
