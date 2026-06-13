@@ -30,6 +30,16 @@ logger = logging.getLogger("airvpn")
 async def post_init(application: Application) -> None:
     await db.init_db()
     await db.sync_plans_from_env()
+    from vpn_servers import find_unlisted_server_ids, list_servers
+
+    active = [s.id for s in list_servers()]
+    logger.info("VPN servers active: %s", ", ".join(active) or "(none)")
+    unlisted = find_unlisted_server_ids()
+    if unlisted:
+        logger.warning(
+            "Server env config exists but VPN_SERVERS omits: %s",
+            ", ".join(unlisted),
+        )
     logger.info("Database ready: %s", config.SQLITE_PATH)
 
 

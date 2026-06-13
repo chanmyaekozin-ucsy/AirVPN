@@ -217,6 +217,19 @@ def list_servers() -> list[VpnServer]:
     return [_SERVERS[sid] for sid in order if sid in _SERVERS]
 
 
+def find_unlisted_server_ids() -> list[str]:
+    """Env-defined server IDs that are missing from VPN_SERVERS."""
+    listed = set(_SERVERS.keys())
+    configured: set[str] = set()
+    for key in os.environ:
+        if not key.startswith("VPN_SERVER_") or not key.endswith("_PLANS"):
+            continue
+        sid = key[len("VPN_SERVER_") : -len("_PLANS")].strip().lower()
+        if sid and os.getenv(key, "").strip():
+            configured.add(sid)
+    return sorted(configured - listed)
+
+
 def get_server(server_id: str | None) -> VpnServer | None:
     if not server_id:
         return None
@@ -248,4 +261,14 @@ def match_server_label(text: str) -> VpnServer | None:
     for server in list_servers():
         if _labels_match(raw, server.name_en) or _labels_match(raw, server.name_my):
             return server
+    for sid in find_unlisted_server_ids():
+        server = _load_server(sid)
+        if not server or not server.plans:
+            continue
+        if _labels_match(raw, server.name_en) or _labels_match(raw, server.name_my):
+            return server
     return None
+
+
+def is_active_server(server: VpnServer) -> bool:
+    return server.id in _SERVERS

@@ -489,6 +489,102 @@ async def _show_plans_for_server(message, lang: str, server_id: str) -> None:
     )
 
 
+class _ServerLabelFilter(filters.MessageFilter):
+    def filter(self, message) -> bool:
+        if not message or not message.text:
+            return False
+        from vpn_servers import match_server_label
+
+        return match_server_label(message.text) is not None
+
+
+_SERVER_LABEL = _ServerLabelFilter()
+
+
+async def server_label_select(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle reply-keyboard server taps for buy plan and key replacement."""
+    if not await _guard(update, context):
+        return
+    user = update.effective_user
+    if not user or not update.message:
+        return
+
+    from handlers.key_replacement import (
+        REPLACE_FEEDBACK,
+        REPLACE_SELECT_SERVER,
+        REPLACE_SELECT_SUB,
+        clear_replace_flow,
+        replace_sub_keyboard,
+    )
+    from handlers.keyboards import replace_server_keyboard
+    from vpn_servers import is_active_server, list_servers, match_server_label
+
+    text = (update.message.text or "").strip()
+    server = match_server_label(text)
+    if not server:
+        return
+
+    lang = await _lang(update, context)
+    state = context.user_data.get("replace_state")
+
+    if state == REPLACE_SELECT_SUB:
+        subs = context.user_data.get("replace_subs") or []
+        await update.message.reply_text(
+            t(lang, "replace_pick_key"),
+            parse_mode=PARSE_MODE,
+            reply_markup=replace_sub_keyboard(lang, subs),
+        )
+        return
+
+    if state == REPLACE_SELECT_SERVER:
+        if not is_active_server(server):
+            from_server = context.user_data.get("replace_from_server") or "sg"
+            servers = [s for s in list_servers() if s.id != from_server]
+            await update.message.reply_text(
+                t(lang, "server_not_in_list"),
+                parse_mode=PARSE_MODE,
+                reply_markup=replace_server_keyboard(lang, servers),
+            )
+            return
+        if server.id == context.user_data.get("replace_from_server"):
+            await update.message.reply_text(t(lang, "replace_same_server"))
+            return
+        context.user_data["replace_target_server"] = server.id
+        context.user_data["replace_state"] = REPLACE_FEEDBACK
+        context.user_data.pop("buy_flow", None)
+        context.user_data.pop("buy_server_id", None)
+        await update.message.reply_text(
+            t(lang, "replace_ask_feedback", server=md2(server.name(lang))),
+            parse_mode=PARSE_MODE,
+        )
+        return
+
+    if context.user_data.get("payment_state"):
+        await update.message.reply_text(
+            t(lang, "replace_finish_payment_first"),
+            reply_markup=main_menu(lang, is_admin(user.id)),
+        )
+        return
+
+    if not is_active_server(server):
+        clear_replace_flow(context)
+        context.user_data["buy_flow"] = True
+        context.user_data.pop("buy_server_id", None)
+        await update.message.reply_text(
+            t(lang, "server_not_in_list"),
+            parse_mode=PARSE_MODE,
+            reply_markup=servers_reply_keyboard(lang, list_servers()),
+        )
+        return
+
+    clear_replace_flow(context)
+    context.user_data["buy_flow"] = True
+    context.user_data["buy_server_id"] = server.id
+    await _show_plans_for_server(update.message, lang, server.id)
+
+
 async def buy_plan_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
@@ -1059,8 +1155,8 @@ def _plan_label(plan: dict, lang: str) -> str:
 
 
 async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Reply keyboard: pick server, then plan."""
-    if context.user_data.get("replace_state"):
+    """Reply keyboard: pick plan during buy flow (servers handled by server_label_select)."""
+    if context.user_data.get("replace_state") and not context.user_data.get("buy_flow"):
         return
     if not await _guard(update, context):
         return
@@ -1070,20 +1166,10 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     from locales import STRINGS
-    from vpn_servers import list_servers, match_server_label
+    from vpn_servers import list_servers
 
     if text in {STRINGS["back"]["my"], STRINGS["back"]["en"]}:
         await back_to_main(update, context)
-        return
-
-    lang = await _lang(update, context)
-    server = match_server_label(text)
-
-    # Recognize server labels even when buy_flow was cleared (bot restart, stale keyboard).
-    if server and not context.user_data.get("payment_state"):
-        context.user_data["buy_flow"] = True
-        context.user_data["buy_server_id"] = server.id
-        await _show_plans_for_server(update.message, lang, server.id)
         return
 
     if not context.user_data.get("buy_flow"):
@@ -1091,6 +1177,7 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if context.user_data.get("payment_state"):
         return
 
+    lang = await _lang(update, context)
     server_id = context.user_data.get("buy_server_id")
     if not server_id:
         await update.message.reply_text(
@@ -1151,6 +1238,7 @@ def build_user_handlers() -> list:
         MessageHandler(_LANGUAGE_CHOICE, language_text_select),
         MessageHandler(menu_text_filter("menu_buy"), buy_plan_message),
         MessageHandler(menu_text_filter("back"), back_to_main),
+        MessageHandler(_SERVER_LABEL, server_label_select),
         MessageHandler(filters.Regex("^Admin$"), admin_panel),
     ]
     handlers.extend(build_key_replacement_handlers())

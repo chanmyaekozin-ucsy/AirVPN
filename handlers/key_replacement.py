@@ -24,7 +24,7 @@ from services.key_replacement import (
 from utils.formatting import PARSE_MODE, md2
 from utils.rate_limit import allow as rate_allow
 from utils.vless_delivery import deliver_vpn_access
-from vpn_servers import get_server, list_servers, match_server_label
+from vpn_servers import get_server, list_servers
 
 logger = logging.getLogger(__name__)
 
@@ -174,32 +174,6 @@ async def replace_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE
             return
         context.user_data["replace_sub_id"] = sub["id"]
         await _prompt_target_server(update.message, lang, sub, context)
-        return
-
-    if state == REPLACE_SELECT_SERVER:
-        server = match_server_label(text)
-        if not server:
-            from_server = context.user_data.get("replace_from_server") or "sg"
-            servers = [s for s in list_servers() if s.id != from_server]
-            current = get_server(from_server)
-            current_name = current.name(lang) if current else from_server.upper()
-            await update.message.reply_text(
-                t(lang, "replace_pick_server", current=md2(current_name)),
-                parse_mode=PARSE_MODE,
-                reply_markup=replace_server_keyboard(lang, servers),
-            )
-            return
-        if server.id == context.user_data.get("replace_from_server"):
-            await update.message.reply_text(t(lang, "replace_same_server"))
-            return
-        context.user_data["replace_target_server"] = server.id
-        context.user_data["replace_state"] = REPLACE_FEEDBACK
-        context.user_data.pop("buy_flow", None)
-        context.user_data.pop("buy_server_id", None)
-        await update.message.reply_text(
-            t(lang, "replace_ask_feedback", server=md2(server.name(lang))),
-            parse_mode=PARSE_MODE,
-        )
         return
 
     if state == REPLACE_FEEDBACK:

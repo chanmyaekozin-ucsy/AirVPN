@@ -181,6 +181,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "my": "<b>ဆာဗာ တည်နေရာ ရွေးချယ်ပါ</b>",
         "en": "<b>Choose Server</b>",
     },
+    "server_not_in_list": {
+        "my": (
+            "ဤ Server ကို ယခု မရရှိနိုင်ပါ။ အောက်က Server စာရင်းမှ ပြန်ရွေးပါ "
+            "(Admin: VPN_SERVERS ထဲမှာ server ID ထည့်ရန် လိုနိုင်သည်)။"
+        ),
+        "en": (
+            "That server is not available. Pick from the list below "
+            "(admin: add its ID to VPN_SERVERS if it should be offered)."
+        ),
+    },
     "plans_title": {
         "my": "<b>အသုံးပြုလိုတဲ့ ပလန်ကို ရွေးချယ်ပေးပါ</b>",
         "en": "<b>Choose a Plan</b>",
