@@ -421,6 +421,9 @@ class PanelClient:
 
     async def _clear_stale_email(self, email: str) -> None:
         """Remove panel records for email from inbound JSON and client_traffics."""
+        if await self._try_full_client_delete(email):
+            return
+
         traffic = await self.get_client_traffic_record(email)
         stale_inbound_id = int(traffic["inboundId"]) if traffic and traffic.get("inboundId") else None
 
@@ -447,7 +450,10 @@ class PanelClient:
             if uid:
                 await self.delete_client(email, str(uid), inbound_id=delete_inbound_id)
 
-        if await self.get_client_traffic_record(email):
+        if await self._try_full_client_delete(email):
+            return
+
+        if await self._client_still_registered(email, None):
             raise PanelError(
                 f"Panel still has stale client {email!r}; delete it manually in 3x-ui"
             )
@@ -511,7 +517,10 @@ class PanelClient:
     async def remove_client_for_replacement(
         self, email: str, client_uuid: str | None = None
     ) -> bool:
-        """Remove a client from inbound settings, traffic stats, and panel DB."""
+        """Fully remove a client (3x-ui v3 Clients page + inbound attachment)."""
+        if await self._try_full_client_delete(email):
+            return True
+
         traffic = await self.get_client_traffic_record(email)
         inbound_ids: list[int] = []
         if traffic and traffic.get("inboundId"):
@@ -522,6 +531,9 @@ class PanelClient:
         for iid in inbound_ids:
             await self._remove_client_on_inbound(iid, email, client_uuid)
 
+        if await self._try_full_client_delete(email):
+            return True
+
         if await self.get_client_traffic_record(email):
             try:
                 await self._clear_stale_email(email)
@@ -531,10 +543,65 @@ class PanelClient:
                     email,
                     self.server.id,
                 )
-            if await self.get_client_traffic_record(email):
-                return False
 
-        return not await self._client_exists_on_panel(email, client_uuid)
+        if await self._try_full_client_delete(email):
+            return True
+
+        return not await self._client_still_registered(email, client_uuid)
+
+    async def _try_full_client_delete(self, email: str) -> bool:
+        """Delete client record + traffic via 3x-ui Clients API (v3.2+)."""
+        if await self._try_bulk_delete_client_records([email]):
+            return not await self._client_still_registered(email, None)
+        if await self._try_delete_client_record_by_email(email):
+            return not await self._client_still_registered(email, None)
+        return False
+
+    async def _client_still_registered(
+        self, email: str, client_uuid: str | None
+    ) -> bool:
+        if await self.get_client_traffic_record(email):
+            return True
+        return await self._client_exists_on_panel(email, client_uuid)
+
+    async def _try_bulk_delete_client_records(self, emails: list[str]) -> bool:
+        if not emails:
+            return False
+        resp = await self._post(
+            "/panel/api/clients/bulkDel",
+            json={"emails": emails, "keepTraffic": False},
+        )
+        if resp.status_code == 404:
+            return False
+        if not (resp.text or "").strip():
+            return resp.status_code == 200
+        try:
+            body = resp.json()
+        except json.JSONDecodeError:
+            return False
+        if not body.get("success"):
+            return False
+        obj = body.get("obj")
+        if isinstance(obj, dict):
+            skipped = obj.get("skipped") or obj.get("Skipped") or obj.get("perEmailSkipped")
+            if isinstance(skipped, dict):
+                wanted = {e.strip().lower() for e in emails if e.strip()}
+                if wanted & {str(k).strip().lower() for k in skipped}:
+                    return False
+        return True
+
+    async def _try_delete_client_record_by_email(self, email: str) -> bool:
+        encoded = quote(email, safe="")
+        resp = await self._post(f"/panel/api/clients/del/{encoded}")
+        if resp.status_code == 404:
+            return False
+        if not (resp.text or "").strip():
+            return resp.status_code == 200
+        try:
+            body = resp.json()
+            return bool(body.get("success"))
+        except json.JSONDecodeError:
+            return False
 
     async def _client_exists_on_panel(
         self, email: str, client_uuid: str | None
