@@ -13,6 +13,8 @@ MENU_ALIASES: dict[str, tuple[str, ...]] = {
     "menu_replace": (
         "Change Server",
         "ဆာဗာ ပြောင်းမယ်",
+        "Key ပြန်လဲမယ်",
+        "Replace Key",
     ),
 }
 

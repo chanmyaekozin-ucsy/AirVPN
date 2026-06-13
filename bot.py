@@ -65,9 +65,11 @@ def main() -> None:
 
     for handler in build_group_payment_handlers():
         app.add_handler(handler, group=-1)
-    for handler in build_admin_handlers():
-        app.add_handler(handler, group=0)
+    # User menu handlers before admin conversations so admin users' menu taps
+    # are not swallowed by a stale ConversationHandler state.
     for handler in build_user_handlers():
+        app.add_handler(handler, group=0)
+    for handler in build_admin_handlers():
         app.add_handler(handler, group=0)
 
     logger.info("AirVPN bot starting…")

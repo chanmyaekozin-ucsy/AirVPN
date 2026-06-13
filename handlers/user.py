@@ -1133,7 +1133,10 @@ def menu_text_filter(text_key: str):
 
 def build_user_handlers() -> list:
     from handlers.admin import admin_panel
-    from handlers.key_replacement import build_key_replacement_handlers
+    from handlers.key_replacement import (
+        build_key_replacement_handlers,
+        replace_key_start,
+    )
 
     handlers = [
         CallbackQueryHandler(language_callback, pattern=r"^lang_(my|en)$"),
@@ -1143,6 +1146,7 @@ def build_user_handlers() -> list:
         CommandHandler("buy", buy_plan_message),
         MessageHandler(menu_text_filter("menu_daily"), daily_gift),
         MessageHandler(menu_text_filter("menu_my_key"), my_key),
+        MessageHandler(menu_text_filter("menu_replace"), replace_key_start),
         MessageHandler(menu_text_filter("menu_download"), download_apps_menu),
         MessageHandler(menu_text_filter("menu_support"), support),
         MessageHandler(menu_text_filter("menu_lang"), language_menu),

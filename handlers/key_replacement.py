@@ -14,7 +14,7 @@ from handlers.keyboards import (
     replace_server_keyboard,
     replace_sub_keyboard,
 )
-from handlers.user import _guard, _lang, menu_text_filter
+from handlers.user import _guard, _lang
 from locales import STRINGS, t
 from services.key_replacement import (
     compute_remaining_quota,
@@ -56,27 +56,42 @@ def _parse_sub_pick(text: str, subs: list[dict]) -> dict | None:
 async def replace_key_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
+    user = update.effective_user
+    if not user or not update.message:
+        return
+    lang = await _lang(update, context)
+    menu = main_menu(lang, is_admin(user.id))
+
     if context.user_data.get("payment_state"):
-        lang = await _lang(update, context)
-        await update.message.reply_text(t(lang, "replace_finish_payment_first"))
+        await update.message.reply_text(
+            t(lang, "replace_finish_payment_first"),
+            reply_markup=menu,
+        )
         return
 
     clear_replace_flow(context)
     context.user_data.pop("pending_payment_id", None)
     context.user_data.pop("payment_state", None)
     context.user_data.pop("buy_server_id", None)
-    user = update.effective_user
+    context.user_data.pop("buy_flow", None)
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = row["language"]
+    menu = main_menu(lang, is_admin(user.id))
 
     subs = await db.get_active_paid_subscriptions(row["id"])
     if not subs:
-        await update.message.reply_text(t(lang, "replace_no_paid_keys"))
+        await update.message.reply_text(
+            t(lang, "replace_no_paid_keys"),
+            reply_markup=menu,
+        )
         return
 
     servers = list_servers()
     if len(servers) < 2:
-        await update.message.reply_text(t(lang, "replace_need_two_servers"))
+        await update.message.reply_text(
+            t(lang, "replace_need_two_servers"),
+            reply_markup=menu,
+        )
         return
 
     if not rate_allow(
@@ -84,7 +99,10 @@ async def replace_key_start(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         max_calls=5,
         window_sec=86400,
     ):
-        await update.message.reply_text(t(lang, "rate_limited"))
+        await update.message.reply_text(
+            t(lang, "rate_limited"),
+            reply_markup=menu,
+        )
         return
 
     context.user_data["replace_subs"] = subs
@@ -209,7 +227,11 @@ async def replace_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE
 
         if not ok:
             err_key = msg if msg in STRINGS else "replace_failed"
-            await update.message.reply_text(t(lang, err_key), parse_mode=PARSE_MODE)
+            await update.message.reply_text(
+                t(lang, err_key),
+                parse_mode=PARSE_MODE,
+                reply_markup=main_menu(lang, is_admin(user.id)),
+            )
             return
 
         target = get_server(target_id)
@@ -244,11 +266,13 @@ async def replace_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE
                 vless_key=updated["vless_key"],
                 sub_id=updated["id"],
             )
+            from handlers.keyboards import restore_main_menu
+
+            await restore_main_menu(context.bot, update.effective_chat.id, lang, user.id)
 
 
 def build_key_replacement_handlers() -> list:
     return [
-        MessageHandler(menu_text_filter("menu_replace"), replace_key_start),
         MessageHandler(
             filters.TEXT & ~filters.COMMAND,
             replace_text_router,
