@@ -42,7 +42,7 @@ def resolve_language_choice(text: str | None) -> str | None:
 def main_menu(lang: str, is_admin: bool = False) -> ReplyKeyboardMarkup:
     rows = [
         [t(lang, "menu_daily"), t(lang, "menu_buy")],
-        [t(lang, "menu_my_key")],
+        [t(lang, "menu_my_key"), t(lang, "menu_replace")],
         [t(lang, "menu_download"), t(lang, "menu_support")],
         [t(lang, "menu_lang")],
     ]
@@ -85,6 +85,35 @@ def plans_reply_keyboard(lang: str, plans: list) -> ReplyKeyboardMarkup:
         [KeyboardButton(t(lang, "plan_item", title=p["title"], price=p["price_ks"]))]
         for p in plans
     ]
+    rows.append([KeyboardButton(t(lang, "back"))])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
+
+
+def replace_sub_keyboard(lang: str, subs: list) -> ReplyKeyboardMarkup:
+    from vpn_servers import get_server
+
+    rows = []
+    for i, sub in enumerate(subs, start=1):
+        server = get_server(sub.get("server_id"))
+        server_name = (
+            server.name(lang) if server else (sub.get("server_id") or "?").upper()
+        )
+        label = t(
+            lang,
+            "replace_sub_pick",
+            n=i,
+            plan=sub.get("plan_title", "VPN"),
+            server=server_name,
+        )
+        rows.append([KeyboardButton(label)])
+    rows.append([KeyboardButton(t(lang, "back"))])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
+
+
+def replace_server_keyboard(lang: str, servers: list) -> ReplyKeyboardMarkup:
+    from vpn_servers import server_button_label
+
+    rows = [[KeyboardButton(server_button_label(s, lang))] for s in servers]
     rows.append([KeyboardButton(t(lang, "back"))])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 

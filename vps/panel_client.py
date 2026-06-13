@@ -143,6 +143,50 @@ class PanelClient:
         )
         return client_uuid, email, vless_key
 
+    async def add_client_with_limits(
+        self,
+        telegram_id: int,
+        total_bytes: int,
+        expiry_ms: int,
+        remark: str | None = None,
+    ) -> tuple[str, str, str]:
+        """Create a client with an absolute expiry and byte quota (server migration)."""
+        inbound = await self.get_inbound()
+        stream = json.loads(inbound["streamSettings"])
+        client_uuid = str(uuid.uuid4())
+        email = f"tg_{telegram_id}_{client_uuid[:8]}"
+        flow = (
+            self.server.vless_flow
+            if self.server.vless_security == "reality"
+            else ""
+        )
+        client_obj = {
+            "id": client_uuid,
+            "email": email,
+            "enable": True,
+            "expiryTime": expiry_ms,
+            "totalGB": total_bytes,
+            "limitIp": 2,
+            "flow": flow,
+        }
+        if await self.get_client_traffic_record(email):
+            await self._clear_stale_email(email)
+            client_uuid = str(uuid.uuid4())
+            email = f"tg_{telegram_id}_{client_uuid[:8]}"
+            client_obj["id"] = client_uuid
+            client_obj["email"] = email
+        await self._add_client_via_api(inbound["id"], client_obj)
+        tag = remark or f"AirVPN-{telegram_id}"
+        vless_key = build_vless_url(
+            uuid=client_uuid,
+            host=self.server.vps_host,
+            port=self.server.vps_port or inbound["port"],
+            remark=tag,
+            stream=stream,
+            server=self.server,
+        )
+        return client_uuid, email, vless_key
+
     async def add_or_update_client(
         self,
         email: str,
@@ -514,6 +558,28 @@ async def provision_vless(
     client = PanelClient(server)
     try:
         return await client.add_client(telegram_id, data_limit_gb, expiry_days)
+    finally:
+        await client.close()
+
+
+async def provision_migrated_vless(
+    telegram_id: int,
+    total_bytes: int,
+    expiry_ms: int,
+    server_id: str,
+) -> tuple[str, str, str]:
+    """Provision on target server preserving remaining quota and expiry."""
+    server = get_server(server_id) or get_default_server()
+    remark = f"AirVPN-{telegram_id}"
+    if _use_mock_vpn(server):
+        email = f"tg_{telegram_id}_{uuid.uuid4().hex[:8]}"
+        return _mock_vless(telegram_id, email, remark, server)
+
+    client = PanelClient(server)
+    try:
+        return await client.add_client_with_limits(
+            telegram_id, total_bytes, expiry_ms, remark
+        )
     finally:
         await client.close()
 

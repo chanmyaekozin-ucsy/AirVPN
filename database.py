@@ -125,6 +125,20 @@ async def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
             CREATE INDEX IF NOT EXISTS idx_subs_user ON subscriptions(user_id, is_active);
+
+            CREATE TABLE IF NOT EXISTS key_replacements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                subscription_id INTEGER NOT NULL,
+                from_server TEXT NOT NULL,
+                to_server TEXT NOT NULL,
+                feedback TEXT NOT NULL,
+                remaining_gb REAL NOT NULL,
+                expires_at TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
+            );
             """
         )
         await _migrate_columns(db)
@@ -899,6 +913,66 @@ async def update_subscription_usage(sub_id: int, used_gb: float) -> None:
         await db.execute(
             "UPDATE subscriptions SET data_used_gb = ? WHERE id = ?",
             (used_gb, sub_id),
+        )
+        await db.commit()
+
+
+async def update_subscription_after_server_change(
+    sub_id: int,
+    *,
+    server_id: str,
+    vless_uuid: str,
+    vless_key: str,
+    panel_email: str,
+    data_limit_gb: float,
+    expires_at: str,
+) -> None:
+    """Point subscription at a new panel client after server migration."""
+    async with _db() as db:
+        await db.execute(
+            """UPDATE subscriptions SET
+               server_id = ?, vless_uuid = ?, vless_key = ?, panel_email = ?,
+               data_limit_gb = ?, data_used_gb = 0, bonus_data_mb = 0,
+               expires_at = ?
+               WHERE id = ? AND is_active = 1""",
+            (
+                server_id,
+                vless_uuid,
+                vless_key,
+                panel_email,
+                data_limit_gb,
+                expires_at,
+                sub_id,
+            ),
+        )
+        await db.commit()
+
+
+async def log_key_replacement(
+    user_id: int,
+    subscription_id: int,
+    *,
+    from_server: str,
+    to_server: str,
+    feedback: str,
+    remaining_gb: float,
+    expires_at: str,
+) -> None:
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO key_replacements
+               (user_id, subscription_id, from_server, to_server, feedback,
+                remaining_gb, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                user_id,
+                subscription_id,
+                from_server,
+                to_server,
+                feedback,
+                remaining_gb,
+                expires_at,
+            ),
         )
         await db.commit()
 

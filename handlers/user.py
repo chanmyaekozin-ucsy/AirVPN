@@ -191,6 +191,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
     _clear_payment_flow(context)
+    from handlers.key_replacement import clear_replace_flow
+
+    clear_replace_flow(context)
     user = update.effective_user
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = row["language"]
@@ -372,6 +375,9 @@ async def language_text_select(
 async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
+    from handlers.key_replacement import clear_replace_flow
+
+    clear_replace_flow(context)
     if context.user_data.get("admin_view"):
         from handlers.admin import admin_back
 
@@ -883,6 +889,8 @@ async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
 
 async def receipt_tx_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.user_data.get("replace_state"):
+        return
     if not await _guard(update, context):
         return
     user = update.effective_user
@@ -937,6 +945,9 @@ async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     lang = await _lang(update, context)
     _clear_payment_flow(context)
+    from handlers.key_replacement import clear_replace_flow
+
+    clear_replace_flow(context)
     admin = is_admin(user.id) if user else False
     await update.message.reply_text(
         t(lang, "cancel"),
@@ -951,6 +962,8 @@ def _plan_label(plan: dict, lang: str) -> str:
 
 async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply keyboard: pick server, then plan."""
+    if context.user_data.get("replace_state"):
+        return
     if context.user_data.get("payment_state"):
         return
     if not await _guard(update, context):
@@ -1005,8 +1018,9 @@ def menu_text_filter(text_key: str):
 
 def build_user_handlers() -> list:
     from handlers.admin import admin_panel
+    from handlers.key_replacement import build_key_replacement_handlers
 
-    return [
+    handlers = [
         CallbackQueryHandler(language_callback, pattern=r"^lang_(my|en)$"),
         CallbackQueryHandler(user_callback_gate, pattern=USER_CALLBACK_PATTERN),
         CommandHandler("start", start),
@@ -1021,10 +1035,16 @@ def build_user_handlers() -> list:
         MessageHandler(menu_text_filter("menu_buy"), buy_plan_message),
         MessageHandler(menu_text_filter("back"), back_to_main),
         MessageHandler(filters.Regex("^Admin$"), admin_panel),
+    ]
+    handlers.extend(build_key_replacement_handlers())
+    handlers.extend(
+        [
         MessageHandler(
             filters.TEXT & filters.Regex(r"^\d{10,}$") & ~filters.COMMAND,
             receipt_tx_id,
         ),
         MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
         MessageHandler(filters.PHOTO, receipt_photo, block=False),
-    ]
+        ]
+    )
+    return handlers

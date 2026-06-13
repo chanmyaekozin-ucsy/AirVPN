@@ -28,6 +28,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "menu_daily": {"my": "နေ့စဉ် လက်ဆောင်ယူမယ်", "en": "Daily Gift"},
     "menu_buy": {"my": "ပလန် ဝယ်ယူမယ်", "en": "Buy Plan"},
     "menu_my_key": {"my": "ကျွန်ုပ်၏ VPN Key များ", "en": "My VPN Key(s)"},
+    "menu_replace": {"my": "ဆာဗာ ပြောင်းမယ်", "en": "Change Server"},
     "menu_download": {"my": "App ဒေါင်းလုတ်ဆွဲရန်", "en": "Download VPN Apps"},
     "menu_support": {"my": "အကူအညီ တောင်းရန်", "en": "Support"},
     "menu_lang": {"my": "ဘာသာစကား ပြောင်းရန်", "en": "Language"},
@@ -376,6 +377,92 @@ STRINGS: dict[str, dict[str, str]] = {
             "You don't have a VPN key yet.\n"
             "Claim Daily Gift for a free key, or tap to buy a plan."
         ),
+    },
+    "replace_no_paid_keys": {
+        "my": (
+            "ငွေပေးချေပြီး Active ဖြစ်နေတဲ့ VPN Key မရှိသေးပါဘူး။\n"
+            "ပလန် ဝယ်ယူမယ် ကနေ အရင်ဝယ်ယူပေးပါ။"
+        ),
+        "en": (
+            "You don't have an active paid VPN key.\n"
+            "Tap Buy Plan first."
+        ),
+    },
+    "replace_need_two_servers": {
+        "my": "ဆာဗာ ပြောင်းဖို့ Server အနည်းဆုံး ၂ ခု လိုအပ်ပါတယ်။",
+        "en": "At least two servers must be configured to change location.",
+    },
+    "replace_no_other_servers": {
+        "my": "ပြောင်းလို့ရတဲ့ အခြား Server မရှိပါဘူး။",
+        "en": "No other servers are available to switch to.",
+    },
+    "replace_finish_payment_first": {
+        "my": "ငွေပေးချေမှု မပြီးသေးပါ — /cancel နှိပ်ပြီး ပြန်စပေးပါ။",
+        "en": "Finish or cancel your payment first (/cancel).",
+    },
+    "replace_pick_key": {
+        "my": "<b>ဆာဗာ ပြောင်းမည့် VPN Key</b> ကို ရွေးပါ။",
+        "en": "<b>Select the VPN key</b> you want to move to another server.",
+    },
+    "replace_sub_pick": {
+        "my": "#{n} {plan} — {server}",
+        "en": "#{n} {plan} — {server}",
+    },
+    "replace_pick_server": {
+        "my": (
+            "<b>လက်ရှိ Server:</b> {current}\n\n"
+            "ပြောင်းလိုသော Server ကို ရွေးပါ။"
+        ),
+        "en": (
+            "<b>Current server:</b> {current}\n\n"
+            "Choose the new server."
+        ),
+    },
+    "replace_ask_feedback": {
+        "my": (
+            "<b>{server}</b> သို့ ပြောင်းမည်။\n\n"
+            "ဘာကြောင့် Server ပြောင်းချင်တာလဲ — တိုတိုလေး ရိုက်ပြပေးပါ။"
+        ),
+        "en": (
+            "Moving to <b>{server}</b>.\n\n"
+            "Please tell us why you're switching (short feedback):"
+        ),
+    },
+    "replace_working": {
+        "my": "Key အသစ်ကို ပြင်ဆင်နေပါတယ်… ခဏလေးစောင့်ပေးပါ။",
+        "en": "Setting up your new key… one moment.",
+    },
+    "replace_done": {
+        "my": (
+            "<b>Server ပြောင်းပြီးပါပြီ!</b>\n\n"
+            "Server: <b>{server}</b>\n"
+            "ဒေတာလက်ကျန်: <b>{remaining} GB</b>\n"
+            "သက်တမ်း: <b>{expires}</b>\n\n"
+            "အောက်က Key / Subscription Link အသစ်ကို App ထဲ Import လုပ်ပါ။"
+        ),
+        "en": (
+            "<b>Server changed!</b>\n\n"
+            "Server: <b>{server}</b>\n"
+            "Data left: <b>{remaining} GB</b>\n"
+            "Expires: <b>{expires}</b>\n\n"
+            "Import the new key or subscription link in your VPN app."
+        ),
+    },
+    "replace_same_server": {
+        "my": "အဲဒီ Server မှာပဲ ရှိနေပါတယ် — အခြား Server ရွေးပေးပါ။",
+        "en": "That's your current server — pick a different one.",
+    },
+    "replace_no_quota": {
+        "my": "ဒေတာ လက်ကျန်မရှိတော့ပါ (သို့) သက်တမ်းကုန်သွားပါပြီ။",
+        "en": "No data left or subscription expired.",
+    },
+    "replace_failed": {
+        "my": "Server ပြောင်း၍ မရပါ — Support ကို ဆက်သွယ်ပါ။",
+        "en": "Could not change server — contact Support.",
+    },
+    "replace_server_unavailable": {
+        "my": "ရွေးထားတဲ့ Server ကို ယာယီ အသုံးမပြုနိုင်ပါ။",
+        "en": "That server is not available right now.",
     },
     "my_keys_title": {
         "my": "<b>ကျွန်ုပ်၏ VPN Key များ</b> ({count} ခု)",
