@@ -17,6 +17,27 @@ class PanelError(Exception):
     pass
 
 
+def _parse_json_field(value: Any, *, field: str = "field") -> Any:
+    """3x-ui v2 returns JSON strings; v3 may return parsed objects."""
+    if value is None:
+        return {}
+    if isinstance(value, (dict, list)):
+        return value
+    if isinstance(value, str):
+        if not value.strip():
+            return {}
+        return json.loads(value)
+    if isinstance(value, (bytes, bytearray)):
+        return json.loads(value)
+    raise PanelError(f"Unexpected type for inbound {field}: {type(value).__name__}")
+
+
+def _serialize_json_field(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, separators=(",", ":"))
+
+
 class PanelClient:
     """Minimal 3x-ui API wrapper for adding VLESS clients."""
 
@@ -91,6 +112,11 @@ class PanelClient:
         if not self._logged_in:
             await self.login()
 
+    async def _csrf_token(self) -> str:
+        resp = await self._client.get(f"{self.base}/csrf-token")
+        body = self._parse_json_response(resp, "csrf-token")
+        return str(body.get("obj") or "")
+
     async def _get(self, path: str) -> httpx.Response:
         await self._ensure_login()
         return await self._client.get(f"{self.base}{path}", headers=self._api_headers())
@@ -98,6 +124,8 @@ class PanelClient:
     async def _post(self, path: str, **kwargs) -> httpx.Response:
         await self._ensure_login()
         headers = {**self._api_headers(), **kwargs.pop("headers", {})}
+        if not self._api_token:
+            headers["x-csrf-token"] = await self._csrf_token()
         return await self._client.post(
             f"{self.base}{path}", headers=headers, **kwargs
         )
@@ -117,8 +145,8 @@ class PanelClient:
         expiry_days: int,
     ) -> tuple[str, str, str]:
         inbound = await self.get_inbound()
-        settings = json.loads(inbound["settings"])
-        stream = json.loads(inbound["streamSettings"])
+        settings = _parse_json_field(inbound["settings"], field="settings")
+        stream = _parse_json_field(inbound["streamSettings"], field="streamSettings")
 
         client_uuid = str(uuid.uuid4())
         email = f"tg_{telegram_id}_{client_uuid[:8]}"
@@ -152,8 +180,8 @@ class PanelClient:
         payload = {
             "id": inbound["id"],
             "settings": json.dumps(settings),
-            "streamSettings": inbound["streamSettings"],
-            "sniffing": inbound.get("sniffing", "{}"),
+            "streamSettings": _serialize_json_field(inbound["streamSettings"]),
+            "sniffing": _serialize_json_field(inbound.get("sniffing", "{}")),
             "remark": inbound.get("remark", ""),
             "enable": inbound.get("enable", True),
             "expiryTime": inbound.get("expiryTime", 0),
@@ -163,8 +191,8 @@ class PanelClient:
             "tag": inbound.get("tag", ""),
         }
 
-        resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/update/{inbound['id']}",
+        resp = await self._post(
+            f"/panel/api/inbounds/update/{inbound['id']}",
             json=payload,
         )
         body = resp.json()
@@ -190,7 +218,7 @@ class PanelClient:
     ) -> tuple[str, str, str]:
         """Create a client with an absolute expiry and byte quota (server migration)."""
         inbound = await self.get_inbound()
-        stream = json.loads(inbound["streamSettings"])
+        stream = _parse_json_field(inbound["streamSettings"], field="streamSettings")
         client_uuid = str(uuid.uuid4())
         email = f"tg_{telegram_id}_{client_uuid[:8]}"
         flow = (
@@ -254,8 +282,8 @@ class PanelClient:
         remark: str | None = None,
     ) -> tuple[str, str, str]:
         inbound = await self.get_inbound()
-        settings = json.loads(inbound["settings"])
-        stream = json.loads(inbound["streamSettings"])
+        settings = _parse_json_field(inbound["settings"], field="settings")
+        stream = _parse_json_field(inbound["streamSettings"], field="streamSettings")
         clients: list[dict] = settings.get("clients", [])
 
         from datetime import datetime, timedelta, timezone
@@ -302,21 +330,23 @@ class PanelClient:
         return client_uuid, email, vless_key
 
     async def _add_client_via_api(self, inbound_id: int, client: dict[str, Any]) -> None:
-        await self._ensure_login()
         payload = {
             "id": inbound_id,
             "settings": json.dumps({"clients": [client]}),
         }
-        resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/addClient",
-            data=payload,
-        )
+        resp = await self._post("/panel/api/inbounds/addClient", data=payload)
+        if resp.status_code == 404:
+            inbound = await self.get_inbound(inbound_id)
+            settings = _parse_json_field(inbound["settings"], field="settings")
+            clients: list[dict] = list(settings.get("clients", []))
+            clients.append(client)
+            await self._save_inbound_clients(inbound, clients)
+            return
         body = self._parse_json_response(resp, "addClient")
         if not body.get("success"):
             raise PanelError(f"addClient failed: {body.get('msg')}")
 
     async def _update_client_via_api(self, inbound_id: int, client: dict[str, Any]) -> None:
-        await self._ensure_login()
         client_uuid = client.get("id")
         if not client_uuid:
             raise PanelError("updateClient failed: missing client id")
@@ -326,17 +356,24 @@ class PanelClient:
             "settings": json.dumps({"clients": [client]}),
         }
         encoded_uuid = quote(str(client_uuid), safe="")
-        resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/updateClient/{encoded_uuid}",
+        resp = await self._post(
+            f"/panel/api/inbounds/updateClient/{encoded_uuid}",
             data=payload,
         )
+        if resp.status_code == 404:
+            await self._replace_client_in_inbound(inbound_id, client)
+            return
         body = self._parse_json_response(resp, "updateClient")
         if body.get("success"):
             return
+        await self._replace_client_in_inbound(inbound_id, client)
 
-        # Older panels: fall back to rewriting the inbound client list.
+    async def _replace_client_in_inbound(
+        self, inbound_id: int, client: dict[str, Any]
+    ) -> None:
+        client_uuid = client.get("id")
         inbound = await self.get_inbound(inbound_id)
-        settings = json.loads(inbound["settings"])
+        settings = _parse_json_field(inbound["settings"], field="settings")
         clients: list[dict] = settings.get("clients", [])
         replaced = False
         for i, existing in enumerate(clients):
@@ -351,13 +388,13 @@ class PanelClient:
     async def _save_inbound_clients(
         self, inbound: dict[str, Any], clients: list[dict]
     ) -> None:
-        settings = json.loads(inbound["settings"])
+        settings = _parse_json_field(inbound["settings"], field="settings")
         settings["clients"] = clients
         payload = {
             "id": inbound["id"],
             "settings": json.dumps(settings),
-            "streamSettings": inbound["streamSettings"],
-            "sniffing": inbound.get("sniffing", "{}"),
+            "streamSettings": _serialize_json_field(inbound["streamSettings"]),
+            "sniffing": _serialize_json_field(inbound.get("sniffing", "{}")),
             "remark": inbound.get("remark", ""),
             "enable": inbound.get("enable", True),
             "expiryTime": inbound.get("expiryTime", 0),
@@ -366,8 +403,8 @@ class PanelClient:
             "protocol": inbound["protocol"],
             "tag": inbound.get("tag", ""),
         }
-        resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/update/{inbound['id']}",
+        resp = await self._post(
+            f"/panel/api/inbounds/update/{inbound['id']}",
             json=payload,
         )
         body = resp.json()
@@ -385,7 +422,9 @@ class PanelClient:
         stale_inbound_id = int(traffic["inboundId"]) if traffic and traffic.get("inboundId") else None
 
         inbound = await self.get_inbound(stale_inbound_id)
-        clients = json.loads(inbound["settings"]).get("clients", [])
+        clients = _parse_json_field(inbound["settings"], field="settings").get(
+            "clients", []
+        )
         filtered = [c for c in clients if c.get("email") != email]
         if len(filtered) != len(clients):
             await self._save_inbound_clients(inbound, filtered)
@@ -413,10 +452,13 @@ class PanelClient:
     async def get_client_traffic_record(self, email: str) -> dict[str, Any] | None:
         await self._ensure_login()
         encoded = quote(email, safe="")
-        resp = await self._client.get(
-            f"{self.base}/panel/api/inbounds/getClientTraffics/{encoded}"
-        )
-        body = resp.json()
+        resp = await self._get(f"/panel/api/inbounds/getClientTraffics/{encoded}")
+        if resp.status_code == 404 or not (resp.text or "").strip():
+            return None
+        try:
+            body = resp.json()
+        except json.JSONDecodeError:
+            return None
         if not body.get("success"):
             return None
         obj = body.get("obj")
@@ -438,29 +480,32 @@ class PanelClient:
     async def delete_client_by_email(
         self, email: str, *, inbound_id: int | None = None
     ) -> bool:
-        await self._ensure_login()
         iid = inbound_id or self.server.panel_inbound_id
         encoded = quote(email, safe="")
-        resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/{iid}/delClientByEmail/{encoded}"
-        )
-        body = resp.json()
+        resp = await self._post(f"/panel/api/inbounds/{iid}/delClientByEmail/{encoded}")
+        if resp.status_code == 404 or not (resp.text or "").strip():
+            return False
+        try:
+            body = resp.json()
+        except json.JSONDecodeError:
+            return False
         return bool(body.get("success"))
 
     async def delete_client(
         self, email: str, client_uuid: str, *, inbound_id: int | None = None
     ) -> bool:
-        await self._ensure_login()
         iid = inbound_id or self.server.panel_inbound_id
-        resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/{iid}/delClient/{client_uuid}"
-        )
-        body = resp.json()
-        if body.get("success"):
-            return True
+        resp = await self._post(f"/panel/api/inbounds/{iid}/delClient/{client_uuid}")
+        if resp.status_code != 404:
+            try:
+                body = resp.json()
+                if body.get("success"):
+                    return True
+            except json.JSONDecodeError:
+                pass
 
         inbound = await self.get_inbound(iid)
-        settings = json.loads(inbound["settings"])
+        settings = _parse_json_field(inbound["settings"], field="settings")
         clients = settings.get("clients", [])
         filtered = [
             c
@@ -470,26 +515,8 @@ class PanelClient:
         if len(filtered) == len(clients):
             return False
 
-        settings["clients"] = filtered
-        payload = {
-            "id": inbound["id"],
-            "settings": json.dumps(settings),
-            "streamSettings": inbound["streamSettings"],
-            "sniffing": inbound.get("sniffing", "{}"),
-            "remark": inbound.get("remark", ""),
-            "enable": inbound.get("enable", True),
-            "expiryTime": inbound.get("expiryTime", 0),
-            "listen": inbound.get("listen", ""),
-            "port": inbound["port"],
-            "protocol": inbound["protocol"],
-            "tag": inbound.get("tag", ""),
-        }
-        resp = await self._client.post(
-            f"{self.base}/panel/api/inbounds/update/{inbound['id']}",
-            json=payload,
-        )
-        body = resp.json()
-        return bool(body.get("success"))
+        await self._save_inbound_clients(inbound, filtered)
+        return True
 
     async def get_clients_usage_gb(self, emails: list[str]) -> dict[str, float]:
         if not emails:
