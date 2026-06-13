@@ -2,9 +2,22 @@
 from __future__ import annotations
 
 import os
+import unicodedata
 from dataclasses import dataclass, field
 
 import config
+
+_MYANMAR_DIGITS = str.maketrans("၀၁၂၃၄၅၆၇၈၉", "0123456789")
+
+
+def normalize_server_label(text: str) -> str:
+    """Normalize reply-keyboard labels (spacing, Myanmar digits → ASCII)."""
+    raw = unicodedata.normalize("NFKC", (text or "").strip())
+    return raw.translate(_MYANMAR_DIGITS)
+
+
+def _labels_match(a: str, b: str) -> bool:
+    return normalize_server_label(a) == normalize_server_label(b)
 
 
 @dataclass(frozen=True)
@@ -224,8 +237,10 @@ def server_button_label(server: VpnServer, lang: str) -> str:
 
 
 def match_server_label(text: str) -> VpnServer | None:
-    raw = (text or "").strip()
+    raw = normalize_server_label(text)
+    if not raw:
+        return None
     for server in list_servers():
-        if raw in (server.name_en, server.name_my):
+        if _labels_match(raw, server.name_en) or _labels_match(raw, server.name_my):
             return server
     return None

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from typing import Any
 from urllib.parse import quote, urlencode
@@ -35,26 +36,53 @@ class PanelClient:
             raise PanelError(
                 f"Panel URL is not configured for server {self.server.id!r}"
             )
-        self.base = self.server.panel_url
-        self._client = httpx.AsyncClient(
-            timeout=30.0, verify=self.server.panel_verify_ssl
-        )
+        self.base = self.server.panel_url.rstrip("/")
+        verify_ssl = self.server.panel_verify_ssl
+        if self.base.lower().startswith("http://"):
+            verify_ssl = False
+        self._client = httpx.AsyncClient(timeout=30.0, verify=verify_ssl)
         self._logged_in = False
+        self._api_token = os.getenv(
+            f"VPN_SERVER_{self.server.id}_PANEL_API_TOKEN", ""
+        ).strip()
+
+    def _api_headers(self) -> dict[str, str]:
+        if self._api_token:
+            return {"Authorization": f"Bearer {self._api_token}"}
+        return {}
 
     async def close(self) -> None:
         await self._client.aclose()
 
     async def login(self) -> None:
+        if self._api_token:
+            self._logged_in = True
+            return
+
+        csrf_resp = await self._client.get(f"{self.base}/csrf-token")
+        csrf_body = self._parse_json_response(csrf_resp, "csrf-token")
+        csrf_token = csrf_body.get("obj") or ""
+        if not csrf_token:
+            raise PanelError("Panel csrf-token missing (3x-ui v3?)")
+
         resp = await self._client.post(
             f"{self.base}/login",
             data={
                 "username": self.server.panel_username,
                 "password": self.server.panel_password,
             },
+            headers={"x-csrf-token": csrf_token},
         )
         if resp.status_code != 200:
-            raise PanelError(f"Panel login failed: {resp.status_code}")
-        body = resp.json()
+            snippet = (resp.text or "")[:300]
+            raise PanelError(
+                f"Panel login failed: HTTP {resp.status_code} ({snippet})"
+            )
+        try:
+            body = resp.json()
+        except json.JSONDecodeError:
+            snippet = (resp.text or "")[:300]
+            raise PanelError(f"Panel login failed: non-JSON response ({snippet})")
         if not body.get("success"):
             raise PanelError(f"Panel login failed: {body.get('msg', 'unknown')}")
         self._logged_in = True
@@ -63,10 +91,20 @@ class PanelClient:
         if not self._logged_in:
             await self.login()
 
-    async def get_inbound(self, inbound_id: int | None = None) -> dict[str, Any]:
+    async def _get(self, path: str) -> httpx.Response:
         await self._ensure_login()
+        return await self._client.get(f"{self.base}{path}", headers=self._api_headers())
+
+    async def _post(self, path: str, **kwargs) -> httpx.Response:
+        await self._ensure_login()
+        headers = {**self._api_headers(), **kwargs.pop("headers", {})}
+        return await self._client.post(
+            f"{self.base}{path}", headers=headers, **kwargs
+        )
+
+    async def get_inbound(self, inbound_id: int | None = None) -> dict[str, Any]:
         iid = inbound_id or self.server.panel_inbound_id
-        resp = await self._client.get(f"{self.base}/panel/api/inbounds/get/{iid}")
+        resp = await self._get(f"/panel/api/inbounds/get/{iid}")
         body = resp.json()
         if not body.get("success"):
             raise PanelError(f"get inbound failed: {body.get('msg')}")

@@ -62,6 +62,9 @@ async def replace_key_start(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     clear_replace_flow(context)
+    context.user_data.pop("pending_payment_id", None)
+    context.user_data.pop("payment_state", None)
+    context.user_data.pop("buy_server_id", None)
     user = update.effective_user
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = row["language"]

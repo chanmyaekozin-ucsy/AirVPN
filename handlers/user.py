@@ -428,6 +428,9 @@ async def _show_plans_for_server(message, lang: str, server_id: str) -> None:
 async def buy_plan_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
+    from handlers.key_replacement import clear_replace_flow
+
+    clear_replace_flow(context)
     _clear_payment_flow(context)
     lang = await _lang(update, context)
     from vpn_servers import list_servers
@@ -987,6 +990,12 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if server:
             context.user_data["buy_server_id"] = server.id
             await _show_plans_for_server(update.message, lang, server.id)
+        return
+
+    server = match_server_label(text)
+    if server:
+        context.user_data["buy_server_id"] = server.id
+        await _show_plans_for_server(update.message, lang, server.id)
         return
 
     plans = await db.get_active_plans(server_id)
