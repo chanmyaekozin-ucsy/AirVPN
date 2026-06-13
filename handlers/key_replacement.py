@@ -122,6 +122,8 @@ async def _prompt_target_server(message, lang: str, sub: dict, context) -> None:
 
 
 async def replace_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.user_data.get("buy_flow"):
+        return
     state = context.user_data.get("replace_state")
     if not state:
         return

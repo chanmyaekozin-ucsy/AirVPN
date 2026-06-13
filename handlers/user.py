@@ -65,6 +65,19 @@ def _clear_payment_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("buy_server_id", None)
 
 
+def _clear_buy_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
+    context.user_data.pop("buy_flow", None)
+    context.user_data.pop("buy_server_id", None)
+
+
+def _start_buy_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
+    from handlers.key_replacement import clear_replace_flow
+
+    clear_replace_flow(context)
+    _clear_payment_flow(context)
+    context.user_data["buy_flow"] = True
+
+
 async def _owned_pending_payment(payment_id: int, user_row: dict) -> dict | None:
     payment = await db.get_payment(payment_id)
     if not payment or payment["user_id"] != user_row["id"]:
@@ -191,6 +204,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
     _clear_payment_flow(context)
+    _clear_buy_flow(context)
     from handlers.key_replacement import clear_replace_flow
 
     clear_replace_flow(context)
@@ -378,6 +392,29 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     from handlers.key_replacement import clear_replace_flow
 
     clear_replace_flow(context)
+    if context.user_data.get("buy_flow") and context.user_data.get("buy_server_id"):
+        context.user_data.pop("buy_server_id", None)
+        from vpn_servers import list_servers
+
+        servers = list_servers()
+        lang = await _lang(update, context)
+        if len(servers) > 1:
+            await update.message.reply_text(
+                t(lang, "servers_title"),
+                parse_mode=PARSE_MODE,
+                reply_markup=servers_reply_keyboard(lang, servers),
+            )
+            return
+    if context.user_data.get("buy_flow"):
+        _clear_buy_flow(context)
+        user = update.effective_user
+        lang = await _lang(update, context)
+        await update.message.reply_text(
+            t(lang, "welcome"),
+            parse_mode=PARSE_MODE,
+            reply_markup=main_menu(lang, is_admin(user.id if user else 0)),
+        )
+        return
     if context.user_data.get("admin_view"):
         from handlers.admin import admin_back
 
@@ -397,6 +434,7 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             )
             return
     _clear_payment_flow(context)
+    _clear_buy_flow(context)
     user = update.effective_user
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = row["language"]
@@ -428,10 +466,7 @@ async def _show_plans_for_server(message, lang: str, server_id: str) -> None:
 async def buy_plan_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
-    from handlers.key_replacement import clear_replace_flow
-
-    clear_replace_flow(context)
-    _clear_payment_flow(context)
+    _start_buy_flow(context)
     lang = await _lang(update, context)
     from vpn_servers import list_servers
 
@@ -480,6 +515,7 @@ async def _start_kbzpayout(
     )
     context.user_data["pending_payment_id"] = payment_id
     context.user_data["payment_state"] = WAITING_RECEIPT
+    context.user_data.pop("buy_flow", None)
     account_number = account["account_number"]
     from vpn_servers import get_server
 
@@ -507,6 +543,7 @@ async def _handle_plan_callback(
 ) -> bool:
     """Return True if this callback was a plan/payment action."""
     if data == "buy_plan":
+        _start_buy_flow(context)
         from vpn_servers import list_servers
 
         servers = list_servers()
@@ -948,6 +985,7 @@ async def cancel_payment(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     user = update.effective_user
     lang = await _lang(update, context)
     _clear_payment_flow(context)
+    _clear_buy_flow(context)
     from handlers.key_replacement import clear_replace_flow
 
     clear_replace_flow(context)
@@ -965,9 +1003,12 @@ def _plan_label(plan: dict, lang: str) -> str:
 
 async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply keyboard: pick server, then plan."""
-    if context.user_data.get("replace_state"):
+    buy_flow = context.user_data.get("buy_flow")
+    if context.user_data.get("replace_state") and not buy_flow:
         return
-    if context.user_data.get("payment_state"):
+    if context.user_data.get("payment_state") and not buy_flow:
+        return
+    if not buy_flow:
         return
     if not await _guard(update, context):
         return
@@ -977,7 +1018,7 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     from locales import STRINGS
-    from vpn_servers import match_server_label
+    from vpn_servers import list_servers, match_server_label
 
     if text in {STRINGS["back"]["my"], STRINGS["back"]["en"]}:
         await back_to_main(update, context)
@@ -990,6 +1031,12 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         if server:
             context.user_data["buy_server_id"] = server.id
             await _show_plans_for_server(update.message, lang, server.id)
+            return
+        await update.message.reply_text(
+            t(lang, "servers_title"),
+            parse_mode=PARSE_MODE,
+            reply_markup=servers_reply_keyboard(lang, list_servers()),
+        )
         return
 
     server = match_server_label(text)
@@ -1013,6 +1060,8 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                 update.message, user, context, row, lang, plan, accounts[0]
             )
             return
+
+    await _show_plans_for_server(update.message, lang, server_id)
 
 
 def menu_text_filter(text_key: str):
@@ -1044,6 +1093,7 @@ def build_user_handlers() -> list:
         MessageHandler(menu_text_filter("menu_buy"), buy_plan_message),
         MessageHandler(menu_text_filter("back"), back_to_main),
         MessageHandler(filters.Regex("^Admin$"), admin_panel),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
     ]
     handlers.extend(build_key_replacement_handlers())
     handlers.extend(
@@ -1052,7 +1102,6 @@ def build_user_handlers() -> list:
             filters.TEXT & filters.Regex(r"^\d{10,}$") & ~filters.COMMAND,
             receipt_tx_id,
         ),
-        MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
         MessageHandler(filters.PHOTO, receipt_photo, block=False),
         ]
     )
