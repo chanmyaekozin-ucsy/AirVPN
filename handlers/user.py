@@ -471,7 +471,15 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     )
 
 
-async def _show_plans_for_server(message, lang: str, server_id: str) -> None:
+async def _show_plans_for_server(
+    message,
+    lang: str,
+    server_id: str,
+    context: ContextTypes.DEFAULT_TYPE | None = None,
+) -> None:
+    if context is not None:
+        context.user_data["buy_flow"] = True
+        context.user_data["buy_server_id"] = server_id
     plans = await db.get_active_plans(server_id)
     if not plans:
         await message.reply_text(
@@ -597,7 +605,7 @@ async def server_label_select(
     clear_replace_flow(context)
     context.user_data["buy_flow"] = True
     context.user_data["buy_server_id"] = server.id
-    await _show_plans_for_server(update.message, lang, server.id)
+    await _show_plans_for_server(update.message, lang, server.id, context)
 
 
 async def buy_plan_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -615,7 +623,7 @@ async def buy_plan_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     if len(servers) == 1:
         context.user_data["buy_server_id"] = servers[0].id
-        await _show_plans_for_server(update.message, lang, servers[0].id)
+        await _show_plans_for_server(update.message, lang, servers[0].id, context)
         return
     await update.message.reply_text(
         t(lang, "servers_title"),
@@ -668,11 +676,35 @@ async def _start_kbzpayout(
         account=md2_code(account_number),
         account_name=md2(account["account_name"]),
     )
-    await message.reply_text(
-        instructions,
-        parse_mode=PARSE_MODE,
-        reply_markup=account_copy_keyboard(lang, account_number),
-    )
+    try:
+        await message.reply_text(
+            instructions,
+            parse_mode=PARSE_MODE,
+            reply_markup=account_copy_keyboard(lang, account_number),
+        )
+    except Exception:
+        logger.exception("Payment instructions send failed; retrying without copy button")
+        await message.reply_text(
+            instructions,
+            parse_mode=PARSE_MODE,
+        )
+
+
+async def _match_plan_choice(
+    text: str, server_id: str | None
+) -> dict | None:
+    from vpn_servers import list_servers
+
+    server_ids = [server_id] if server_id else [s.id for s in list_servers()]
+    for sid in server_ids:
+        if not sid:
+            continue
+        for plan in await db.get_active_plans(sid):
+            if text in (_plan_label(plan, "my"), _plan_label(plan, "en")):
+                matched = dict(plan)
+                matched["server_id"] = sid
+                return matched
+    return None
 
 
 async def _handle_plan_callback(
@@ -691,7 +723,7 @@ async def _handle_plan_callback(
             return True
         if len(servers) == 1:
             context.user_data["buy_server_id"] = servers[0].id
-            await _show_plans_for_server(query.message, lang, servers[0].id)
+            await _show_plans_for_server(query.message, lang, servers[0].id, context)
         else:
             await query.message.reply_text(
                 t(lang, "servers_title"),
@@ -714,7 +746,7 @@ async def _handle_plan_callback(
         if not plan or not plan.get("is_active"):
             logger.warning("Inactive or missing plan id=%s", plan_id)
             server_id = context.user_data.get("buy_server_id") or "sg"
-            await _show_plans_for_server(query.message, lang, server_id)
+            await _show_plans_for_server(query.message, lang, server_id, context)
             return True
 
         accounts = await db.get_payment_accounts("KBZPay")
@@ -1171,8 +1203,6 @@ def _plan_label(plan: dict, lang: str) -> str:
 
 async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Reply keyboard: pick plan during buy flow (servers handled by server_label_select)."""
-    if context.user_data.get("replace_state") and not context.user_data.get("buy_flow"):
-        return
     if not await _guard(update, context):
         return
 
@@ -1181,44 +1211,48 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     from locales import STRINGS
-    from vpn_servers import list_servers
 
     if text in {STRINGS["back"]["my"], STRINGS["back"]["en"]}:
         await back_to_main(update, context)
         return
 
-    if not context.user_data.get("buy_flow"):
-        return
-    if context.user_data.get("payment_state"):
-        return
-
     lang = await _lang(update, context)
     server_id = context.user_data.get("buy_server_id")
-    if not server_id:
-        await update.message.reply_text(
-            t(lang, "servers_title"),
-            parse_mode=PARSE_MODE,
-            reply_markup=servers_reply_keyboard(lang, list_servers()),
-        )
+    plan = await _match_plan_choice(text, server_id)
+
+    if not plan:
+        if context.user_data.get("replace_state") and not context.user_data.get("buy_flow"):
+            return
+        if context.user_data.get("payment_state"):
+            await update.message.reply_text(t(lang, "replace_finish_payment_first"))
+            return
+        if context.user_data.get("buy_flow") and server_id:
+            await _show_plans_for_server(
+                update.message, lang, server_id, context
+            )
         return
 
-    plans = await db.get_active_plans(server_id)
-    for plan in plans:
-        if text in (_plan_label(plan, "my"), _plan_label(plan, "en")):
-            user = update.effective_user
-            row = await db.get_or_create_user(user.id, user.username, user.first_name)
-            accounts = await db.get_payment_accounts("KBZPay")
-            if not accounts:
-                await update.message.reply_text(
-                    t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
-                )
-                return
-            await _start_kbzpayout(
-                update.message, user, context, row, lang, plan, accounts[0]
-            )
-            return
+    from handlers.key_replacement import clear_replace_flow
 
-    await _show_plans_for_server(update.message, lang, server_id)
+    clear_replace_flow(context)
+
+    if context.user_data.get("payment_state"):
+        await update.message.reply_text(t(lang, "replace_finish_payment_first"))
+        return
+
+    context.user_data["buy_flow"] = True
+    context.user_data["buy_server_id"] = plan.get("server_id") or server_id or "sg"
+    user = update.effective_user
+    row = await db.get_or_create_user(user.id, user.username, user.first_name)
+    accounts = await db.get_payment_accounts("KBZPay")
+    if not accounts:
+        await update.message.reply_text(
+            t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
+        )
+        return
+    await _start_kbzpayout(
+        update.message, user, context, row, lang, plan, accounts[0]
+    )
 
 
 def menu_text_filter(text_key: str):
@@ -1256,10 +1290,14 @@ def build_user_handlers() -> list:
         MessageHandler(_SERVER_LABEL, server_label_select),
         MessageHandler(filters.Regex("^Admin$"), admin_panel),
     ]
-    handlers.extend(build_key_replacement_handlers())
     handlers.extend(
         [
         MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
+        ]
+    )
+    handlers.extend(build_key_replacement_handlers())
+    handlers.extend(
+        [
         MessageHandler(
             filters.TEXT & filters.Regex(r"^\d{10,}$") & ~filters.COMMAND,
             receipt_tx_id,

@@ -249,6 +249,8 @@ async def replace_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE
     state = context.user_data.get("replace_state")
     if not state:
         return
+    if context.user_data.get("buy_flow") or context.user_data.get("payment_state"):
+        return
     if not await _guard(update, context):
         clear_replace_flow(context)
         return
