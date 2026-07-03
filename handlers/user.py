@@ -23,6 +23,7 @@ from handlers.keyboards import (
     is_admin,
     lang_reply_keyboard,
     main_menu,
+    main_menu_for,
     plans_reply_keyboard,
     restore_main_menu,
     servers_reply_keyboard,
@@ -98,7 +99,7 @@ async def _reply_and_restore_menu(
         _clear_buy_flow(context)
     has_inline = bool(reply_kwargs.get("reply_markup"))
     if not has_inline:
-        reply_kwargs["reply_markup"] = main_menu(lang, is_admin(user.id))
+        reply_kwargs["reply_markup"] = await main_menu_for(user.id, lang)
     await update.message.reply_text(text, parse_mode=PARSE_MODE, **reply_kwargs)
     if has_inline:
         await restore_main_menu(update.get_bot(), chat.id, lang, user.id)
@@ -240,7 +241,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         t(lang, "welcome"),
         parse_mode=PARSE_MODE,
-        reply_markup=main_menu(lang, is_admin(user.id)),
+        reply_markup=await main_menu_for(user.id, lang),
     )
 
 
@@ -253,6 +254,9 @@ async def daily_gift(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     preview = await db.preview_daily_gift(row["id"])
     if preview.get("reason") == "no_user":
+        return
+    if preview.get("reason") == "disabled":
+        await update.message.reply_text(t(lang, "daily_disabled"))
         return
 
     free_sub = await db.get_active_free_subscription(row["id"])
@@ -365,7 +369,7 @@ async def _apply_language(
     await message.reply_text(
         t(new_lang, "welcome"),
         parse_mode=PARSE_MODE,
-        reply_markup=main_menu(new_lang, is_admin(from_user.id)),
+        reply_markup=await main_menu_for(from_user.id, new_lang),
     )
 
 
@@ -440,7 +444,7 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await update.message.reply_text(
             t(lang, "welcome"),
             parse_mode=PARSE_MODE,
-            reply_markup=main_menu(lang, is_admin(user.id if user else 0)),
+            reply_markup=await main_menu_for(user.id if user else 0, lang),
         )
         return
     if context.user_data.get("admin_view"):
@@ -469,7 +473,7 @@ async def back_to_main(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(
         t(lang, "welcome"),
         parse_mode=PARSE_MODE,
-        reply_markup=main_menu(lang, is_admin(user.id)),
+        reply_markup=await main_menu_for(user.id, lang),
     )
 
 
@@ -988,12 +992,16 @@ async def _process_kbzpayout_verification(
         return
 
     if verify_result.status == "token_invalid":
+        logger.warning(
+            "KBZ auto-verify unavailable for payment %s: %s",
+            payment_id,
+            verify_result.message,
+        )
         await _reply_and_restore_menu(
             update,
             lang,
-            t(lang, "pay_manual_token_invalid"),
+            t(lang, "pay_submitted"),
             context,
-            **admin_contact_reply_kwargs(lang),
         )
         await update_payment_proof(
             context.bot,

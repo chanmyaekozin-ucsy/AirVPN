@@ -86,6 +86,10 @@ STRINGS: dict[str, dict[str, str]] = {
         ),
         "en": "You already claimed today's gift.\nCome back tomorrow!",
     },
+    "daily_disabled": {
+        "my": "လက်ရှိတွင် နေ့စဉ် အခမဲ့ လက်ဆောင်ကို ယာယီ ပိတ်ထားပါတယ်။",
+        "en": "Daily free gift is currently disabled.",
+    },
     "daily_claimed": {
         "my": (
             "<b>လက်ဆောင်လေး ပေးလိုက်ပါပြီနော်။</b>\n\n"
@@ -290,19 +294,6 @@ STRINGS: dict[str, dict[str, str]] = {
     "pay_verifying": {
         "my": "KBZPay ငွေလွှဲပြေစာကို အလိုအလျောက် စစ်ဆေးပေးနေပါတယ်ခင်ဗျာ…",
         "en": "Verifying KBZPay receipt…",
-    },
-    "pay_manual_token_invalid": {
-        "my": (
-            "<b>စနစ်ပိုင်းဆိုင်ရာကြောင့် အလိုအလျောက် စစ်ဆေးမှု ယာယီအဆင်မပြေဖြစ်နေပါတယ်ခင်ဗျာ။</b>\n\n"
-            "KBZPay စနစ်ချိတ်ဆက်မှု မရလို့ပါ (Token Invalid ဖြစ်နေခြင်း)။\n"
-            "ဒါပေမယ့် စိတ်မပူပါနဲ့နော်၊ Admin ဘက်ကနေ ပြေစာကို လက်ဖြင့် ကိုယ်တိုင်စစ်ဆေးပြီး "
-            "အမြန်ဆုံး အတည်ပြုပေးပါမယ်။"
-        ),
-        "en": (
-            "<b>Auto Approve is not available currently.</b>\n\n"
-            "KBZPay session token is invalid.\n"
-            "Admin will check your request and process manually."
-        ),
     },
     "pay_submitted": {
         "my": (
@@ -619,6 +610,40 @@ STRINGS: dict[str, dict[str, str]] = {
     "admin_users_prev": {"my": "◀ ယခင်", "en": "◀ Prev"},
     "admin_users_next": {"my": "နောက် ▶", "en": "Next ▶"},
     "admin_stats": {"my": "စာရင်းအင်း", "en": "Statistics"},
+    "admin_free_gift": {"my": "နေ့စဉ် လက်ဆောင်", "en": "Daily Gift"},
+    "admin_free_gift_status": {
+        "my": (
+            "<b>နေ့စဉ် လက်ဆောင် ဆက်တင်</b>\n\n"
+            "အခြေအနေ: <b>{status}</b>\n"
+            "ဒေတာ limit: <b>{mb} MB</b> / ရက်"
+        ),
+        "en": (
+            "<b>Daily Gift Settings</b>\n\n"
+            "Status: <b>{status}</b>\n"
+            "Data limit: <b>{mb} MB</b> / day"
+        ),
+    },
+    "admin_free_gift_on": {"my": "ဖွင့်ထား", "en": "ON"},
+    "admin_free_gift_off": {"my": "ပိတ်ထား", "en": "OFF"},
+    "admin_free_gift_enable": {"my": "ဖွင့်မည်", "en": "Turn On"},
+    "admin_free_gift_disable": {"my": "ပိတ်မည်", "en": "Turn Off"},
+    "admin_free_gift_set_mb": {"my": "ဒေတာ MB ပြင်မည်", "en": "Set MB Limit"},
+    "admin_free_gift_enter_mb": {
+        "my": "နေ့စဉ် လက်ဆောင်ဒေတာ (MB) ရိုက်ထည့်ပါ (ဥပမာ 500):",
+        "en": "Enter daily gift data in MB (e.g. 500):",
+    },
+    "admin_free_gift_mb_invalid": {
+        "my": "၁ နှင့် ၁၀၂၄၀၀ ကြား နံပါတ် ရိုက်ထည့်ပေးပါ။",
+        "en": "Enter a number between 1 and 102400.",
+    },
+    "admin_free_gift_mb_saved": {
+        "my": "နေ့စဉ် လက်ဆောင်ဒေတာကို <b>{mb} MB</b> သို့ ပြင်ပြီးပါပြီ။",
+        "en": "Daily gift data limit set to <b>{mb} MB</b>.",
+    },
+    "admin_free_gift_toggled": {
+        "my": "နေ့စဉ် လက်ဆောင်ကို <b>{status}</b> လုပ်ပြီးပါပြီ။",
+        "en": "Daily gift is now <b>{status}</b>.",
+    },
     "admin_notifications": {"my": "အကြောင်းကြားချက်", "en": "Notifications"},
     "admin_notify_menu": {
         "my": "<b>အကြောင်းကြားချက် ပို့မည်</b>",

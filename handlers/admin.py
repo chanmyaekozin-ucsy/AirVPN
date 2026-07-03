@@ -17,6 +17,7 @@ import database as db
 from handlers.group_payment import reject_payment_from_group
 from handlers.keyboards import (
     ADMIN_USERS_PAGE_SIZE,
+    admin_free_gift_keyboard,
     admin_menu,
     admin_notify_audience,
     admin_notify_menu,
@@ -25,6 +26,7 @@ from handlers.keyboards import (
     admin_users_nav_filter,
     is_admin,
     main_menu,
+    main_menu_for,
     parse_admin_users_nav,
     parse_payment_list_label,
     payment_list_label,
@@ -62,6 +64,10 @@ def _admin_menu_label_pattern() -> str:
         "admin_pending_payments",
         "admin_users",
         "admin_stats",
+        "admin_free_gift",
+        "admin_free_gift_enable",
+        "admin_free_gift_disable",
+        "admin_free_gift_set_mb",
         "admin_ban",
         "admin_notifications",
         "admin_notify_send",
@@ -153,7 +159,7 @@ async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text(
             t(lang, "welcome"),
             parse_mode=PARSE_MODE,
-            reply_markup=main_menu(lang, is_admin(user.id)),
+            reply_markup=await main_menu_for(user.id, lang),
         )
         return
     if view == "payment":
@@ -162,6 +168,9 @@ async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     if view in ("notify_audience", "notify_compose"):
         await admin_notifications_menu(update, context)
+        return
+    if view in ("free_gift", "free_gift_mb"):
+        await admin_free_gift_menu(update, context)
         return
     if view == "users":
         await admin_show_main(update.message, lang, context)
@@ -308,6 +317,94 @@ async def admin_stats_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         ),
         parse_mode=PARSE_MODE,
         reply_markup=admin_menu(lang),
+    )
+
+
+async def admin_free_gift_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ok, lang = await _admin_guard(update)
+    if not ok or not update.message:
+        return
+
+    settings = await db.get_daily_gift_settings()
+    context.user_data["admin_view"] = "free_gift"
+    status = t(lang, "admin_free_gift_on" if settings["enabled"] else "admin_free_gift_off")
+    await update.message.reply_text(
+        t(lang, "admin_free_gift_status", status=status, mb=settings["mb"]),
+        parse_mode=PARSE_MODE,
+        reply_markup=admin_free_gift_keyboard(lang, enabled=settings["enabled"]),
+    )
+
+
+async def admin_free_gift_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ok, lang = await _admin_guard(update)
+    if not ok or not update.message:
+        return
+
+    settings = await db.get_daily_gift_settings()
+    await db.set_daily_gift_enabled(not settings["enabled"])
+    new_settings = await db.get_daily_gift_settings()
+    status = t(
+        lang,
+        "admin_free_gift_on" if new_settings["enabled"] else "admin_free_gift_off",
+    )
+    context.user_data["admin_view"] = "free_gift"
+    await update.message.reply_text(
+        t(lang, "admin_free_gift_toggled", status=status),
+        parse_mode=PARSE_MODE,
+        reply_markup=admin_free_gift_keyboard(
+            lang, enabled=new_settings["enabled"]
+        ),
+    )
+
+
+async def admin_free_gift_set_mb_start(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    ok, lang = await _admin_guard(update)
+    if not ok or not update.message:
+        return
+
+    context.user_data["admin_view"] = "free_gift_mb"
+    await update.message.reply_text(t(lang, "admin_free_gift_enter_mb"))
+
+
+async def admin_free_gift_mb_text(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if context.user_data.get("admin_view") != "free_gift_mb":
+        return
+    ok, lang = await _admin_guard(update)
+    if not ok or not update.message:
+        return
+
+    raw = (update.message.text or "").strip()
+    back_labels = {t(lang, "back"), t("my", "back"), t("en", "back")}
+    if raw in back_labels:
+        await admin_free_gift_menu(update, context)
+        return
+    try:
+        mb = int(raw)
+    except ValueError:
+        await update.message.reply_text(t(lang, "admin_free_gift_mb_invalid"))
+        return
+    if not 1 <= mb <= 102_400:
+        await update.message.reply_text(t(lang, "admin_free_gift_mb_invalid"))
+        return
+
+    await db.set_daily_gift_mb(mb)
+    context.user_data["admin_view"] = "free_gift"
+    settings = await db.get_daily_gift_settings()
+    status = t(
+        lang, "admin_free_gift_on" if settings["enabled"] else "admin_free_gift_off"
+    )
+    await update.message.reply_text(
+        t(lang, "admin_free_gift_mb_saved", mb=settings["mb"]),
+        parse_mode=PARSE_MODE,
+    )
+    await update.message.reply_text(
+        t(lang, "admin_free_gift_status", status=status, mb=settings["mb"]),
+        parse_mode=PARSE_MODE,
+        reply_markup=admin_free_gift_keyboard(lang, enabled=settings["enabled"]),
     )
 
 
@@ -686,6 +783,14 @@ async def admin_ban_input(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await ban_user_text(update, context)
 
 
+async def admin_free_gift_mb_input(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    if context.user_data.get("admin_view") != "free_gift_mb":
+        return
+    await admin_free_gift_mb_text(update, context)
+
+
 async def admin_conv_escape(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """Leave an admin conversation when another menu button is tapped."""
     if admin_text_filter("admin_ban").check_update(update):
@@ -706,6 +811,16 @@ def build_admin_menu_handlers() -> list:
         MessageHandler(admin_text_filter("admin_users"), admin_users_view),
         MessageHandler(admin_users_nav_filter(), admin_users_nav),
         MessageHandler(admin_text_filter("admin_stats"), admin_stats_view),
+        MessageHandler(admin_text_filter("admin_free_gift"), admin_free_gift_menu),
+        MessageHandler(
+            admin_text_filter("admin_free_gift_enable"), admin_free_gift_toggle
+        ),
+        MessageHandler(
+            admin_text_filter("admin_free_gift_disable"), admin_free_gift_toggle
+        ),
+        MessageHandler(
+            admin_text_filter("admin_free_gift_set_mb"), admin_free_gift_set_mb_start
+        ),
         MessageHandler(
             admin_text_filter("admin_notifications"), admin_notifications_menu
         ),
@@ -733,6 +848,7 @@ async def admin_menu_dispatch(update: Update, context: ContextTypes.DEFAULT_TYPE
         ("admin_pending_payments", admin_pending),
         ("admin_users", admin_users_view),
         ("admin_stats", admin_stats_view),
+        ("admin_free_gift", admin_free_gift_menu),
         ("admin_notifications", admin_notifications_menu),
         ("admin_notify_send", admin_notify_send_start),
         ("admin_notify_history", admin_notify_history_view),
@@ -796,6 +912,7 @@ def build_admin_conversation_handlers() -> list:
         reject_conv,
         notify_conv,
         MessageHandler(_admin_flow_text_filter(), admin_ban_input, block=False),
+        MessageHandler(_admin_flow_text_filter(), admin_free_gift_mb_input, block=False),
     ]
 
 

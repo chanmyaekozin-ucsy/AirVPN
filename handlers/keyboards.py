@@ -39,13 +39,22 @@ def resolve_language_choice(text: str | None) -> str | None:
     return None
 
 
-def main_menu(lang: str, is_admin: bool = False) -> ReplyKeyboardMarkup:
-    rows = [
-        [t(lang, "menu_daily"), t(lang, "menu_buy")],
-        [t(lang, "menu_my_key"), t(lang, "menu_replace")],
-        [t(lang, "menu_download"), t(lang, "menu_support")],
-        [t(lang, "menu_lang")],
-    ]
+def main_menu(
+    lang: str, is_admin: bool = False, *, show_daily_gift: bool = True
+) -> ReplyKeyboardMarkup:
+    if show_daily_gift:
+        rows = [
+            [t(lang, "menu_daily"), t(lang, "menu_buy")],
+        ]
+    else:
+        rows = [[t(lang, "menu_buy")]]
+    rows.extend(
+        [
+            [t(lang, "menu_my_key"), t(lang, "menu_replace")],
+            [t(lang, "menu_download"), t(lang, "menu_support")],
+            [t(lang, "menu_lang")],
+        ]
+    )
     if is_admin:
         rows.append([ADMIN_MENU_LABEL])
     return ReplyKeyboardMarkup(rows, resize_keyboard=True)
@@ -206,8 +215,23 @@ def admin_menu(lang: str) -> ReplyKeyboardMarkup:
             [KeyboardButton(t(lang, "admin_pending_payments"))],
             [KeyboardButton(t(lang, "admin_users"))],
             [KeyboardButton(t(lang, "admin_stats"))],
+            [KeyboardButton(t(lang, "admin_free_gift"))],
             [KeyboardButton(t(lang, "admin_ban"))],
             [KeyboardButton(t(lang, "admin_notifications"))],
+            [KeyboardButton(t(lang, "back"))],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def admin_free_gift_keyboard(lang: str, *, enabled: bool) -> ReplyKeyboardMarkup:
+    toggle_key = (
+        "admin_free_gift_disable" if enabled else "admin_free_gift_enable"
+    )
+    return ReplyKeyboardMarkup(
+        [
+            [KeyboardButton(t(lang, toggle_key))],
+            [KeyboardButton(t(lang, "admin_free_gift_set_mb"))],
             [KeyboardButton(t(lang, "back"))],
         ],
         resize_keyboard=True,
@@ -348,6 +372,17 @@ def admin_contact_reply_kwargs(lang: str) -> dict:
     return {"reply_markup": kb} if kb else {}
 
 
+async def main_menu_for(telegram_id: int, lang: str) -> ReplyKeyboardMarkup:
+    import database as db
+
+    settings = await db.get_daily_gift_settings()
+    return main_menu(
+        lang,
+        is_admin(telegram_id),
+        show_daily_gift=settings["enabled"],
+    )
+
+
 async def restore_main_menu(bot, chat_id: int, lang: str, telegram_id: int) -> None:
     """Re-show the reply keyboard after one-time keyboards or inline-only messages."""
     from utils.formatting import PARSE_MODE
@@ -356,7 +391,7 @@ async def restore_main_menu(bot, chat_id: int, lang: str, telegram_id: int) -> N
         chat_id,
         t(lang, "menu_restored"),
         parse_mode=PARSE_MODE,
-        reply_markup=main_menu(lang, is_admin(telegram_id)),
+        reply_markup=await main_menu_for(telegram_id, lang),
     )
 
 

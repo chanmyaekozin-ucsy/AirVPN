@@ -139,6 +139,11 @@ async def init_db() -> None:
                 FOREIGN KEY (user_id) REFERENCES users(id),
                 FOREIGN KEY (subscription_id) REFERENCES subscriptions(id)
             );
+
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            );
             """
         )
         await _migrate_columns(db)
@@ -355,10 +360,63 @@ async def list_users_with_key_counts(
     }
 
 
+# ─── Bot settings ────────────────────────────────────────────────────────────
+
+DAILY_GIFT_ENABLED_KEY = "daily_gift_enabled"
+DAILY_GIFT_MB_KEY = "daily_gift_mb"
+
+
+async def get_setting(key: str) -> str | None:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT value FROM bot_settings WHERE key = ?", (key,)
+        ) as cur:
+            row = await cur.fetchone()
+    return row["value"] if row else None
+
+
+async def set_setting(key: str, value: str) -> None:
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO bot_settings (key, value) VALUES (?, ?)
+               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+            (key, value),
+        )
+        await db.commit()
+
+
+async def get_daily_gift_settings() -> dict[str, Any]:
+    enabled_raw = await get_setting(DAILY_GIFT_ENABLED_KEY)
+    mb_raw = await get_setting(DAILY_GIFT_MB_KEY)
+    enabled = (enabled_raw if enabled_raw is not None else "1") == "1"
+    try:
+        mb = int(mb_raw) if mb_raw is not None else config.DAILY_GIFT_MB
+    except (TypeError, ValueError):
+        mb = config.DAILY_GIFT_MB
+    mb = max(1, min(mb, 102_400))
+    return {"enabled": enabled, "mb": mb}
+
+
+async def set_daily_gift_enabled(enabled: bool) -> None:
+    await set_setting(DAILY_GIFT_ENABLED_KEY, "1" if enabled else "0")
+
+
+async def set_daily_gift_mb(mb: int) -> None:
+    await set_setting(DAILY_GIFT_MB_KEY, str(max(1, min(int(mb), 102_400))))
+
+
 # ─── Daily gift ──────────────────────────────────────────────────────────────
 
-def _daily_gift_preview(user: aiosqlite.Row | dict[str, Any]) -> dict[str, Any]:
+def _daily_gift_preview(
+    user: aiosqlite.Row | dict[str, Any],
+    *,
+    enabled: bool,
+    gift_mb: int,
+) -> dict[str, Any]:
     """Compute today's gift without writing. Used before VPN provisioning."""
+    if not enabled:
+        return {"ok": False, "reason": "disabled"}
+
     today = mmt_today()
     if user["last_daily_claim"] == today:
         return {
@@ -376,22 +434,26 @@ def _daily_gift_preview(user: aiosqlite.Row | dict[str, Any]) -> dict[str, Any]:
     else:
         streak = 1
 
-    bonus_mb = config.DAILY_GIFT_MB
+    bonus_mb = gift_mb
     return {"ok": True, "mb": bonus_mb, "streak": streak, "total_mb": bonus_mb}
 
 
 async def preview_daily_gift(user_id: int) -> dict[str, Any]:
     """Returns gift preview; ok=False with reason=already_claimed if claimed today."""
+    settings = await get_daily_gift_settings()
     async with _db() as db:
         async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cur:
             user = await cur.fetchone()
     if not user:
         return {"ok": False, "reason": "no_user"}
-    return _daily_gift_preview(user)
+    return _daily_gift_preview(
+        user, enabled=settings["enabled"], gift_mb=settings["mb"]
+    )
 
 
 async def claim_daily_gift(user_id: int) -> dict[str, Any]:
     """Returns {'ok': bool, 'reason'?: str, 'mb'?: int, 'streak'?: int, 'total_mb'?: int}"""
+    settings = await get_daily_gift_settings()
     today = mmt_today()
     async with _db() as db:
         async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cur:
@@ -399,7 +461,9 @@ async def claim_daily_gift(user_id: int) -> dict[str, Any]:
         if not user:
             return {"ok": False, "reason": "no_user"}
 
-        preview = _daily_gift_preview(user)
+        preview = _daily_gift_preview(
+            user, enabled=settings["enabled"], gift_mb=settings["mb"]
+        )
         if not preview["ok"]:
             return preview
 
