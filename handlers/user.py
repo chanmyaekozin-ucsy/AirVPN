@@ -319,13 +319,15 @@ async def my_key(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not subs:
         await update.message.reply_text(t(lang, "no_subscription"))
         return
-    try:
-        subs = await asyncio.wait_for(sync_subscriptions_usage(subs), timeout=20.0)
-    except asyncio.TimeoutError:
-        logger.warning("Usage sync timed out for user %s", row["id"])
-    except Exception:
-        logger.exception("Usage sync failed for user %s", row["id"])
     await _send_all_keys(update.message, lang, subs, row)
+
+    async def _sync_usage() -> None:
+        try:
+            await sync_subscriptions_usage(subs)
+        except Exception:
+            logger.exception("Background usage sync failed for user %s", row["id"])
+
+    asyncio.create_task(_sync_usage())
 
 
 async def download_apps_menu(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1266,7 +1268,6 @@ def menu_text_filter(text_key: str):
 
 
 def build_user_handlers() -> list:
-    from handlers.admin import admin_panel
     from handlers.key_replacement import (
         build_key_replacement_handlers,
         replace_key_start,
@@ -1288,7 +1289,6 @@ def build_user_handlers() -> list:
         MessageHandler(menu_text_filter("menu_buy"), buy_plan_message),
         MessageHandler(menu_text_filter("back"), back_to_main),
         MessageHandler(_SERVER_LABEL, server_label_select),
-        MessageHandler(filters.Regex("^Admin$"), admin_panel),
     ]
     handlers.extend(
         [

@@ -54,6 +54,46 @@ def admin_text_filter(text_key: str):
     return filters.TEXT & filters.Regex(pattern)
 
 
+def _admin_menu_label_pattern() -> str:
+    """Regex alternation for every admin reply-keyboard label."""
+    from locales import MENU_ALIASES, STRINGS
+
+    keys = (
+        "admin_pending_payments",
+        "admin_users",
+        "admin_stats",
+        "admin_ban",
+        "admin_notifications",
+        "admin_notify_send",
+        "admin_notify_history",
+        "admin_approve",
+        "admin_reject",
+        "admin_notify_all",
+        "admin_notify_active",
+        "admin_users_prev",
+        "admin_users_next",
+        "back",
+    )
+    labels: set[str] = set()
+    for key in keys:
+        if key in STRINGS:
+            labels.add(STRINGS[key]["my"])
+            labels.add(STRINGS[key]["en"])
+        labels.update(MENU_ALIASES.get(key, ()))
+    labels.add("Admin")
+    return "^(" + "|".join(re.escape(label) for label in labels) + ")$"
+
+
+def _admin_flow_text_filter():
+    """Text input during admin conversations, excluding menu navigation taps."""
+    return (
+        filters.TEXT
+        & ~filters.COMMAND
+        & ~filters.Regex(_admin_menu_label_pattern())
+        & ~filters.Regex(r"^#\d+\s+—")
+    )
+
+
 async def _lang(update: Update) -> str:
     user = update.effective_user
     if not user:
@@ -94,6 +134,9 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     ok, lang = await _admin_guard(update)
     if not ok or not update.message:
         return
+    _clear_admin_state(context)
+    context.user_data.pop("notify_audience", None)
+    context.user_data.pop("reject_payment_id", None)
     await admin_show_main(update.message, lang, context)
 
 
@@ -268,14 +311,13 @@ async def admin_stats_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
 
 
-async def admin_ban_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def admin_ban_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     ok, lang = await _admin_guard(update)
     if not ok or not update.message:
-        return ConversationHandler.END
+        return
 
     context.user_data["admin_view"] = "ban"
     await update.message.reply_text(t(lang, "admin_ban_enter"))
-    return BAN_USER
 
 
 async def admin_notifications_menu(
@@ -635,55 +677,29 @@ async def reject_reason_text(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 
 _PAYMENT_LIST = filters.Regex(r"^#\d+\s+—")
+_ADMIN_ENTRY = filters.Regex(r"(?i)^admin$")
 
 
-def build_admin_handlers() -> list:
-    reject_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(admin_text_filter("admin_reject"), admin_reject_start),
-        ],
-        states={
-            REJECT_REASON: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, reject_reason_text)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", notify_cancel)],
-        per_chat=True,
-        per_user=True,
-    )
+async def admin_ban_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if context.user_data.get("admin_view") != "ban":
+        return
+    await ban_user_text(update, context)
 
-    ban_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(admin_text_filter("admin_ban"), admin_ban_start),
-        ],
-        states={
-            BAN_USER: [MessageHandler(filters.TEXT & ~filters.COMMAND, ban_user_text)],
-        },
-        fallbacks=[CommandHandler("cancel", notify_cancel)],
-        per_chat=True,
-        per_user=True,
-    )
 
-    notify_conv = ConversationHandler(
-        entry_points=[
-            MessageHandler(
-                admin_text_filter("admin_notify_all"), admin_notify_pick_audience
-            ),
-            MessageHandler(
-                admin_text_filter("admin_notify_active"), admin_notify_pick_audience
-            ),
-        ],
-        states={
-            NOTIFY_MESSAGE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, notify_broadcast_text),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", notify_cancel)],
-        per_chat=True,
-        per_user=True,
-    )
+async def admin_conv_escape(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """Leave an admin conversation when another menu button is tapped."""
+    if admin_text_filter("admin_ban").check_update(update):
+        await admin_ban_start(update, context)
+        return ConversationHandler.END
+    await admin_menu_dispatch(update, context)
+    return ConversationHandler.END
 
+
+def build_admin_menu_handlers() -> list:
+    """Reply-keyboard admin actions — register before user handlers."""
     return [
+        CommandHandler("admin", admin_panel),
+        MessageHandler(_ADMIN_ENTRY, admin_panel),
         MessageHandler(
             admin_text_filter("admin_pending_payments"), admin_pending
         ),
@@ -700,8 +716,88 @@ def build_admin_handlers() -> list:
             admin_text_filter("admin_notify_history"), admin_notify_history_view
         ),
         MessageHandler(admin_text_filter("admin_approve"), admin_approve_payment),
+        MessageHandler(admin_text_filter("admin_ban"), admin_ban_start),
         MessageHandler(_PAYMENT_LIST, admin_payment_select),
-        reject_conv,
-        ban_conv,
-        notify_conv,
     ]
+
+
+async def admin_menu_dispatch(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route a reply-keyboard label to the matching admin handler."""
+    if not update.message or not update.message.text:
+        return
+    text = (update.message.text or "").strip()
+    if re.match(r"(?i)^admin$", text):
+        await admin_panel(update, context)
+        return
+    routes: list[tuple[str, object]] = [
+        ("admin_pending_payments", admin_pending),
+        ("admin_users", admin_users_view),
+        ("admin_stats", admin_stats_view),
+        ("admin_notifications", admin_notifications_menu),
+        ("admin_notify_send", admin_notify_send_start),
+        ("admin_notify_history", admin_notify_history_view),
+        ("admin_approve", admin_approve_payment),
+    ]
+    for key, handler in routes:
+        if admin_text_filter(key).check_update(update):
+            await handler(update, context)
+            return
+    if admin_users_nav_filter().check_update(update):
+        await admin_users_nav(update, context)
+        return
+    if _PAYMENT_LIST.check_update(update):
+        await admin_payment_select(update, context)
+        return
+    if text in {t("my", "back"), t("en", "back")}:
+        await admin_back(update, context)
+
+
+def build_admin_conversation_handlers() -> list:
+    """Multi-step admin flows — register after user handlers."""
+    menu_escape = MessageHandler(
+        filters.TEXT & ~filters.COMMAND, admin_conv_escape
+    )
+    reject_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(admin_text_filter("admin_reject"), admin_reject_start),
+        ],
+        states={
+            REJECT_REASON: [
+                MessageHandler(_admin_flow_text_filter(), reject_reason_text)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", notify_cancel), menu_escape],
+        name="admin_reject",
+        per_chat=True,
+        per_user=True,
+    )
+
+    notify_conv = ConversationHandler(
+        entry_points=[
+            MessageHandler(
+                admin_text_filter("admin_notify_all"), admin_notify_pick_audience
+            ),
+            MessageHandler(
+                admin_text_filter("admin_notify_active"), admin_notify_pick_audience
+            ),
+        ],
+        states={
+            NOTIFY_MESSAGE: [
+                MessageHandler(_admin_flow_text_filter(), notify_broadcast_text),
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", notify_cancel), menu_escape],
+        name="admin_notify",
+        per_chat=True,
+        per_user=True,
+    )
+
+    return [
+        reject_conv,
+        notify_conv,
+        MessageHandler(_admin_flow_text_filter(), admin_ban_input, block=False),
+    ]
+
+
+def build_admin_handlers() -> list:
+    return build_admin_menu_handlers() + build_admin_conversation_handlers()

@@ -14,7 +14,8 @@ from utils.formatting import PARSE_MODE
 import config
 import database as db
 from handlers import (
-    build_admin_handlers,
+    build_admin_conversation_handlers,
+    build_admin_menu_handlers,
     build_group_payment_handlers,
     build_user_handlers,
 )
@@ -67,6 +68,7 @@ def main() -> None:
         Application.builder()
         .token(config.BOT_TOKEN)
         .defaults(Defaults(parse_mode=PARSE_MODE))
+        .concurrent_updates(False)
         .post_init(post_init)
         .build()
     )
@@ -75,11 +77,12 @@ def main() -> None:
 
     for handler in build_group_payment_handlers():
         app.add_handler(handler, group=-1)
-    # User menu handlers before admin conversations so admin users' menu taps
-    # are not swallowed by a stale ConversationHandler state.
+    # Admin menu before user handlers so Burmese reply-keyboard taps are not lost.
+    for handler in build_admin_menu_handlers():
+        app.add_handler(handler, group=0)
     for handler in build_user_handlers():
         app.add_handler(handler, group=0)
-    for handler in build_admin_handlers():
+    for handler in build_admin_conversation_handlers():
         app.add_handler(handler, group=0)
 
     logger.info("AirVPN bot starting…")
