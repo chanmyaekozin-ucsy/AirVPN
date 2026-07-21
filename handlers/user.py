@@ -1268,10 +1268,7 @@ def menu_text_filter(text_key: str):
 
 
 def build_user_handlers() -> list:
-    from handlers.key_replacement import (
-        build_key_replacement_handlers,
-        replace_key_start,
-    )
+    from handlers.key_replacement import replace_key_start
 
     handlers = [
         CallbackQueryHandler(language_callback, pattern=r"^lang_(my|en)$"),
@@ -1292,19 +1289,24 @@ def build_user_handlers() -> list:
     ]
     handlers.extend(
         [
-        # PTB runs only one handler per group. Last-5 must be registered
-        # before catch-all TEXT handlers (replace_text_router, plan_text_select).
+        # PTB runs only one handler per group. Order matters:
+        # 1) last-5 digits → receipt_last5
+        # 2) everything else text → plan_text_select
+        # Key-replacement text router is registered in group=1 (see bot.py)
+        # so it still runs after these without stealing plan taps.
         MessageHandler(
             filters.TEXT & filters.Regex(r"^\d{5}$") & ~filters.COMMAND,
             receipt_last5,
         ),
-        ]
-    )
-    handlers.extend(build_key_replacement_handlers())
-    handlers.extend(
-        [
         MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select),
         MessageHandler(filters.PHOTO, receipt_photo, block=False),
         ]
     )
     return handlers
+
+
+def build_replace_text_handlers() -> list:
+    """Text router for server-replace flow — must be a separate handler group."""
+    from handlers.key_replacement import build_key_replacement_handlers
+
+    return build_key_replacement_handlers()

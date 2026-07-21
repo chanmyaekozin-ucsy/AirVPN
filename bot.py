@@ -17,8 +17,8 @@ from handlers import (
     build_admin_conversation_handlers,
     build_admin_menu_handlers,
     build_group_payment_handlers,
-    build_user_handlers,
 )
+from handlers.user import build_replace_text_handlers, build_user_handlers
 from utils.security import validate_production_config
 
 logging.basicConfig(
@@ -91,6 +91,9 @@ def main() -> None:
         app.add_handler(handler, group=0)
     for handler in build_user_handlers():
         app.add_handler(handler, group=0)
+    # Separate group so replace flow does not swallow plan / last-5 taps.
+    for handler in build_replace_text_handlers():
+        app.add_handler(handler, group=1)
     for handler in build_admin_conversation_handlers():
         app.add_handler(handler, group=0)
 
