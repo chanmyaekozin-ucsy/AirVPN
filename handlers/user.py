@@ -1225,8 +1225,8 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if not plan:
         if context.user_data.get("replace_state") and not context.user_data.get("buy_flow"):
             return
+        # Payment in progress: ignore non-plan text so last-5 digits reach receipt_last5.
         if context.user_data.get("payment_state"):
-            await update.message.reply_text(t(lang, "replace_finish_payment_first"))
             return
         if context.user_data.get("buy_flow") and server_id:
             await _show_plans_for_server(
@@ -1292,16 +1292,18 @@ def build_user_handlers() -> list:
     ]
     handlers.extend(
         [
-        MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select, block=False),
+        # PTB runs only one handler per group. Last-5 must be registered
+        # before catch-all TEXT handlers (replace_text_router, plan_text_select).
+        MessageHandler(
+            filters.TEXT & filters.Regex(r"^\d{5}$") & ~filters.COMMAND,
+            receipt_last5,
+        ),
         ]
     )
     handlers.extend(build_key_replacement_handlers())
     handlers.extend(
         [
-        MessageHandler(
-            filters.TEXT & filters.Regex(r"^\d{5}$") & ~filters.COMMAND,
-            receipt_last5,
-        ),
+        MessageHandler(filters.TEXT & ~filters.COMMAND, plan_text_select),
         MessageHandler(filters.PHOTO, receipt_photo, block=False),
         ]
     )

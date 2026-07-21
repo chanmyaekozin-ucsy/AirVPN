@@ -414,8 +414,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "No other servers are available to switch to.",
     },
     "replace_finish_payment_first": {
-        "my": "ငွေပေးချေမှု မပြီးသေးပါ — /cancel နှိပ်ပြီး ပြန်စပေးပါ။",
-        "en": "Finish or cancel your payment first (/cancel).",
+        "my": (
+            "သင့်မှာ လက်ရှိ ငွေပေးချေမှု တစ်ခု ရှိနေပါသေးတယ်။\n"
+            "လုပ်ငန်းစဉ်နံပါတ် နောက်ဆုံး ၅ လုံး ပို့ပေးပါ။\n"
+            "သို့မဟုတ် /cancel နှိပ်ပြီး ပြန်စပါ။"
+        ),
+        "en": (
+            "You already have a payment in progress.\n"
+            "Send the last 5 digits of the transaction ID,\n"
+            "or tap /cancel to start over."
+        ),
     },
     "replace_pick_key": {
         "my": "<b>ဆာဗာ ပြောင်းမည့် VPN Key</b> ကို ရွေးပါ။",
