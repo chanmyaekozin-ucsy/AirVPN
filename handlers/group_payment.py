@@ -3,8 +3,14 @@ from __future__ import annotations
 
 import logging
 
-from telegram import Update
-from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from telegram import ForceReply, Update
+from telegram.ext import (
+    ApplicationHandlerStop,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
 
 import config
 import database as db
@@ -49,10 +55,66 @@ async def _answer_callback(query, text: str | None = None, *, alert: bool = Fals
 
 def _callback_chat_id(update: Update) -> int | None:
     query = update.callback_query
-    if query and query.message:
-        return query.message.chat_id
+    msg = query.message if query else None
+    if msg is not None:
+        chat = getattr(msg, "chat", None)
+        if chat is not None and getattr(chat, "id", None) is not None:
+            return int(chat.id)
+        # Older Message objects expose chat_id directly
+        cid = getattr(msg, "chat_id", None)
+        if cid is not None:
+            return int(cid)
     chat = update.effective_chat
     return chat.id if chat else None
+
+
+def _callback_message_id(update: Update) -> int | None:
+    query = update.callback_query
+    msg = query.message if query else None
+    if msg is None:
+        return None
+    mid = getattr(msg, "message_id", None)
+    return int(mid) if mid is not None else None
+
+
+def _callback_thread_id(update: Update) -> int | None:
+    query = update.callback_query
+    msg = query.message if query else None
+    if msg is None:
+        return None
+    tid = getattr(msg, "message_thread_id", None)
+    return int(tid) if tid is not None else None
+
+
+async def _group_reply(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+    text: str,
+    *,
+    reply_markup=None,
+) -> None:
+    """Send feedback in the proofs group without relying on accessible Message helpers."""
+    chat_id = _callback_chat_id(update)
+    if not chat_id:
+        logger.error("Cannot reply to group callback — no chat id (data=%r)", getattr(update.callback_query, "data", None))
+        return
+    kwargs: dict = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": None,
+    }
+    thread_id = _callback_thread_id(update)
+    if thread_id is not None:
+        kwargs["message_thread_id"] = thread_id
+    reply_to = _callback_message_id(update)
+    if reply_to is not None:
+        kwargs["reply_to_message_id"] = reply_to
+    if reply_markup is not None:
+        kwargs["reply_markup"] = reply_markup
+    try:
+        await context.bot.send_message(**kwargs)
+    except Exception:
+        logger.exception("group reply failed chat=%s text=%r", chat_id, text[:80])
 
 
 async def proof_payment_callback(
@@ -73,20 +135,19 @@ async def proof_payment_callback(
     payment_id = _parse_proof_payment_id(query.data or "", "proof_ok_")
     if payment_id is None:
         await _answer_callback(query, "Invalid payment button", alert=True)
-        return
-
-    await _answer_callback(query, "Approving payment…")
+        raise ApplicationHandlerStop
 
     user = update.effective_user
     if not user or not is_admin(user.id):
-        await query.message.reply_text("Access denied.")
-        return
+        await _answer_callback(query, "Access denied — admin only", alert=True)
+        raise ApplicationHandlerStop
 
     payment = await db.get_payment(payment_id)
     if not payment or payment["status"] != "pending":
-        await query.message.reply_text("Payment already processed.")
-        return
+        await _answer_callback(query, "Payment already processed", alert=True)
+        raise ApplicationHandlerStop
 
+    await _answer_callback(query, "Approving payment…")
     logger.info("Group approve payment #%s by admin %s", payment_id, user.id)
 
     try:
@@ -99,13 +160,13 @@ async def proof_payment_callback(
         )
     except Exception:
         logger.exception("Group approve failed for payment %s", payment_id)
-        await query.message.reply_text("Approval failed: internal error")
-        return
+        await _group_reply(update, context, f"Approval failed: internal error (#{payment_id})")
+        raise ApplicationHandlerStop
 
     if not ok:
         logger.error("Group approve failed for payment %s: %s", payment_id, msg)
-        await query.message.reply_text(f"Approval failed: {msg}")
-        return
+        await _group_reply(update, context, f"Approval failed: {msg}")
+        raise ApplicationHandlerStop
 
     await update_payment_proof(
         context.bot,
@@ -113,7 +174,8 @@ async def proof_payment_callback(
         "approved",
         note=f"By admin {user.id}",
     )
-    await query.message.reply_text(f"Payment #{payment_id} approved.")
+    await _group_reply(update, context, f"Payment #{payment_id} approved.")
+    raise ApplicationHandlerStop
 
 
 async def proof_reject_callback(
@@ -135,41 +197,42 @@ async def proof_reject_callback(
     payment_id = _parse_proof_payment_id(query.data or "", "proof_no_")
     if payment_id is None:
         await _answer_callback(query, "Invalid payment button", alert=True)
-        return
-
-    await _answer_callback(query)
+        raise ApplicationHandlerStop
 
     user = update.effective_user
     if not user or not is_admin(user.id):
-        await query.message.reply_text("Access denied.")
-        return
+        await _answer_callback(query, "Access denied — admin only", alert=True)
+        raise ApplicationHandlerStop
 
     payment = await db.get_payment(payment_id)
     if not payment or payment["status"] != "pending":
-        await query.message.reply_text("Payment already processed.")
-        return
+        await _answer_callback(query, "Payment already processed", alert=True)
+        raise ApplicationHandlerStop
 
+    await _answer_callback(query)
     logger.info("Group reject payment #%s by admin %s", payment_id, user.id)
     context.chat_data["group_reject_payment_id"] = payment_id
     context.user_data["group_reject_payment_id"] = payment_id
     lang = await _lang(update)
-    try:
-        await query.message.reply_text(
-            t(lang, "admin_reject_reason_group", payment_id=payment_id)
-        )
-    except Exception:
-        logger.exception("proof_no prompt failed for payment %s", payment_id)
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=t(lang, "admin_reject_reason_group", payment_id=payment_id),
-            reply_to_message_id=query.message.message_id,
-        )
+
+    # ForceReply + reply-to-bot is required when BotFather privacy mode is on;
+    # plain group text is otherwise invisible to the bot.
+    await _group_reply(
+        update,
+        context,
+        t(lang, "admin_reject_reason_group", payment_id=payment_id),
+        reply_markup=ForceReply(
+            selective=True,
+            input_field_placeholder="Rejection reason",
+        ),
+    )
+    raise ApplicationHandlerStop
 
 
 async def group_reject_reason(
     update: Update, context: ContextTypes.DEFAULT_TYPE
 ) -> None:
-    """Capture rejection reason typed in the proofs group."""
+    """Capture rejection reason typed as a reply in the proofs group."""
     payment_id = context.chat_data.get("group_reject_payment_id")
     if not payment_id:
         payment_id = context.user_data.get("group_reject_payment_id")
@@ -187,12 +250,16 @@ async def group_reject_reason(
     await reject_payment_from_group(
         update.get_bot(), payment_id, user.id, reason
     )
-    await update.message.reply_text(f"Payment #{payment_id} rejected.")
+    await update.message.reply_text(
+        f"Payment #{payment_id} rejected.",
+        parse_mode=None,
+    )
+    raise ApplicationHandlerStop
 
 
-def _proofs_group_text_filter():
-    """Only the proofs group — never match private-chat menu button presses."""
-    base = filters.TEXT & ~filters.COMMAND
+def _proofs_group_reject_filter():
+    """Proofs group only; prefer replies so privacy mode still delivers the text."""
+    base = filters.TEXT & ~filters.COMMAND & filters.REPLY
     gid = config.PAYMENTS_PROOFS_GROUP_ID
     if gid:
         return base & filters.Chat(gid)
@@ -238,5 +305,5 @@ def build_group_payment_handlers() -> list:
     return [
         CallbackQueryHandler(proof_payment_callback, pattern=r"^proof_ok_\d+$"),
         CallbackQueryHandler(proof_reject_callback, pattern=r"^proof_no_\d+$"),
-        MessageHandler(_proofs_group_text_filter(), group_reject_reason),
+        MessageHandler(_proofs_group_reject_filter(), group_reject_reason),
     ]

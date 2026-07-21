@@ -88,8 +88,26 @@ KBZ_AUTO_VERIFY: bool = os.getenv("KBZ_AUTO_VERIFY", "true").lower() in (
 _default_kbz_session = Path(__file__).resolve().parent / "kbz_session.json"
 _env_kbz_session = os.getenv("KBZ_SESSION_PATH", "").strip()
 KBZ_SESSION_PATH: str = _env_kbz_session if _env_kbz_session else str(_default_kbz_session)
+_env_claimed = os.getenv("KBZ_CLAIMED_TX_PATH", "").strip()
+KBZ_CLAIMED_TX_PATH: str = _env_claimed or str(
+    Path(KBZ_SESSION_PATH).expanduser().resolve().parent / "kbz_claimed_txs.sqlite3"
+)
+KBZ_BOT_CLAIM_NAME: str = os.getenv("KBZ_BOT_CLAIM_NAME", "airvpn").strip()
 KBZ_MERCHANT_NAME: str = os.getenv("KBZ_MERCHANT_NAME", "")
 KBZ_MERCHANT_PHONE: str = os.getenv("KBZ_MERCHANT_PHONE", "")
+KBZ_TX_EXAMPLE: str = os.getenv("KBZ_TX_EXAMPLE", "82622").strip()
+_default_sample_tx = Path(__file__).resolve().parent / "data" / "sample_txid.jpg"
+_env_sample_tx = os.getenv("KBZ_SAMPLE_TX_IMAGE", "").strip()
+KBZ_SAMPLE_TX_IMAGE: Path = Path(
+    _env_sample_tx if _env_sample_tx else str(_default_sample_tx)
+)
+
+# Hourly KBZ session health check (read-only probe; Payment Manager writes session)
+KBZ_SESSION_CHECK_INTERVAL_SEC: int = int(
+    os.getenv("KBZ_SESSION_CHECK_INTERVAL_SEC", "3600")
+)
+# Unused on AirVPN — do not enable; Payment Manager is the only session writer
+KBZ_FRIDA_LOG_PATH: str = os.getenv("KBZ_FRIDA_LOG_PATH", "").strip()
 
 # Auto-reject KBZPay receipts when the transfer is older than this (hours)
 PAYMENT_TX_MAX_AGE_HOURS: int = int(os.getenv("PAYMENT_TX_MAX_AGE_HOURS", "1"))

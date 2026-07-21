@@ -654,10 +654,25 @@ async def set_payment_verification(
 
 
 async def try_claim_tx_id(payment_id: int, tx_id: str) -> bool:
-    """Atomically reserve a transaction ID for a pending payment."""
+    """Atomically reserve a transaction ID locally and in the shared ledger."""
+    import asyncio
+
+    from payments.kbz.tx_claims import release_tx, try_claim_tx
+
     tx_id = (tx_id or "").strip()
     if not tx_id:
         return False
+
+    bot = config.KBZ_BOT_CLAIM_NAME
+    ref = str(payment_id)
+    path = config.KBZ_CLAIMED_TX_PATH
+
+    global_ok = await asyncio.to_thread(
+        try_claim_tx, path, tx_id, bot=bot, ref_id=ref
+    )
+    if not global_ok:
+        return False
+
     async with _db() as db:
         try:
             await db.execute("BEGIN IMMEDIATE")
@@ -668,6 +683,9 @@ async def try_claim_tx_id(payment_id: int, tx_id: str) -> bool:
                 row = await cur.fetchone()
                 if row and row["id"] != payment_id:
                     await db.rollback()
+                    await asyncio.to_thread(
+                        release_tx, path, tx_id, bot=bot, ref_id=ref
+                    )
                     return False
             cur = await db.execute(
                 """UPDATE payments SET receipt_tx_id = ?
@@ -677,11 +695,15 @@ async def try_claim_tx_id(payment_id: int, tx_id: str) -> bool:
             )
             if cur.rowcount == 0:
                 await db.rollback()
+                await asyncio.to_thread(
+                    release_tx, path, tx_id, bot=bot, ref_id=ref
+                )
                 return False
             await db.commit()
             return True
         except aiosqlite.IntegrityError:
             await db.rollback()
+            await asyncio.to_thread(release_tx, path, tx_id, bot=bot, ref_id=ref)
             return False
 
 

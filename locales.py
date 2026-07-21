@@ -224,10 +224,10 @@ STRINGS: dict[str, dict[str, str]] = {
             "ငွေလွှဲနည်းလမ်း: <b>{method}</b>\n"
             "အကောင့်နံပါတ်: <code>{account}</code>\n"
             "အကောင့်အမည်: {account_name}\n\n"
-            "<b>ငွေလွှဲပြီးနောက် ၁ နာရီအတွင်း ပြေစာပုံ ပို့ပေးပါ — "
+            "<b>ငွေလွှဲပြီးနောက် ၁ နာရီအတွင်း လုပ်ငန်းစဉ်နံပါတ် နောက်ဆုံး ၅ လုံး ပို့ပေးပါ — "
             "၁ နာရီထက်ပိုဟောင်းတဲ့ ငွေလွှဲမှုကို အလိုအလျောက် ငြင်းပယ်ပါမည်။</b>\n\n"
-            "ငွေလွှဲလို့ အောင်မြင်သွားပြီဆိုရင် <b>ငွေလွှဲပြေစာ (Screenshot) ပုံလေး</b> ပို့ပေးပါဦးနော်။\n"
-            "KBZPay ဆိုရင်တော့ QR စနစ်ပါတဲ့ ပြေစာပုံလေး ပို့ပေးဖို့ မေတ္တာရပ်ခံပါတယ်ခင်ဗျာ။\n\n"
+            "လွှဲပြီးပါက <b>လုပ်ငန်းစဉ်နံပါတ်ရဲ့ နောက်ဆုံး ဂဏန်း ၅ လုံး</b> ကို ပို့ပေးပါ။\n"
+            "နမူနာကို ပုံတွင် ကြည့်ပါ။\n\n"
             "မလုပ်တော့ပါဆိုရင် /cancel နှိပ်ပါ။"
         ),
         "en": (
@@ -238,25 +238,36 @@ STRINGS: dict[str, dict[str, str]] = {
             "Method: <b>{method}</b>\n"
             "Account: <code>{account}</code>\n"
             "Name: {account_name}\n\n"
-            "<b>Send your receipt within 1 hour of payment — transactions older than 1 hour "
-            "are auto-rejected.</b>\n\n"
-            "After transfer, send a <b>screenshot of the receipt</b>.\n"
-            "For KBZPay, send the receipt image with QR code.\n\n"
+            "<b>Within 1 hour of payment, send the last 5 digits of the transaction ID — "
+            "transfers older than 1 hour are auto-rejected.</b>\n\n"
+            "After transferring, send the <b>last 5 digits</b> of the transaction ID.\n"
+            "See the image for an example.\n\n"
             "To cancel, tap /cancel"
         ),
     },
     "pay_waiting_receipt": {
         "my": (
-            "<b>KBZPay ငွေလွှဲပြေစာပုံ (Screenshot) လေး ပို့ပေးပါနော်။</b>\n"
-            "ပြေစာပေါ်မှာ QR Code ထင်ထင်ရှားရှား ပါရပါမယ်ခင်ဗျာ။ "
-            "(App ဗားရှင်းအဟောင်း သုံးနေတယ်ဆိုရင်တော့ Transaction ID ကို ရိုက်ပို့ပေးပါဦး။)\n\n"
+            "လုပ်ငန်းစဉ်နံပါတ်ရဲ့ <b>နောက်ဆုံးဂဏန်း ၅ လုံး</b> အတိအကျ ပို့ပေးပါ။\n"
+            "ဥပမာ - <code>{example}</code>\n\n"
             "မလုပ်တော့ပါဆိုရင် /cancel နှိပ်ပါ။"
         ),
         "en": (
-            "Send your <b>KBZPay e-receipt screenshot</b>.\n"
-            "QR should be visible (old app: send Transaction ID instead).\n\n"
+            "Please send the exact <b>last 5 digits</b> of the transaction ID.\n"
+            "Example: <code>{example}</code>\n\n"
             "To cancel, tap /cancel"
         ),
+    },
+    "tx_digits_prompt": {
+        "my": "လုပ်ငန်းစဉ်နံပါတ်ရဲ့ နောက်ဆုံးဂဏန်း ၅ လုံး အတိအကျပို့ပေးပါ။",
+        "en": "Please send the exact last 5 digits of the transaction ID.",
+    },
+    "tx_digits_invalid": {
+        "my": "လုပ်ငန်းစဉ်နံပါတ်ရဲ့ နောက်ဆုံးဂဏန်း ၅ လုံး အတိအကျပို့ပေးပါ။",
+        "en": "Please send the exact last 5 digits of the transaction ID.",
+    },
+    "tx_example_caption": {
+        "my": "ဥပမာ - {example}",
+        "en": "Eg - {example}",
     },
     "pay_no_pending": {
         "my": (
@@ -280,31 +291,26 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "pay_ask_tx_id": {
         "my": (
-            "ပြေစာပေါ်မှာ QR Code မတွေ့ရလို့ပါခင်ဗျာ။\n"
-            "ကျေးဇူးပြုပြီး ငွေလွှဲနံပါတ် <b>Transaction No</b> (ဂဏန်း ၂၀ လုံး) ကို "
-            "ရိုက်ထည့်ပေးပါဦးနော်။\n"
-            "ဥပမာ- <code>01004150060878759776</code>"
+            "လုပ်ငန်းစဉ်နံပါတ်ရဲ့ <b>နောက်ဆုံးဂဏန်း ၅ လုံး</b> အတိအကျ ပို့ပေးပါ။\n"
+            "ဥပမာ - <code>{example}</code>"
         ),
         "en": (
-            "QR not found.\n"
-            "Please send the <b>Transaction No</b> (20 digits).\n"
-            "Example: <code>01004150060878759776</code>"
+            "Please send the exact <b>last 5 digits</b> of the transaction ID.\n"
+            "Example: <code>{example}</code>"
         ),
     },
     "pay_verifying": {
-        "my": "KBZPay ငွေလွှဲပြေစာကို အလိုအလျောက် စစ်ဆေးပေးနေပါတယ်ခင်ဗျာ…",
-        "en": "Verifying KBZPay receipt…",
+        "my": "ငွေလွှဲကို စစ်ဆေးနေပါတယ်…",
+        "en": "Checking the transaction…",
     },
     "pay_submitted": {
         "my": (
-            "<b>ငွေလွှဲပြေစာကို လက်ခံရရှိထားပြီးပါပြီ။</b>\n\n"
-            "ငွေပေးချေမှုကို စနစ်ကနေ စစ်ဆေးနေပါတယ်ခင်ဗျာ။\n"
-            "အတည်ပြုချက် ပြီးတာနဲ့ သင့်ဆီကို VPN Key အလိုအလျောက် ချက်ချင်းပို့ပေးမှာဖြစ်ပါတယ်။"
+            "<b>သင့်ငွေပေးချေမှုကို စိစစ်နေပါတယ်။</b>\n\n"
+            "Admin လက်ခံ/ငြင်းပယ်ပြီးပါက VPN Key ပို့ပေးပါမယ်။"
         ),
         "en": (
-            "<b>Receipt received!</b>\n\n"
-            "Payment is being reviewed.\n"
-            "Your VPN key will be sent automatically after approval."
+            "<b>Your payment is under review.</b>\n\n"
+            "We will send your VPN key once Admin accepts it."
         ),
     },
     "pay_approved_auto": {

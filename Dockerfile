@@ -27,9 +27,12 @@ EXPOSE 8080
 ENV ENV=production \
     DEV_MOCK_VPN=false \
     SQLITE_PATH=/data/airvpn.sqlite3 \
-    KBZ_SESSION_PATH=/data/kbz_session.json \
+    KBZ_SESSION_PATH=/data/kbz/kbz_session.json \
     SUB_SERVER_PORT=8080
 
-# Mount a persistent volume at /data in Coolify (SQLite + KBZ session).
+# Mount:
+#   - private volume at /data for SQLite (airvpn.sqlite3)
+#   - shared host path /data/kbz → /data/kbz for merchant kbz_session.json
+#     (same file as Cloud Game Shop + Donimate Payment Manager)
 # Set SUB_PUBLIC_BASE_URL and expose port 8080 for subscription links.
 CMD ["/app/entrypoint.sh"]

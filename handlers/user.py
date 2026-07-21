@@ -33,7 +33,7 @@ from handlers.keyboards import (
 from locales import t, t_plain
 from payments.kbz.verify import is_stale_tx_failure
 from services.free_vpn import sync_free_vpn_after_claim
-from services.kbz_payment import verify_receipt_image, verify_transaction_id
+from services.kbz_payment import verify_last5_digits
 from services.payment_approve import approve_and_deliver
 from services.payment_proofs import post_payment_proof, update_payment_proof
 from services.usage_sync import sync_subscriptions_usage
@@ -49,9 +49,11 @@ from utils.vless_delivery import (
 
 logger = logging.getLogger(__name__)
 
+WAITING_TX_DIGITS = "waiting_tx_digits"
+# Legacy states (restart recovery maps these to last-5 flow)
 WAITING_RECEIPT = "waiting_receipt"
 WAITING_TX_ID = "waiting_tx_id"
-TX_ID_RE = re.compile(r"^\d{10,}$")
+TX_SUFFIX_RE = re.compile(r"^\d{5}$")
 
 # User callbacks (lang_* handled by language_callback).
 USER_CALLBACK_PATTERN = (
@@ -115,11 +117,7 @@ async def _owned_pending_payment(payment_id: int, user_row: dict) -> dict | None
 
 
 def _infer_payment_state(payment: dict) -> str:
-    if payment.get("receipt_file_id"):
-        return WAITING_TX_ID
-    if payment.get("verify_status") == "needs_tx_id":
-        return WAITING_TX_ID
-    return WAITING_RECEIPT
+    return WAITING_TX_DIGITS
 
 
 async def _resolve_pending_payment(
@@ -131,15 +129,15 @@ async def _resolve_pending_payment(
         payment = await _owned_pending_payment(payment_id, user_row)
         if payment:
             state = context.user_data.get("payment_state")
-            if state not in (WAITING_RECEIPT, WAITING_TX_ID):
-                context.user_data["payment_state"] = _infer_payment_state(payment)
+            if state not in (WAITING_TX_DIGITS, WAITING_RECEIPT, WAITING_TX_ID):
+                context.user_data["payment_state"] = WAITING_TX_DIGITS
             return payment
 
     payment = await db.get_latest_pending_payment(user_row["id"])
     if not payment:
         return None
     context.user_data["pending_payment_id"] = payment["id"]
-    context.user_data["payment_state"] = _infer_payment_state(payment)
+    context.user_data["payment_state"] = WAITING_TX_DIGITS
     return payment
 
 
@@ -647,7 +645,7 @@ async def _start_kbzpayout(
     plan,
     account,
 ) -> None:
-    """Show payment instructions for the single KBZPay account."""
+    """Show payment instructions and ask for last 5 digits of the KBZ tx ID."""
     if from_user and not rate_allow(
         f"pay:{from_user.id}",
         max_calls=config.RATE_PAYMENT_PER_HOUR,
@@ -665,7 +663,7 @@ async def _start_kbzpayout(
         server_id,
     )
     context.user_data["pending_payment_id"] = payment_id
-    context.user_data["payment_state"] = WAITING_RECEIPT
+    context.user_data["payment_state"] = WAITING_TX_DIGITS
     context.user_data.pop("buy_flow", None)
     account_number = account["account_number"]
     from vpn_servers import get_server
@@ -694,6 +692,19 @@ async def _start_kbzpayout(
             instructions,
             parse_mode=PARSE_MODE,
         )
+
+    sample = config.KBZ_SAMPLE_TX_IMAGE
+    caption = t(lang, "tx_example_caption", example=md2(config.KBZ_TX_EXAMPLE))
+    try:
+        if sample.is_file():
+            await message.reply_photo(photo=str(sample), caption=caption, parse_mode=PARSE_MODE)
+        else:
+            await message.reply_text(caption, parse_mode=PARSE_MODE)
+    except Exception:
+        logger.exception("Sample tx image send failed")
+        await message.reply_text(caption, parse_mode=PARSE_MODE)
+
+    await message.reply_text(t(lang, "tx_digits_prompt"), parse_mode=PARSE_MODE)
 
 
 async def _match_plan_choice(
@@ -922,6 +933,8 @@ async def _process_kbzpayout_verification(
     payment_id: int,
     verify_result,
     user_row: dict,
+    *,
+    last5: str | None = None,
 ) -> None:
     lang = await _lang(update, context)
     payment = await _owned_pending_payment(payment_id, user_row)
@@ -934,20 +947,27 @@ async def _process_kbzpayout_verification(
         )
         return
 
+    note_prefix = f"Last5: {last5}. " if last5 else ""
     await db.set_payment_verification(
         payment_id,
         verify_status=verify_result.status,
-        verify_message=verify_result.message,
+        verify_message=f"{note_prefix}{verify_result.message}".strip(),
     )
 
     if verify_result.status == "needs_tx_id":
+        # Legacy QR path leftover — treat as manual review for last-5 flow.
         await update_payment_proof(
-            context.bot, payment_id, "manual_review", note="Awaiting Transaction ID"
+            context.bot,
+            payment_id,
+            "manual_review",
+            note=f"{note_prefix}Awaiting review",
         )
-        await update.message.reply_text(
-            t(lang, "pay_ask_tx_id"), parse_mode=PARSE_MODE
+        await _reply_and_restore_menu(
+            update,
+            lang,
+            t(lang, "pay_submitted"),
+            context,
         )
-        context.user_data["payment_state"] = WAITING_TX_ID
         return
 
     if verify_result.status == "ok" and verify_result.trans_id:
@@ -985,7 +1005,12 @@ async def _process_kbzpayout_verification(
                 t(lang, "pay_submitted"),
                 context,
             )
-            await update_payment_proof(context.bot, payment_id, "manual_review")
+            await update_payment_proof(
+                context.bot,
+                payment_id,
+                "manual_review",
+                note=f"{note_prefix}{msg}",
+            )
         if ok:
             _clear_payment_flow(context)
             _clear_buy_flow(context)
@@ -1007,17 +1032,17 @@ async def _process_kbzpayout_verification(
             context.bot,
             payment_id,
             "manual_review",
-            note="KBZ auto-verify unavailable",
+            note=f"{note_prefix}KBZ auto-verify unavailable",
         )
         return
 
     if verify_result.status == "failed":
         if verify_result.trans_id:
             await db.try_claim_tx_id(payment_id, verify_result.trans_id)
-            await db.reject_payment(payment_id, 0, verify_result.message)
-            logger.info(
-                "Payment %s auto-rejected: %s", payment_id, verify_result.message
-            )
+        await db.reject_payment(payment_id, 0, verify_result.message)
+        logger.info(
+            "Payment %s auto-rejected: %s", payment_id, verify_result.message
+        )
         reject_key = (
             "pay_rejected_stale_tx"
             if is_stale_tx_failure(verify_result)
@@ -1030,7 +1055,12 @@ async def _process_kbzpayout_verification(
             context,
             **admin_contact_reply_kwargs(lang),
         )
-        await update_payment_proof(context.bot, payment_id, "auto_rejected")
+        await update_payment_proof(
+            context.bot,
+            payment_id,
+            "auto_rejected",
+            note=f"{note_prefix}{verify_result.message}",
+        )
         return
 
     # error / manual review
@@ -1040,10 +1070,16 @@ async def _process_kbzpayout_verification(
         t(lang, "pay_submitted"),
         context,
     )
-    await update_payment_proof(context.bot, payment_id, "manual_review")
+    await update_payment_proof(
+        context.bot,
+        payment_id,
+        "manual_review",
+        note=f"{note_prefix}{verify_result.message}",
+    )
 
 
 async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Photos are no longer used for payment — redirect to last-5 digits."""
     if not await _guard(update, context):
         return
     user = update.effective_user
@@ -1051,27 +1087,43 @@ async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     payment = await _resolve_pending_payment(context, row)
     if not payment:
         return
-    payment_id = payment["id"]
+    lang = await _lang(update, context)
+    await update.message.reply_text(
+        t(lang, "pay_waiting_receipt", example=md2(config.KBZ_TX_EXAMPLE)),
+        parse_mode=PARSE_MODE,
+    )
+
+
+async def receipt_last5(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """User sends last 5 digits of the KBZ transaction ID."""
+    if context.user_data.get("replace_state"):
+        return
+    if not await _guard(update, context):
+        return
+    user = update.effective_user
+    row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = await _lang(update, context)
 
-    photo = update.message.photo[-1] if update.message.photo else None
-    if not photo:
-        await update.message.reply_text(
-            t(lang, "pay_waiting_receipt"), parse_mode=PARSE_MODE
-        )
+    digits = re.sub(r"\D", "", (update.message.text or "").strip())
+    if not TX_SUFFIX_RE.fullmatch(digits):
         return
+
+    payment = await _resolve_pending_payment(context, row)
+    if not payment:
+        return
+
+    payment_id = payment["id"]
+    logger.info("Last5 %s for payment #%s user %s", digits, payment_id, user.id)
 
     if not rate_allow(
-        f"receipt_photo:{user.id}",
-        max_calls=config.RATE_RECEIPT_SCREENSHOT_PER_MIN,
-        window_sec=60,
+        f"kbz:{user.id}",
+        max_calls=config.RATE_KBZ_VERIFY_PER_HOUR,
+        window_sec=3600,
     ):
-        await update.message.reply_text(t(lang, "rate_limited_receipt"))
+        await update.message.reply_text(t(lang, "rate_limited"))
         return
 
-    await db.attach_receipt(payment_id, photo.file_id)
-    context.user_data["payment_state"] = WAITING_RECEIPT
-
+    note = f"Last5: {digits}"
     payment = await db.get_payment(payment_id) or payment
 
     if payment.get("method") != "KBZPay" or not config.KBZ_AUTO_VERIFY:
@@ -1079,8 +1131,14 @@ async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
             context.bot,
             payment_id,
             payment,
-            photo.file_id,
+            None,
             status="manual_review",
+            note=note,
+        )
+        await db.set_payment_verification(
+            payment_id,
+            verify_status="manual_review",
+            verify_message=note,
         )
         _clear_payment_flow(context)
         _clear_buy_flow(context)
@@ -1097,97 +1155,31 @@ async def receipt_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         context.bot,
         payment_id,
         payment,
-        photo.file_id,
+        None,
         status="verifying",
+        note=note,
     )
-
-    if not rate_allow(
-        f"kbz:{user.id}",
-        max_calls=config.RATE_KBZ_VERIFY_PER_HOUR,
-        window_sec=3600,
-    ):
-        await update.message.reply_text(t(lang, "rate_limited"))
-        return
 
     await update.message.reply_text(t(lang, "pay_verifying"))
     try:
-        tg_file = await context.bot.get_file(photo.file_id)
-        image_bytes = bytes(await tg_file.download_as_bytearray())
-        result = await verify_receipt_image(image_bytes, payment["amount_ks"])
+        result = await verify_last5_digits(digits, payment["amount_ks"])
     except Exception:
-        logger.exception("Receipt verify failed for payment %s", payment_id)
+        logger.exception("Last5 verify failed for payment %s", payment_id)
         await _reply_and_restore_menu(
             update,
             lang,
             t(lang, "pay_submitted"),
             context,
         )
-        await update_payment_proof(context.bot, payment_id, "manual_review")
+        await update_payment_proof(
+            context.bot,
+            payment_id,
+            "manual_review",
+            note=f"{note}. Verify error",
+        )
         return
     await _process_kbzpayout_verification(
-        update, context, payment_id, result, row
-    )
-
-
-async def receipt_tx_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    if context.user_data.get("replace_state"):
-        return
-    if not await _guard(update, context):
-        return
-    user = update.effective_user
-    row = await db.get_or_create_user(user.id, user.username, user.first_name)
-    lang = await _lang(update, context)
-
-    trans_id = (update.message.text or "").strip()
-    if not TX_ID_RE.fullmatch(trans_id):
-        return
-
-    payment = await _resolve_pending_payment(context, row)
-    if not payment:
-        await _reply_and_restore_menu(
-            update,
-            lang,
-            t(lang, "pay_no_pending"),
-            context,
-        )
-        return
-
-    payment_id = payment["id"]
-    logger.info("Tx ID %s for payment #%s user %s", trans_id, payment_id, user.id)
-
-    if not await db.try_claim_tx_id(payment_id, trans_id):
-        await _reply_and_restore_menu(
-            update,
-            lang,
-            t(lang, "pay_rejected_generic"),
-            context,
-            **admin_contact_reply_kwargs(lang),
-        )
-        return
-
-    if not rate_allow(
-        f"kbz:{user.id}",
-        max_calls=config.RATE_KBZ_VERIFY_PER_HOUR,
-        window_sec=3600,
-    ):
-        await update.message.reply_text(t(lang, "rate_limited"))
-        return
-
-    await update.message.reply_text(t(lang, "pay_verifying"))
-    try:
-        result = await verify_transaction_id(trans_id, payment["amount_ks"])
-    except Exception:
-        logger.exception("Tx ID verify failed for payment %s", payment_id)
-        await _reply_and_restore_menu(
-            update,
-            lang,
-            t(lang, "pay_submitted"),
-            context,
-        )
-        await update_payment_proof(context.bot, payment_id, "manual_review")
-        return
-    await _process_kbzpayout_verification(
-        update, context, payment_id, result, row
+        update, context, payment_id, result, row, last5=digits
     )
 
 
@@ -1307,8 +1299,8 @@ def build_user_handlers() -> list:
     handlers.extend(
         [
         MessageHandler(
-            filters.TEXT & filters.Regex(r"^\d{10,}$") & ~filters.COMMAND,
-            receipt_tx_id,
+            filters.TEXT & filters.Regex(r"^\d{5}$") & ~filters.COMMAND,
+            receipt_last5,
         ),
         MessageHandler(filters.PHOTO, receipt_photo, block=False),
         ]

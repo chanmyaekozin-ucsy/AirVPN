@@ -43,6 +43,15 @@ async def post_init(application: Application) -> None:
         )
     logger.info("Database ready: %s", config.SQLITE_PATH)
 
+    if config.KBZ_AUTO_VERIFY and config.PAYMENTS_PROOFS_GROUP_ID:
+        from services.kbz_session_monitor import kbz_session_monitor_loop
+
+        asyncio.create_task(kbz_session_monitor_loop(application.bot))
+        logger.info(
+            "KBZ session monitor started (every %ss)",
+            config.KBZ_SESSION_CHECK_INTERVAL_SEC,
+        )
+
 
 async def on_error(update: object, context) -> None:
     logger.exception("Unhandled bot error", exc_info=context.error)

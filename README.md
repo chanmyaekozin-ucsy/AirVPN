@@ -29,7 +29,7 @@ cp .env.example .env
 # Edit .env — BOT_TOKEN, ADMIN_TELEGRAM_IDS, panel, VPS settings
 
 cp kbz_session.example.json kbz_session.json
-# Fill KBZ session token if using auto-verify
+# Or point KBZ_SESSION_PATH at the shared file from Payment Manager
 
 python init_db.py
 python bot.py
@@ -46,7 +46,7 @@ For local development without a VPS, set `DEV_MOCK_VPN=true` in `.env`. **Never 
 | `PANEL_URL` | 3x-ui panel base URL |
 | `VPS_HOST` | Public host/IP for `vless://` URLs |
 | `KBZ_AUTO_VERIFY` | Enable receipt QR / transaction ID verification |
-| `KBZ_SESSION_PATH` | Path to merchant session JSON |
+| `KBZ_SESSION_PATH` | Path to merchant session JSON (**read-only**). Coolify: `/data/kbz/kbz_session.json` — written only by Donimate Payment Manager |
 | `PAYMENTS_PROOFS_GROUP_ID` | Telegram group for receipt screenshots |
 | `DEV_MOCK_VPN` | `true` = mock keys (dev only) |
 
