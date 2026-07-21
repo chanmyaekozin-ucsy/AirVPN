@@ -102,9 +102,10 @@ KBZ_SAMPLE_TX_IMAGE: Path = Path(
     _env_sample_tx if _env_sample_tx else str(_default_sample_tx)
 )
 
-# Hourly KBZ session health check (read-only probe; Payment Manager writes session)
-KBZ_SESSION_CHECK_INTERVAL_SEC: int = int(
-    os.getenv("KBZ_SESSION_CHECK_INTERVAL_SEC", "3600")
+# Hourly KBZ session health check removed — Donimate Payment Manager owns that.
+# AirVPN posts VPN panel / server status instead.
+SERVER_STATUS_INTERVAL_SEC: int = int(
+    os.getenv("SERVER_STATUS_INTERVAL_SEC", "3600")
 )
 # Unused on AirVPN — do not enable; Payment Manager is the only session writer
 KBZ_FRIDA_LOG_PATH: str = os.getenv("KBZ_FRIDA_LOG_PATH", "").strip()
