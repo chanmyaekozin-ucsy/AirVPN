@@ -76,7 +76,7 @@ MMT_OFFSET_HOURS: float = 6.5
 # Per-user VPN subscription URL (v2rayNG / Hiddify auto-update + usage display)
 SUB_PUBLIC_BASE_URL: str = os.getenv("SUB_PUBLIC_BASE_URL", "").rstrip("/")
 SUB_SERVER_HOST: str = os.getenv("SUB_SERVER_HOST", "0.0.0.0")
-SUB_SERVER_PORT: int = int(os.getenv("SUB_SERVER_PORT", "8080"))
+SUB_SERVER_PORT: int = int(os.getenv("SUB_SERVER_PORT", "9090"))
 SUB_ENABLED: bool = bool(SUB_PUBLIC_BASE_URL)
 
 # ─── AirVPN Android app ───────────────────────────────────────────────────────
@@ -99,7 +99,7 @@ MOBILE_API_PUBLIC_BASE: str = os.getenv(
 ).rstrip("/")
 MOBILE_CONFIG_KEY: str = os.getenv("MOBILE_CONFIG_KEY", "").strip()
 MOBILE_API_HOST: str = os.getenv("MOBILE_API_HOST", "0.0.0.0")
-MOBILE_API_PORT: int = int(os.getenv("MOBILE_API_PORT", "8081"))
+MOBILE_API_PORT: int = int(os.getenv("MOBILE_API_PORT", "9090"))
 
 # ─── KBZPay auto-verify ───────────────────────────────────────────────────────
 KBZ_AUTO_VERIFY: bool = os.getenv("KBZ_AUTO_VERIFY", "true").lower() in (
