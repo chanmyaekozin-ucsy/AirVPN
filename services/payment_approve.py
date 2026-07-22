@@ -77,6 +77,14 @@ async def approve_and_deliver(
             prefix_text=summary,
             sub_id=sub["id"] if sub else None,
         )
+        from utils.restore_delivery import deliver_restore_code
+
+        await deliver_restore_code(
+            bot=bot,
+            chat_id=payment["telegram_id"],
+            lang=u_lang,
+            user_id=user_row["id"],
+        )
     except Exception:
         logger.exception("Failed to notify user %s", payment["telegram_id"])
     try:

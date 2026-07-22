@@ -79,6 +79,24 @@ SUB_SERVER_HOST: str = os.getenv("SUB_SERVER_HOST", "0.0.0.0")
 SUB_SERVER_PORT: int = int(os.getenv("SUB_SERVER_PORT", "8080"))
 SUB_ENABLED: bool = bool(SUB_PUBLIC_BASE_URL)
 
+# ─── AirVPN Android app ───────────────────────────────────────────────────────
+AIRVPN_TELEGRAM_URL: str = os.getenv(
+    "AIRVPN_TELEGRAM_URL", "https://t.me/AirVPNBot"
+).strip()
+AIRVPN_PLAY_URL: str = os.getenv(
+    "AIRVPN_PLAY_URL",
+    "https://play.google.com/store/apps/details?id=com.airvpn.app",
+).strip()
+AIRVPN_APP_DEEP_LINK: str = os.getenv(
+    "AIRVPN_APP_DEEP_LINK", "airvpn://open"
+).strip()
+AIRVPN_BUY_DEEP_LINK: str = os.getenv(
+    "AIRVPN_BUY_DEEP_LINK", AIRVPN_TELEGRAM_URL
+).strip()
+MOBILE_CONFIG_KEY: str = os.getenv("MOBILE_CONFIG_KEY", "").strip()
+MOBILE_API_HOST: str = os.getenv("MOBILE_API_HOST", "0.0.0.0")
+MOBILE_API_PORT: int = int(os.getenv("MOBILE_API_PORT", "8081"))
+
 # ─── KBZPay auto-verify ───────────────────────────────────────────────────────
 KBZ_AUTO_VERIFY: bool = os.getenv("KBZ_AUTO_VERIFY", "true").lower() in (
     "1",

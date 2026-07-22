@@ -6,3 +6,9 @@ __pycache__/
 *.sqlite3
 *.sqlite3-*
 .DS_Store
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.iml
+.idea/

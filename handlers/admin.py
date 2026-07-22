@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 
 import database as db
+import config
 from handlers.group_payment import reject_payment_from_group
 from handlers.keyboards import (
     ADMIN_USERS_PAGE_SIZE,
@@ -69,6 +70,8 @@ def _admin_menu_label_pattern() -> str:
         "admin_free_gift_disable",
         "admin_free_gift_set_mb",
         "admin_ban",
+        "admin_app_servers",
+        "admin_app_ads",
         "admin_notifications",
         "admin_notify_send",
         "admin_notify_history",
@@ -171,6 +174,9 @@ async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     if view in ("free_gift", "free_gift_mb"):
         await admin_free_gift_menu(update, context)
+        return
+    if view == "app_servers":
+        await admin_show_main(update.message, lang, context)
         return
     if view == "users":
         await admin_show_main(update.message, lang, context)
@@ -285,6 +291,82 @@ async def admin_users_nav(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         page += 1
     await _show_users_page(update.message, lang, context, page=page)
+
+
+async def admin_app_servers_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ok, lang = await _admin_guard(update)
+    if not ok or not update.message:
+        return
+    from services.mobile_catalog import format_server_list
+
+    context.user_data["admin_view"] = "app_servers"
+    rows = await db.list_mobile_servers(enabled_only=False)
+    await update.message.reply_text(
+        format_server_list(rows, lang),
+        parse_mode=PARSE_MODE,
+        reply_markup=admin_menu(lang),
+    )
+
+
+async def admin_app_servers_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle ms add/on/off/del while in app servers admin view (or always for admins)."""
+    ok, lang = await _admin_guard(update)
+    if not ok or not update.message or not update.message.text:
+        return
+    text = update.message.text.strip()
+    if not text.lower().startswith("ms "):
+        return
+    from services.mobile_catalog import format_server_list, handle_ms_command
+
+    success, key = await handle_ms_command(text)
+    await update.message.reply_text(t(lang, key), parse_mode=PARSE_MODE)
+    if success:
+        rows = await db.list_mobile_servers(enabled_only=False)
+        await update.message.reply_text(
+            format_server_list(rows, lang),
+            parse_mode=PARSE_MODE,
+            reply_markup=admin_menu(lang),
+        )
+
+
+async def admin_app_ads_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    ok, lang = await _admin_guard(update)
+    if not ok or not update.message:
+        return
+    from services.mobile_ads import format_ads_list
+
+    context.user_data["admin_view"] = "app_ads"
+    rows = await db.list_mobile_ads(enabled_only=False)
+    await update.message.reply_text(
+        format_ads_list(rows, lang),
+        parse_mode=PARSE_MODE,
+        reply_markup=admin_menu(lang),
+    )
+
+
+async def admin_app_ads_command(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
+    """Handle ad add/on/off/del for admins."""
+    ok, lang = await _admin_guard(update)
+    if not ok or not update.message or not update.message.text:
+        return
+    text = update.message.text.strip()
+    if not text.lower().startswith("ad "):
+        return
+    from services.mobile_ads import format_ads_list, handle_ad_command
+
+    success, key = await handle_ad_command(text)
+    await update.message.reply_text(t(lang, key), parse_mode=PARSE_MODE)
+    if success:
+        rows = await db.list_mobile_ads(enabled_only=False)
+        await update.message.reply_text(
+            format_ads_list(rows, lang),
+            parse_mode=PARSE_MODE,
+            reply_markup=admin_menu(lang),
+        )
 
 
 async def admin_stats_view(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -811,6 +893,20 @@ def build_admin_menu_handlers() -> list:
         MessageHandler(admin_text_filter("admin_users"), admin_users_view),
         MessageHandler(admin_users_nav_filter(), admin_users_nav),
         MessageHandler(admin_text_filter("admin_stats"), admin_stats_view),
+        MessageHandler(admin_text_filter("admin_app_servers"), admin_app_servers_view),
+        MessageHandler(
+            filters.Regex(r"(?i)^ms\s+")
+            & filters.User(user_id=config.ADMIN_TELEGRAM_IDS)
+            & filters.TEXT,
+            admin_app_servers_command,
+        ),
+        MessageHandler(admin_text_filter("admin_app_ads"), admin_app_ads_view),
+        MessageHandler(
+            filters.Regex(r"(?i)^ad\s+")
+            & filters.User(user_id=config.ADMIN_TELEGRAM_IDS)
+            & filters.TEXT,
+            admin_app_ads_command,
+        ),
         MessageHandler(admin_text_filter("admin_free_gift"), admin_free_gift_menu),
         MessageHandler(
             admin_text_filter("admin_free_gift_enable"), admin_free_gift_toggle
@@ -848,6 +944,8 @@ async def admin_menu_dispatch(update: Update, context: ContextTypes.DEFAULT_TYPE
         ("admin_pending_payments", admin_pending),
         ("admin_users", admin_users_view),
         ("admin_stats", admin_stats_view),
+        ("admin_app_servers", admin_app_servers_view),
+        ("admin_app_ads", admin_app_ads_view),
         ("admin_free_gift", admin_free_gift_menu),
         ("admin_notifications", admin_notifications_menu),
         ("admin_notify_send", admin_notify_send_start),

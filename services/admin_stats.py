@@ -27,6 +27,19 @@ async def fetch_admin_stats() -> dict:
     """Return dashboard stats with usage synced from the panel when available."""
     stats = await db.get_admin_dashboard_stats()
     stats["keys_by_server"] = format_keys_by_server(await db.get_active_keys_by_server())
+    try:
+        stats.update(await db.get_mobile_analytics_stats())
+    except Exception:
+        logger.exception("Mobile analytics stats failed")
+        stats.update(
+            {
+                "dau_today": 0,
+                "dau_7d": 0,
+                "ad_clicks_today": 0,
+                "ad_clicks_total": 0,
+                "ad_clicks_top": "—",
+            }
+        )
     subs = await db.get_active_panel_subscriptions()
     stats["usage_live"] = False
 

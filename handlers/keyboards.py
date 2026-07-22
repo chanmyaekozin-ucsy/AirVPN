@@ -157,14 +157,47 @@ def payment_accounts(lang: str, plan_id: int, method: str, accounts: list) -> In
 
 
 def vpn_app_links_keyboard(lang: str) -> InlineKeyboardMarkup:
-    """Direct Play Store / App Store links (no bot callback needed)."""
+    """Open In AirVPN first; then Play/App Store fallbacks and third-party clients."""
+    import config as cfg
+
+    rows: list[list[InlineKeyboardButton]] = [
+        [
+            InlineKeyboardButton(
+                t(lang, "open_airvpn_app"),
+                url=cfg.AIRVPN_PLAY_URL or cfg.AIRVPN_TELEGRAM_URL,
+            )
+        ]
+    ]
+    for name, url in cfg.VPN_APPS_ANDROID:
+        if url:
+            rows.append([InlineKeyboardButton(name, url=url)])
+    for name, url in cfg.VPN_APPS_IOS:
+        if url:
+            rows.append([InlineKeyboardButton(name, url=url)])
+    return InlineKeyboardMarkup(rows)
+
+
+def restore_code_keyboard(lang: str, code: str) -> InlineKeyboardMarkup:
+    import config as cfg
+
     rows: list[list[InlineKeyboardButton]] = []
-    for name, url in config.VPN_APPS_ANDROID:
-        if url:
-            rows.append([InlineKeyboardButton(name, url=url)])
-    for name, url in config.VPN_APPS_IOS:
-        if url:
-            rows.append([InlineKeyboardButton(name, url=url)])
+    if len(code) <= MAX_COPY_TEXT:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text=t(lang, "restore_code_copy"),
+                    copy_text=CopyTextButton(text=code),
+                )
+            ]
+        )
+    rows.append(
+        [
+            InlineKeyboardButton(
+                t(lang, "open_airvpn_app"),
+                url=cfg.AIRVPN_PLAY_URL or cfg.AIRVPN_TELEGRAM_URL,
+            )
+        ]
+    )
     return InlineKeyboardMarkup(rows)
 
 
@@ -216,6 +249,8 @@ def admin_menu(lang: str) -> ReplyKeyboardMarkup:
             [KeyboardButton(t(lang, "admin_users"))],
             [KeyboardButton(t(lang, "admin_stats"))],
             [KeyboardButton(t(lang, "admin_free_gift"))],
+            [KeyboardButton(t(lang, "admin_app_servers"))],
+            [KeyboardButton(t(lang, "admin_app_ads"))],
             [KeyboardButton(t(lang, "admin_ban"))],
             [KeyboardButton(t(lang, "admin_notifications"))],
             [KeyboardButton(t(lang, "back"))],

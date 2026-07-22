@@ -9,6 +9,7 @@ Burmese Telegram VPN bot with daily gifts, KBZPay auto-verification, and automat
 - **Auto provisioning** — VLESS keys created on the VPS through the 3x-ui panel API
 - **Admin panel** — Approve/reject payments, stats, user ban/unban, broadcast notifications
 - **Bilingual UI** — Burmese (default) and English
+- **AirVPN Android app** — Compose client + mobile API (see [docs/ANDROID.md](docs/ANDROID.md))
 
 ## Requirements
 

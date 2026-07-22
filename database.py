@@ -217,6 +217,75 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
                 (new_sub_token(), row[0]),
             )
 
+    await db.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS restore_codes (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            code_hash TEXT NOT NULL UNIQUE,
+            code_hint TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            revoked_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_restore_user ON restore_codes(user_id);
+
+        CREATE TABLE IF NOT EXISTS mobile_servers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            public_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            region TEXT NOT NULL DEFAULT '',
+            protocol TEXT NOT NULL DEFAULT 'vless',
+            tier TEXT NOT NULL DEFAULT 'free',
+            vpn_server_id TEXT,
+            plan_id INTEGER,
+            config_uri TEXT,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (plan_id) REFERENCES plans(id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_servers_tier
+            ON mobile_servers(tier, enabled, sort_order);
+
+        CREATE TABLE IF NOT EXISTS mobile_ads (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            public_id TEXT NOT NULL UNIQUE,
+            placement TEXT NOT NULL DEFAULT 'banner',
+            title TEXT NOT NULL DEFAULT '',
+            image_url TEXT NOT NULL,
+            click_url TEXT NOT NULL DEFAULT '',
+            image_width INTEGER NOT NULL DEFAULT 0,
+            image_height INTEGER NOT NULL DEFAULT 0,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_ads_placement
+            ON mobile_ads(placement, enabled, sort_order);
+
+        CREATE TABLE IF NOT EXISTS mobile_dau (
+            day TEXT NOT NULL,
+            device_id TEXT NOT NULL,
+            first_seen_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (day, device_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_dau_day ON mobile_dau(day);
+
+        CREATE TABLE IF NOT EXISTS mobile_ad_clicks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            day TEXT NOT NULL,
+            ad_id TEXT NOT NULL,
+            placement TEXT NOT NULL DEFAULT '',
+            device_id TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_mobile_ad_clicks_day ON mobile_ad_clicks(day);
+        CREATE INDEX IF NOT EXISTS idx_mobile_ad_clicks_ad
+            ON mobile_ad_clicks(ad_id, day);
+        """
+    )
+
 
 # ─── Users ───────────────────────────────────────────────────────────────────
 
@@ -1206,6 +1275,92 @@ async def get_admin_dashboard_stats() -> dict[str, Any]:
     }
 
 
+async def record_mobile_dau(device_id: str, *, day: str | None = None) -> bool:
+    """Record one DAU hit. Returns True if this is a new device for the day."""
+    did = (device_id or "").strip()[:128]
+    if not did:
+        return False
+    d = day or mmt_now().date().isoformat()
+    async with _db() as db:
+        cur = await db.execute(
+            """INSERT OR IGNORE INTO mobile_dau (day, device_id)
+               VALUES (?, ?)""",
+            (d, did),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def record_mobile_ad_click(
+    *,
+    ad_id: str,
+    device_id: str = "",
+    placement: str = "",
+    day: str | None = None,
+) -> None:
+    aid = (ad_id or "").strip()[:64]
+    if not aid:
+        return
+    d = day or mmt_now().date().isoformat()
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO mobile_ad_clicks (day, ad_id, placement, device_id)
+               VALUES (?, ?, ?, ?)""",
+            (
+                d,
+                aid,
+                (placement or "").strip()[:32],
+                (device_id or "").strip()[:128],
+            ),
+        )
+        await db.commit()
+
+
+async def get_mobile_analytics_stats() -> dict[str, Any]:
+    """DAU + ad click counters for admin dashboard."""
+    today = mmt_now().date().isoformat()
+    # Last 7 calendar days including today
+    from datetime import timedelta
+
+    days_7 = [(mmt_now().date() - timedelta(days=i)).isoformat() for i in range(7)]
+    placeholders = ",".join("?" * len(days_7))
+    async with _db() as db:
+        async with db.execute(
+            "SELECT COUNT(*) AS c FROM mobile_dau WHERE day = ?", (today,)
+        ) as cur:
+            dau_today = int((await cur.fetchone())["c"])
+        async with db.execute(
+            f"SELECT COUNT(DISTINCT device_id) AS c FROM mobile_dau WHERE day IN ({placeholders})",
+            days_7,
+        ) as cur:
+            dau_7d = int((await cur.fetchone())["c"])
+        async with db.execute(
+            "SELECT COUNT(*) AS c FROM mobile_ad_clicks WHERE day = ?", (today,)
+        ) as cur:
+            ad_clicks_today = int((await cur.fetchone())["c"])
+        async with db.execute(
+            "SELECT COUNT(*) AS c FROM mobile_ad_clicks"
+        ) as cur:
+            ad_clicks_total = int((await cur.fetchone())["c"])
+        async with db.execute(
+            """SELECT ad_id, COUNT(*) AS c FROM mobile_ad_clicks
+               WHERE day = ?
+               GROUP BY ad_id
+               ORDER BY c DESC
+               LIMIT 5""",
+            (today,),
+        ) as cur:
+            top_rows = await cur.fetchall()
+    top_ads = " · ".join(f"{r['ad_id']} ({r['c']})" for r in top_rows) or "—"
+    return {
+        "dau_today": dau_today,
+        "dau_7d": dau_7d,
+        "ad_clicks_today": ad_clicks_today,
+        "ad_clicks_total": ad_clicks_total,
+        "ad_clicks_top": top_ads,
+    }
+
+
 # ─── Notifications (admin broadcast) ─────────────────────────────────────────
 
 async def get_broadcast_telegram_ids(audience: str) -> list[int]:
@@ -1251,3 +1406,271 @@ async def get_recent_notifications(limit: int = 10) -> list[dict[str, Any]]:
             (limit,),
         ) as cur:
             return [dict(r) for r in await cur.fetchall()]
+
+
+# ─── Restore codes (AirVPN app import) ───────────────────────────────────────
+
+def new_restore_code() -> str:
+    """6 digits + 4 alphanumeric chars, e.g. 847291Kq3m."""
+    digits = f"{secrets.randbelow(1_000_000):06d}"
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+    suffix = "".join(secrets.choice(alphabet) for _ in range(4))
+    return f"{digits}{suffix}"
+
+
+def hash_restore_code(code: str) -> str:
+    import hashlib
+
+    normalized = (code or "").strip().replace("-", "").replace(" ", "")
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
+async def issue_restore_code(user_id: int) -> str:
+    """Create a new restore code for the user; returns plaintext once."""
+    code = new_restore_code()
+    code_hash = hash_restore_code(code)
+    hint = f"{code[:2]}••••{code[-2:]}"
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO restore_codes (user_id, code_hash, code_hint)
+               VALUES (?, ?, ?)""",
+            (user_id, code_hash, hint),
+        )
+        await db.commit()
+    return code
+
+
+async def get_user_by_restore_code(code: str) -> dict[str, Any] | None:
+    code_hash = hash_restore_code(code)
+    async with _db() as db:
+        async with db.execute(
+            """SELECT u.* FROM restore_codes r
+               JOIN users u ON u.id = r.user_id
+               WHERE r.code_hash = ? AND r.revoked_at IS NULL
+                 AND u.is_banned = 0""",
+            (code_hash,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def list_restore_hints(user_id: int) -> list[dict[str, Any]]:
+    async with _db() as db:
+        async with db.execute(
+            """SELECT id, code_hint, created_at, revoked_at FROM restore_codes
+               WHERE user_id = ? ORDER BY id DESC LIMIT 5""",
+            (user_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+# ─── Mobile server catalog ───────────────────────────────────────────────────
+
+async def list_mobile_servers(*, enabled_only: bool = True) -> list[dict[str, Any]]:
+    async with _db() as db:
+        sql = """
+            SELECT m.*, p.title AS plan_title, p.price_ks AS plan_price_ks,
+                   p.data_gb AS plan_data_gb, p.duration_days AS plan_duration_days
+            FROM mobile_servers m
+            LEFT JOIN plans p ON p.id = m.plan_id
+        """
+        if enabled_only:
+            sql += " WHERE m.enabled = 1"
+        sql += " ORDER BY m.sort_order ASC, m.id ASC"
+        async with db.execute(sql) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_mobile_server(public_id: str) -> dict[str, Any] | None:
+    async with _db() as db:
+        async with db.execute(
+            """SELECT m.*, p.title AS plan_title, p.price_ks AS plan_price_ks,
+                      p.data_gb AS plan_data_gb, p.duration_days AS plan_duration_days
+               FROM mobile_servers m
+               LEFT JOIN plans p ON p.id = m.plan_id
+               WHERE m.public_id = ?""",
+            (public_id,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def upsert_mobile_server(
+    *,
+    public_id: str,
+    name: str,
+    region: str = "",
+    protocol: str = "vless",
+    tier: str = "free",
+    vpn_server_id: str | None = None,
+    plan_id: int | None = None,
+    config_uri: str | None = None,
+    enabled: bool = True,
+    sort_order: int = 0,
+) -> dict[str, Any]:
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO mobile_servers
+               (public_id, name, region, protocol, tier, vpn_server_id, plan_id,
+                config_uri, enabled, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(public_id) DO UPDATE SET
+                 name = excluded.name,
+                 region = excluded.region,
+                 protocol = excluded.protocol,
+                 tier = excluded.tier,
+                 vpn_server_id = excluded.vpn_server_id,
+                 plan_id = excluded.plan_id,
+                 config_uri = COALESCE(excluded.config_uri, mobile_servers.config_uri),
+                 enabled = excluded.enabled,
+                 sort_order = excluded.sort_order
+            """,
+            (
+                public_id,
+                name,
+                region,
+                protocol.lower(),
+                tier.lower(),
+                vpn_server_id,
+                plan_id,
+                config_uri,
+                1 if enabled else 0,
+                sort_order,
+            ),
+        )
+        await db.commit()
+    row = await get_mobile_server(public_id)
+    assert row is not None
+    return row
+
+
+async def set_mobile_server_enabled(public_id: str, enabled: bool) -> bool:
+    async with _db() as db:
+        cur = await db.execute(
+            "UPDATE mobile_servers SET enabled = ? WHERE public_id = ?",
+            (1 if enabled else 0, public_id),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_mobile_server(public_id: str) -> bool:
+    async with _db() as db:
+        cur = await db.execute(
+            "DELETE FROM mobile_servers WHERE public_id = ?", (public_id,)
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+# ─── Mobile ads (first-party banner / dialog) ─────────────────────────────────
+
+async def list_mobile_ads(*, enabled_only: bool = True) -> list[dict[str, Any]]:
+    async with _db() as db:
+        if enabled_only:
+            sql = """SELECT * FROM mobile_ads
+                     WHERE enabled = 1
+                     ORDER BY sort_order ASC, id ASC"""
+            args: tuple[Any, ...] = ()
+        else:
+            sql = """SELECT * FROM mobile_ads
+                     ORDER BY sort_order ASC, id ASC"""
+            args = ()
+        async with db.execute(sql, args) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+
+
+async def get_mobile_ad(public_id: str) -> dict[str, Any] | None:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT * FROM mobile_ads WHERE public_id = ?", (public_id,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def upsert_mobile_ad(
+    *,
+    public_id: str,
+    placement: str,
+    image_url: str,
+    click_url: str = "",
+    title: str = "",
+    image_width: int = 0,
+    image_height: int = 0,
+    enabled: bool = True,
+    sort_order: int = 0,
+) -> dict[str, Any]:
+    pid = public_id.strip()
+    place = (placement or "banner").strip().lower()
+    if place not in ("banner", "dialog"):
+        place = "banner"
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO mobile_ads
+               (public_id, placement, title, image_url, click_url,
+                image_width, image_height, enabled, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(public_id) DO UPDATE SET
+                 placement = excluded.placement,
+                 title = excluded.title,
+                 image_url = excluded.image_url,
+                 click_url = excluded.click_url,
+                 image_width = excluded.image_width,
+                 image_height = excluded.image_height,
+                 enabled = excluded.enabled,
+                 sort_order = excluded.sort_order
+            """,
+            (
+                pid,
+                place,
+                title or "",
+                image_url.strip(),
+                (click_url or "").strip(),
+                int(image_width or 0),
+                int(image_height or 0),
+                1 if enabled else 0,
+                int(sort_order or 0),
+            ),
+        )
+        await db.commit()
+    row = await get_mobile_ad(pid)
+    assert row is not None
+    return row
+
+
+async def set_mobile_ad_enabled(public_id: str, enabled: bool) -> bool:
+    async with _db() as db:
+        cur = await db.execute(
+            "UPDATE mobile_ads SET enabled = ? WHERE public_id = ?",
+            (1 if enabled else 0, public_id.strip()),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_mobile_ad(public_id: str) -> bool:
+    async with _db() as db:
+        cur = await db.execute(
+            "DELETE FROM mobile_ads WHERE public_id = ?", (public_id.strip(),)
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def get_active_sub_for_vpn_server(
+    user_id: int, vpn_server_id: str
+) -> dict[str, Any] | None:
+    now = mmt_now().isoformat()
+    async with _db() as db:
+        async with db.execute(
+            """SELECT s.*, p.title AS plan_title FROM subscriptions s
+               JOIN plans p ON p.id = s.plan_id
+               WHERE s.user_id = ? AND s.is_active = 1 AND s.expires_at > ?
+                 AND s.server_id = ? AND s.is_free = 0
+               ORDER BY s.expires_at DESC LIMIT 1""",
+            (user_id, now, vpn_server_id),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None

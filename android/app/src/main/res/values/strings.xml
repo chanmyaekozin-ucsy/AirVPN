@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AirVPN</string>
+    <string name="vpn_notification_title">AirVPN</string>
+    <string name="vpn_notification_connected">Connected — traffic routed through AirVPN</string>
+    <string name="vpn_disclosure_title">VPN connection</string>
+    <string name="vpn_disclosure_body">AirVPN routes your device traffic through our servers using configs controlled by AirVPN. We do not sell your personal data. See Privacy Policy for details.</string>
+    <string name="privacy_policy">Privacy Policy</string>
+    <string name="continue_connect">Continue</string>
+    <string name="cancel">Cancel</string>
+</resources>

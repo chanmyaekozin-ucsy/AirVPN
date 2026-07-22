@@ -144,6 +144,104 @@ STRINGS: dict[str, dict[str, str]] = {
         "my": "Subscription Link ကူးမည်",
         "en": "Copy subscription link",
     },
+    "open_airvpn_app": {
+        "my": "AirVPN App ဖွင့်မည်",
+        "en": "Open In AirVPN App",
+    },
+    "restore_code_msg": {
+        "my": (
+            "<b>Restore Code</b>\n"
+            "<code>{code}</code>\n\n"
+            "AirVPN App → Servers → Import တွင် ထည့်သွင်းပါ။\n"
+            "Code ကို လုံခြုံစွာ သိမ်းထားပါ။"
+        ),
+        "en": (
+            "<b>Restore Code</b>\n"
+            "<code>{code}</code>\n\n"
+            "In AirVPN App: Servers → Import.\n"
+            "Keep this code safe."
+        ),
+    },
+    "restore_code_copy": {
+        "my": "Restore Code ကူးမည်",
+        "en": "Copy restore code",
+    },
+    "admin_app_servers": {
+        "my": "App Servers",
+        "en": "App Servers",
+    },
+    "admin_app_servers_title": {
+        "my": (
+            "<b>App Server List</b>\n\n"
+            "ပုံစံ:\n"
+            "<code>ms add id|name|region|vless|free|vpn_server_id|config_uri</code>\n"
+            "<code>ms add id|name|region|vless|paid|vpn_server_id|plan_id</code>\n"
+            "<code>ms on id</code> / <code>ms off id</code> / <code>ms del id</code>"
+        ),
+        "en": (
+            "<b>App Server List</b>\n\n"
+            "Format:\n"
+            "<code>ms add id|name|region|vless|free|vpn_server_id|config_uri</code>\n"
+            "<code>ms add id|name|region|vless|paid|vpn_server_id|plan_id</code>\n"
+            "<code>ms on id</code> / <code>ms off id</code> / <code>ms del id</code>"
+        ),
+    },
+    "admin_app_servers_empty": {
+        "my": "App server မရှိသေးပါ။",
+        "en": "No app servers yet.",
+    },
+    "admin_app_servers_row": {
+        "my": "{n}. [{tier}] {name} ({proto}) — {pid} {state}",
+        "en": "{n}. [{tier}] {name} ({proto}) — {pid} {state}",
+    },
+    "admin_app_servers_ok": {
+        "my": "သိမ်းပြီးပါပြီ။",
+        "en": "Saved.",
+    },
+    "admin_app_servers_bad": {
+        "my": "ပုံစံမှားနေပါတယ်။ Help ကို ပြန်ကြည့်ပါ။",
+        "en": "Invalid format. See the help text.",
+    },
+    "admin_app_ads": {
+        "my": "App Ads",
+        "en": "App Ads",
+    },
+    "admin_app_ads_title": {
+        "my": (
+            "<b>App Ads</b>\n\n"
+            "ပုံစံ:\n"
+            "<code>ad add banner|id|image_url|click_url|320|50|title</code>\n"
+            "<code>ad add dialog|id|image_url|click_url|600|800|title</code>\n"
+            "<code>ad on id</code> / <code>ad off id</code> / <code>ad del id</code>\n\n"
+            "banner = အောက်ခြေ horizontal\n"
+            "dialog = Connect မတိုင်မီ 3 စက္ကန့်"
+        ),
+        "en": (
+            "<b>App Ads</b>\n\n"
+            "Format:\n"
+            "<code>ad add banner|id|image_url|click_url|320|50|title</code>\n"
+            "<code>ad add dialog|id|image_url|click_url|600|800|title</code>\n"
+            "<code>ad on id</code> / <code>ad off id</code> / <code>ad del id</code>\n\n"
+            "banner = horizontal strip on Main\n"
+            "dialog = 3s interstitial before Connect"
+        ),
+    },
+    "admin_app_ads_empty": {
+        "my": "Ad မရှိသေးပါ။",
+        "en": "No ads yet.",
+    },
+    "admin_app_ads_row": {
+        "my": "{n}. [{placement}] {pid} ({size}) {state}",
+        "en": "{n}. [{placement}] {pid} ({size}) {state}",
+    },
+    "admin_app_ads_ok": {
+        "my": "သိမ်းပြီးပါပြီ။",
+        "en": "Saved.",
+    },
+    "admin_app_ads_bad": {
+        "my": "ပုံစံမှားနေပါတယ်။ Help ကို ပြန်ကြည့်ပါ။",
+        "en": "Invalid format. See the help text.",
+    },
     "sub_usage_note": {
         "my": (
             "<i>Key တစ်ခုချင်းစီရဲ့ လက်ကျန်နဲ့သက်တမ်းကို VPN App ထဲမှာ "
@@ -814,7 +912,13 @@ STRINGS: dict[str, dict[str, str]] = {
             "စောင့်ဆိုင်း: {pending}\n"
             "အတည်ပြုပြီး: {approved}\n"
             "ငြင်းပယ်: {rejected}\n"
-            "ဝင်ငွေ (approved): {revenue_ks:,} Ks"
+            "ဝင်ငွေ (approved): {revenue_ks:,} Ks\n\n"
+            "<b>App Analytics</b>\n"
+            "DAU (ယနေ့): {dau_today}\n"
+            "DAU (7 ရက် unique): {dau_7d}\n"
+            "Ad clicks (ယနေ့): {ad_clicks_today}\n"
+            "Ad clicks (စုစုပေါင်း): {ad_clicks_total}\n"
+            "Top ads: {ad_clicks_top}"
         ),
         "en": (
             "<b>Statistics</b>\n\n"
@@ -832,7 +936,13 @@ STRINGS: dict[str, dict[str, str]] = {
             "Pending: {pending}\n"
             "Approved: {approved}\n"
             "Rejected: {rejected}\n"
-            "Revenue (approved): {revenue_ks:,} Ks"
+            "Revenue (approved): {revenue_ks:,} Ks\n\n"
+            "<b>App Analytics</b>\n"
+            "DAU (today): {dau_today}\n"
+            "DAU (7-day unique): {dau_7d}\n"
+            "Ad clicks (today): {ad_clicks_today}\n"
+            "Ad clicks (total): {ad_clicks_total}\n"
+            "Top ads: {ad_clicks_top}"
         ),
     },
 }
