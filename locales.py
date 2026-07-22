@@ -685,6 +685,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "my": "စနစ်စည်းမျဉ်းအရ ဤလုပ်ဆောင်ချက်ကို လုပ်ဆောင်ခွင့် မရှိပါခင်ဗျာ။",
         "en": "Access denied.",
     },
+    "admin_login_otp": {
+        "my": (
+            "<b>AirVPN Admin Login</b>\n\n"
+            "OTP: <code>{code}</code>\n"
+            "၅ မိနစ်အတွင်း Admin app တွင် Telegram ID နှင့်အတူ ထည့်ပါ။"
+        ),
+        "en": (
+            "<b>AirVPN Admin Login</b>\n\n"
+            "OTP: <code>{code}</code>\n"
+            "Enter this with your Telegram ID in the Admin app (expires in 5 minutes)."
+        ),
+    },
     "banned": {
         "my": "စည်းကမ်းချက် တစ်စုံတစ်ရာကြောင့် သင့်အကောင့်ကို အသုံးပြုခွင့် ပိတ်ပင်ထားပါတယ်ခင်ဗျာ။",
         "en": "Your account is banned.",

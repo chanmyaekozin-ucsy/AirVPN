@@ -149,6 +149,21 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await admin_show_main(update.message, lang, context)
 
 
+async def admin_login_otp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate a one-time code for the AirVPN Admin Android app."""
+    import secrets
+
+    ok, lang = await _admin_guard(update)
+    if not ok or not update.message or not update.effective_user:
+        return
+    code = f"{secrets.randbelow(1_000_000):06d}"
+    await db.store_admin_login_otp(update.effective_user.id, code, ttl_sec=300)
+    await update.message.reply_text(
+        t(lang, "admin_login_otp", code=code),
+        parse_mode=PARSE_MODE,
+    )
+
+
 async def admin_back(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Navigate back within admin submenus, or exit to the user main menu."""
     ok, lang = await _admin_guard(update)
@@ -886,6 +901,7 @@ def build_admin_menu_handlers() -> list:
     """Reply-keyboard admin actions — register before user handlers."""
     return [
         CommandHandler("admin", admin_panel),
+        CommandHandler("admin_login", admin_login_otp),
         MessageHandler(_ADMIN_ENTRY, admin_panel),
         MessageHandler(
             admin_text_filter("admin_pending_payments"), admin_pending

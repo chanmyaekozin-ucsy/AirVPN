@@ -48,6 +48,9 @@ def _rate_ok(key: str, limit: int, window_sec: float) -> bool:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     await db.init_db()
+    from api.admin import ensure_admin_seed
+
+    await ensure_admin_seed()
     yield
 
 
@@ -57,6 +60,10 @@ app = FastAPI(
     redoc_url=None,
     lifespan=lifespan,
 )
+
+from api.admin import router as admin_router  # noqa: E402
+
+app.include_router(admin_router)
 
 # Local ad creatives: put files in data/ads/ and reference as /ads/filename.png
 app.mount("/ads", StaticFiles(directory=str(_ADS_DIR)), name="ads")

@@ -10,5 +10,10 @@ android/.gradle/
 android/app/build/
 android/build/
 android/local.properties
+android-admin/.gradle/
+android-admin/app/build/
+android-admin/build/
+android-admin/local.properties
+android-admin/.kotlin/
 *.iml
 .idea/

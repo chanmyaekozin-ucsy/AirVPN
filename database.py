@@ -283,6 +283,26 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_mobile_ad_clicks_day ON mobile_ad_clicks(day);
         CREATE INDEX IF NOT EXISTS idx_mobile_ad_clicks_ad
             ON mobile_ad_clicks(ad_id, day);
+
+        CREATE TABLE IF NOT EXISTS admin_login_otps (
+            telegram_id INTEGER PRIMARY KEY,
+            code_hash TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS admin_sessions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            telegram_id INTEGER NOT NULL,
+            token_hash TEXT NOT NULL UNIQUE,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            revoked_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_admin_sessions_token
+            ON admin_sessions(token_hash);
+        CREATE INDEX IF NOT EXISTS idx_admin_sessions_user
+            ON admin_sessions(telegram_id);
         """
     )
 
@@ -1674,3 +1694,403 @@ async def get_active_sub_for_vpn_server(
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
+
+
+# ─── Admin app auth (OTP + sessions) ─────────────────────────────────────────
+
+def hash_admin_secret(value: str) -> str:
+    """Hash OTP / session token with a BOT_TOKEN pepper."""
+    import hashlib
+
+    import config
+
+    pepper = (config.BOT_TOKEN or "airvpn")[:48]
+    return hashlib.sha256(f"{pepper}:{value}".encode("utf-8")).hexdigest()
+
+
+async def store_admin_login_otp(telegram_id: int, code: str, *, ttl_sec: int = 300) -> None:
+    expires = (mmt_now() + timedelta(seconds=ttl_sec)).isoformat()
+    code_hash = hash_admin_secret(code.strip())
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO admin_login_otps (telegram_id, code_hash, expires_at)
+               VALUES (?, ?, ?)
+               ON CONFLICT(telegram_id) DO UPDATE SET
+                 code_hash = excluded.code_hash,
+                 expires_at = excluded.expires_at,
+                 created_at = CURRENT_TIMESTAMP""",
+            (int(telegram_id), code_hash, expires),
+        )
+        await db.commit()
+
+
+async def consume_admin_login_otp(telegram_id: int, code: str) -> bool:
+    """Validate and consume a one-time admin login code."""
+    now = mmt_now().isoformat()
+    code_hash = hash_admin_secret(code.strip())
+    async with _db() as db:
+        async with db.execute(
+            """SELECT code_hash, expires_at FROM admin_login_otps
+               WHERE telegram_id = ?""",
+            (int(telegram_id),),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return False
+        if str(row["expires_at"]) < now:
+            await db.execute(
+                "DELETE FROM admin_login_otps WHERE telegram_id = ?",
+                (int(telegram_id),),
+            )
+            await db.commit()
+            return False
+        if row["code_hash"] != code_hash:
+            return False
+        await db.execute(
+            "DELETE FROM admin_login_otps WHERE telegram_id = ?",
+            (int(telegram_id),),
+        )
+        await db.commit()
+        return True
+
+
+async def create_admin_session(
+    telegram_id: int, token: str, *, ttl_days: int = 30
+) -> None:
+    expires = (mmt_now() + timedelta(days=ttl_days)).isoformat()
+    token_hash = hash_admin_secret(token)
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO admin_sessions (telegram_id, token_hash, expires_at)
+               VALUES (?, ?, ?)""",
+            (int(telegram_id), token_hash, expires),
+        )
+        await db.commit()
+
+
+async def resolve_admin_session(token: str) -> int | None:
+    """Return telegram_id if token is a valid non-revoked session."""
+    now = mmt_now().isoformat()
+    token_hash = hash_admin_secret(token.strip())
+    async with _db() as db:
+        async with db.execute(
+            """SELECT telegram_id, expires_at FROM admin_sessions
+               WHERE token_hash = ? AND revoked_at IS NULL""",
+            (token_hash,),
+        ) as cur:
+            row = await cur.fetchone()
+        if not row:
+            return None
+        if str(row["expires_at"]) < now:
+            await db.execute(
+                """UPDATE admin_sessions SET revoked_at = ?
+                   WHERE token_hash = ?""",
+                (now, token_hash),
+            )
+            await db.commit()
+            return None
+        return int(row["telegram_id"])
+
+
+async def revoke_admin_session(token: str) -> bool:
+    now = mmt_now().isoformat()
+    token_hash = hash_admin_secret(token.strip())
+    async with _db() as db:
+        cur = await db.execute(
+            """UPDATE admin_sessions SET revoked_at = ?
+               WHERE token_hash = ? AND revoked_at IS NULL""",
+            (now, token_hash),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+# ─── Admin CRUD helpers ──────────────────────────────────────────────────────
+
+async def list_payment_accounts_all(
+    *, method: str | None = None, active_only: bool = False
+) -> list[dict[str, Any]]:
+    async with _db() as db:
+        clauses: list[str] = []
+        args: list[Any] = []
+        if method:
+            clauses.append("method = ?")
+            args.append(method)
+        if active_only:
+            clauses.append("is_active = 1")
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        async with db.execute(
+            f"SELECT * FROM payment_accounts {where} ORDER BY method, id",
+            tuple(args),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def upsert_payment_account(
+    *,
+    account_id: int | None = None,
+    method: str,
+    account_number: str,
+    account_name: str,
+    is_active: bool = True,
+) -> dict[str, Any]:
+    method_s = (method or "KBZPay").strip()
+    number = account_number.strip()
+    name = account_name.strip()
+    active = 1 if is_active else 0
+    async with _db() as db:
+        if account_id:
+            await db.execute(
+                """UPDATE payment_accounts
+                   SET method = ?, account_number = ?, account_name = ?, is_active = ?
+                   WHERE id = ?""",
+                (method_s, number, name, active, int(account_id)),
+            )
+            await db.commit()
+            row = await get_payment_account(int(account_id))
+            if not row:
+                raise ValueError("account not found")
+            return row
+        cur = await db.execute(
+            """INSERT INTO payment_accounts
+               (method, account_number, account_name, is_active)
+               VALUES (?, ?, ?, ?)""",
+            (method_s, number, name, active),
+        )
+        await db.commit()
+        new_id = int(cur.lastrowid)
+    row = await get_payment_account(new_id)
+    assert row is not None
+    return row
+
+
+async def set_payment_account_active(account_id: int, active: bool) -> bool:
+    async with _db() as db:
+        cur = await db.execute(
+            "UPDATE payment_accounts SET is_active = ? WHERE id = ?",
+            (1 if active else 0, int(account_id)),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def list_payments(
+    *,
+    status: str | None = None,
+    page: int = 1,
+    per_page: int = 30,
+) -> dict[str, Any]:
+    page = max(1, page)
+    per_page = min(100, max(1, per_page))
+    offset = (page - 1) * per_page
+    async with _db() as db:
+        if status:
+            async with db.execute(
+                "SELECT COUNT(*) AS c FROM payments WHERE status = ?",
+                (status,),
+            ) as cur:
+                total = int((await cur.fetchone())["c"])
+            sql = """
+                SELECT p.*, u.telegram_id, u.first_name, u.username,
+                       pl.title AS plan_title, pl.data_gb, pl.duration_days
+                FROM payments p
+                JOIN users u ON u.id = p.user_id
+                JOIN plans pl ON pl.id = p.plan_id
+                WHERE p.status = ?
+                ORDER BY p.created_at DESC
+                LIMIT ? OFFSET ?
+            """
+            args: tuple[Any, ...] = (status, per_page, offset)
+        else:
+            async with db.execute("SELECT COUNT(*) AS c FROM payments") as cur:
+                total = int((await cur.fetchone())["c"])
+            sql = """
+                SELECT p.*, u.telegram_id, u.first_name, u.username,
+                       pl.title AS plan_title, pl.data_gb, pl.duration_days
+                FROM payments p
+                JOIN users u ON u.id = p.user_id
+                JOIN plans pl ON pl.id = p.plan_id
+                ORDER BY p.created_at DESC
+                LIMIT ? OFFSET ?
+            """
+            args = (per_page, offset)
+        async with db.execute(sql, args) as cur:
+            items = [dict(r) for r in await cur.fetchall()]
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+    }
+
+
+async def list_plans(
+    *, server_id: str | None = None, include_inactive: bool = True
+) -> list[dict[str, Any]]:
+    async with _db() as db:
+        clauses: list[str] = ["is_free = 0"]
+        args: list[Any] = []
+        if server_id:
+            clauses.append("server_id = ?")
+            args.append(server_id)
+        if not include_inactive:
+            clauses.append("is_active = 1")
+        where = " AND ".join(clauses)
+        async with db.execute(
+            f"""SELECT * FROM plans WHERE {where}
+                ORDER BY server_id, sort_order, price_ks""",
+            tuple(args),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def count_paid_plans() -> int:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT COUNT(*) AS c FROM plans WHERE is_free = 0"
+        ) as cur:
+            return int((await cur.fetchone())["c"])
+
+
+async def upsert_plan(
+    *,
+    plan_id: int | None = None,
+    title: str,
+    data_gb: float,
+    price_ks: int,
+    duration_days: int,
+    server_id: str,
+    sort_order: int = 0,
+    is_active: bool = True,
+) -> dict[str, Any]:
+    title_s = title.strip()
+    sid = (server_id or "sg").strip().lower()
+    active = 1 if is_active else 0
+    async with _db() as db:
+        if plan_id:
+            await db.execute(
+                """UPDATE plans SET title = ?, data_gb = ?, price_ks = ?,
+                   duration_days = ?, server_id = ?, sort_order = ?,
+                   is_active = ?, is_free = 0
+                   WHERE id = ?""",
+                (
+                    title_s,
+                    float(data_gb),
+                    int(price_ks),
+                    int(duration_days),
+                    sid,
+                    int(sort_order),
+                    active,
+                    int(plan_id),
+                ),
+            )
+            await db.commit()
+            row = await get_plan(int(plan_id))
+            if not row:
+                raise ValueError("plan not found")
+            return row
+        cur = await db.execute(
+            """INSERT INTO plans
+               (title, data_gb, price_ks, duration_days, is_free,
+                sort_order, is_active, server_id)
+               VALUES (?, ?, ?, ?, 0, ?, ?, ?)""",
+            (
+                title_s,
+                float(data_gb),
+                int(price_ks),
+                int(duration_days),
+                int(sort_order),
+                active,
+                sid,
+            ),
+        )
+        await db.commit()
+        new_id = int(cur.lastrowid)
+    row = await get_plan(new_id)
+    assert row is not None
+    return row
+
+
+async def set_plan_active(plan_id: int, active: bool) -> bool:
+    async with _db() as db:
+        cur = await db.execute(
+            "UPDATE plans SET is_active = ? WHERE id = ? AND is_free = 0",
+            (1 if active else 0, int(plan_id)),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def search_users(
+    *,
+    q: str = "",
+    page: int = 1,
+    per_page: int = 20,
+) -> dict[str, Any]:
+    """Search users by telegram id, username, or name."""
+    page = max(1, page)
+    per_page = min(50, max(1, per_page))
+    offset = (page - 1) * per_page
+    now = mmt_now().isoformat()
+    query = (q or "").strip()
+    async with _db() as db:
+        if query.isdigit():
+            where = "u.telegram_id = ?"
+            args_base: list[Any] = [int(query)]
+        elif query:
+            like = f"%{query.lower()}%"
+            where = (
+                "(LOWER(COALESCE(u.username, '')) LIKE ? "
+                "OR LOWER(COALESCE(u.first_name, '')) LIKE ?)"
+            )
+            args_base = [like, like]
+        else:
+            where = "1=1"
+            args_base = []
+
+        async with db.execute(
+            f"SELECT COUNT(*) AS c FROM users u WHERE {where}",
+            tuple(args_base),
+        ) as cur:
+            total = int((await cur.fetchone())["c"])
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        offset = (page - 1) * per_page
+        async with db.execute(
+            f"""
+            SELECT
+                u.telegram_id,
+                u.username,
+                u.first_name,
+                u.is_banned,
+                COALESCE(f.c, 0) AS free_keys,
+                COALESCE(p.c, 0) AS paid_keys
+            FROM users u
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS c
+                FROM subscriptions
+                WHERE is_active = 1 AND is_free = 1 AND expires_at > ?
+                GROUP BY user_id
+            ) f ON f.user_id = u.id
+            LEFT JOIN (
+                SELECT user_id, COUNT(*) AS c
+                FROM subscriptions
+                WHERE is_active = 1 AND is_free = 0 AND expires_at > ?
+                GROUP BY user_id
+            ) p ON p.user_id = u.id
+            WHERE {where}
+            ORDER BY u.id DESC
+            LIMIT ? OFFSET ?
+            """,
+            (now, now, *args_base, per_page, offset),
+        ) as cur:
+            users = [dict(row) for row in await cur.fetchall()]
+    return {
+        "users": users,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+    }

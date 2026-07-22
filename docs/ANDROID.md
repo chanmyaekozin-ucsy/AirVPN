@@ -3,6 +3,7 @@
 ## Layout
 
 - `android/` — Kotlin + Jetpack Compose client (`com.airvpn.app`)
+- `android-admin/` — Admin Compose app (`com.airvpn.admin`) — Telegram ID + OTP login
 - `api/` — FastAPI mobile REST API (`python -m api.main`)
 
 ## Run mobile API
@@ -16,6 +17,14 @@ python -m api.main
 Default: `http://0.0.0.0:8081`
 
 Production host: `https://airvpn.flash-myanmar.com/` (Android `API_BASE_URL`).
+
+### Admin app
+
+1. In Telegram bot (as an admin): `/admin_login` → 6-digit OTP (5 min)
+2. Open **AirVPN Admin** → enter your Telegram user ID + OTP
+3. Manage dashboard, payments, accounts, plans, users, catalog, and ads
+
+Admin API prefix: `/v1/admin/*` (Bearer `admin_token`).
 
 ### Endpoints
 
