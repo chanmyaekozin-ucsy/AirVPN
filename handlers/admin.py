@@ -182,6 +182,7 @@ async def admin_login_otp(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         t(lang, "admin_login_otp", code=code, telegram_id=tid),
         parse_mode=PARSE_MODE,
         reply_markup=keyboard,
+        disable_web_page_preview=True,
     )
 
 

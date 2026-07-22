@@ -689,14 +689,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "my": (
             "<b>AirVPN Admin Login</b>\n\n"
             "Telegram ID: <code>{telegram_id}</code>\n"
-            "OTP: <code>{code}</code>\n"
-            "အောက်က ခလုတ်ကို နှိပ်ပြီး Admin app ကို ဖွင့်ပါ (၅ မိနစ်)။"
+            "OTP: <code>{code}</code>\n\n"
+            "အောက်က ခလုတ်ကို နှိပ်ပါ။ Chrome ပွင့်ရင် "
+            "<b>Open Admin App</b> ကို ထပ်နှိပ်ပါ။"
         ),
         "en": (
             "<b>AirVPN Admin Login</b>\n\n"
             "Telegram ID: <code>{telegram_id}</code>\n"
-            "OTP: <code>{code}</code>\n"
-            "Tap the button below to open the Admin app (expires in 5 minutes)."
+            "OTP: <code>{code}</code>\n\n"
+            "Tap the button below. If Chrome opens, tap "
+            "<b>Open Admin App</b> on that page."
         ),
     },
     "admin_login_open_app": {

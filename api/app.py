@@ -66,54 +66,111 @@ from api.admin import router as admin_router  # noqa: E402
 
 app.include_router(admin_router)
 
+_ADMIN_PACKAGE = "com.airvpn.admin"
+# Debug keystore SHA256 (no colons). Override/extend via ADMIN_APP_CERT_SHA256S=AA:BB...,CC:DD...
+_DEFAULT_ADMIN_CERT_SHA256 = (
+    "B7CE5A7A744A32CC09FA50FAFB565BAC1DDC3E48FEC8EE247C1AE7E4A4E1EA55"
+)
+
+
+def _admin_cert_fingerprints() -> list[str]:
+    raw = os.getenv("ADMIN_APP_CERT_SHA256S", "").strip()
+    out: list[str] = []
+    if raw:
+        for part in raw.split(","):
+            fp = part.strip().replace(":", "").upper()
+            if len(fp) == 64:
+                out.append(fp)
+    if not out:
+        out.append(_DEFAULT_ADMIN_CERT_SHA256)
+    # Always include debug fingerprint so sideloaded debug builds can App Link
+    if _DEFAULT_ADMIN_CERT_SHA256 not in out:
+        out.append(_DEFAULT_ADMIN_CERT_SHA256)
+    return out
+
+
+@app.get("/.well-known/assetlinks.json")
+async def digital_asset_links() -> list[dict[str, Any]]:
+    """Android App Links verification for Admin login URLs."""
+    return [
+        {
+            "relation": ["delegate_permission/common.handle_all_urls"],
+            "target": {
+                "namespace": "android_app",
+                "package_name": _ADMIN_PACKAGE,
+                "sha256_cert_fingerprints": _admin_cert_fingerprints(),
+            },
+        }
+    ]
+
 
 @app.get("/admin/login", response_class=HTMLResponse)
 async def admin_app_login_bridge(tid: str = "", code: str = "") -> HTMLResponse:
     """
     HTTPS bridge for Telegram inline buttons (http/https only).
-    Opens the Admin app via custom scheme + Android intent fallback.
+    Opens the Admin app via intent:// / custom scheme. Telegram cannot use
+    custom schemes in button URLs, so this page must be deployed on the API host.
     """
     tid_clean = "".join(c for c in (tid or "") if c.isdigit())[:20]
     code_clean = "".join(c for c in (code or "") if c.isdigit())[:12]
     deep = f"airvpn-admin://login?tid={tid_clean}&code={code_clean}"
+    # Prefer intent:// so Chrome opens the installed package directly.
     intent = (
         f"intent://login?tid={tid_clean}&code={code_clean}"
-        f"#Intent;scheme=airvpn-admin;package=com.airvpn.admin;"
-        f"S.browser_fallback_url=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dcom.airvpn.admin;end"
+        f"#Intent;scheme=airvpn-admin;package={_ADMIN_PACKAGE};end"
     )
     html = f"""<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="color-scheme" content="light"/>
 <title>Open AirVPN Admin</title>
 <style>
-  body {{ font-family: system-ui, sans-serif; background:#F7F9FC; color:#1B2A3A;
-         display:flex; min-height:100vh; align-items:center; justify-content:center; margin:0; }}
-  .box {{ background:#fff; padding:28px 24px; border-radius:16px; max-width:360px;
+  body {{ font-family: system-ui, -apple-system, sans-serif; background:#F7F9FC; color:#1B2A3A;
+         display:flex; min-height:100vh; align-items:center; justify-content:center; margin:0; padding:16px; }}
+  .box {{ background:#fff; padding:28px 24px; border-radius:16px; max-width:360px; width:100%;
           box-shadow:0 8px 28px rgba(26,83,155,.12); text-align:center; }}
-  a.btn {{ display:inline-block; margin-top:16px; padding:12px 18px; background:#1A539B;
-           color:#fff; text-decoration:none; border-radius:10px; font-weight:600; }}
-  p {{ color:#5A6B7D; line-height:1.45; }}
+  a.btn {{ display:block; margin-top:16px; padding:14px 18px; background:#1A539B;
+           color:#fff !important; text-decoration:none; border-radius:12px; font-weight:600; font-size:16px; }}
+  a.btn2 {{ display:block; margin-top:10px; padding:12px 18px; background:#E8F1FB;
+           color:#1A539B !important; text-decoration:none; border-radius:12px; font-weight:600; }}
+  p {{ color:#5A6B7D; line-height:1.45; margin:8px 0 0; }}
 </style>
-<script>
-  (function () {{
-    var deep = {deep!r};
-    var intent = {intent!r};
-    var ua = navigator.userAgent || "";
-    setTimeout(function () {{
-      window.location.href = /Android/i.test(ua) ? intent : deep;
-    }}, 80);
-  }})();
-</script>
 </head>
 <body>
   <div class="box">
-    <h1 style="margin:0 0 8px;font-size:1.25rem;color:#1A539B">AirVPN Admin</h1>
-    <p>Opening the Admin app…</p>
-    <a class="btn" href="{deep}">Open Admin App</a>
+    <h1 style="margin:0;font-size:1.25rem;color:#1A539B">AirVPN Admin</h1>
+    <p>Tap the button to open the app and sign in.</p>
+    <a class="btn" id="openIntent" href="{intent}">Open Admin App</a>
+    <a class="btn2" href="{deep}">Try direct link</a>
+    <p style="font-size:12px;margin-top:14px">If nothing happens, install AirVPN Admin, then tap again.</p>
   </div>
+<script>
+(function () {{
+  var intent = {intent!r};
+  var deep = {deep!r};
+  var ua = navigator.userAgent || "";
+  function go() {{
+    if (/Android/i.test(ua)) {{
+      window.location.href = intent;
+      setTimeout(function () {{ window.location.href = deep; }}, 700);
+    }} else {{
+      window.location.href = deep;
+    }}
+  }}
+  go();
+  setTimeout(go, 400);
+}})();
+</script>
 </body></html>"""
-    return HTMLResponse(content=html)
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Cache-Control": "no-store",
+            # Help Android App Links association caches refresh after deploy
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 # Local ad creatives: put files in data/ads/ and reference as /ads/filename.png
