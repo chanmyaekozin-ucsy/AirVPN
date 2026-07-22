@@ -5,30 +5,32 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ListAlt
 import androidx.compose.material.icons.automirrored.outlined.Logout
 import androidx.compose.material.icons.outlined.AccountBalanceWallet
 import androidx.compose.material.icons.outlined.Campaign
-import androidx.compose.material.icons.outlined.Dns
-import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Dashboard
+import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Payments
+import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -39,16 +41,24 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.airvpn.admin.ui.accounts.AccountsScreen
 import com.airvpn.admin.ui.ads.AdsScreen
 import com.airvpn.admin.ui.catalog.CatalogScreen
+import com.airvpn.admin.ui.components.AdminTopChrome
 import com.airvpn.admin.ui.dashboard.DashboardScreen
 import com.airvpn.admin.ui.login.LoginScreen
 import com.airvpn.admin.ui.payments.PaymentsScreen
 import com.airvpn.admin.ui.servers.ServersPlansScreen
 import com.airvpn.admin.ui.theme.AirVpnAdminTheme
+import com.airvpn.admin.ui.theme.Cyan
+import com.airvpn.admin.ui.theme.Hairline
+import com.airvpn.admin.ui.theme.InkMuted
 import com.airvpn.admin.ui.theme.Navy
+import com.airvpn.admin.ui.theme.Night
+import com.airvpn.admin.ui.theme.Panel
+import com.airvpn.admin.ui.theme.SurfaceBg
 import com.airvpn.admin.ui.users.UsersScreen
 
 class MainActivity : ComponentActivity() {
@@ -109,7 +119,6 @@ private enum class AdminTab(val label: String, val icon: ImageVector) {
     Ads("Ads", Icons.Outlined.Campaign),
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AdminRoot(vm: AdminViewModel) {
     val state by vm.state.collectAsState()
@@ -127,7 +136,6 @@ private fun AdminRoot(vm: AdminViewModel) {
         }
     }
 
-    // Auto-login exactly once when a deep link provided credentials
     LaunchedEffect(
         state.booting,
         state.loggedIn,
@@ -144,8 +152,13 @@ private fun AdminRoot(vm: AdminViewModel) {
 
     when {
         state.booting -> {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Navy)
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Night),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(color = Cyan)
             }
         }
         !state.loggedIn -> {
@@ -159,21 +172,26 @@ private fun AdminRoot(vm: AdminViewModel) {
         }
         else -> {
             Scaffold(
+                containerColor = SurfaceBg,
                 topBar = {
-                    TopAppBar(
-                        title = { Text("AirVPN Admin") },
-                        actions = {
-                            IconButton(onClick = { vm.refreshAll() }) {
-                                Icon(Icons.Outlined.Refresh, contentDescription = "Refresh")
-                            }
-                            IconButton(onClick = { vm.logout() }) {
-                                Icon(Icons.AutoMirrored.Outlined.Logout, contentDescription = "Logout")
-                            }
-                        },
-                    )
+                    Column {
+                        AdminTopChrome(
+                            title = "AirVPN Console",
+                            subtitle = "Operator · ${state.telegramId}",
+                            onRefresh = { vm.refreshAll() },
+                            onLogout = { vm.logout() },
+                            refreshIcon = Icons.Outlined.Refresh,
+                            logoutIcon = Icons.AutoMirrored.Outlined.Logout,
+                        )
+                        HorizontalDivider(color = Hairline.copy(alpha = 0.35f), thickness = 1.dp)
+                    }
                 },
                 bottomBar = {
-                    NavigationBar {
+                    NavigationBar(
+                        containerColor = Panel,
+                        contentColor = InkMuted,
+                        tonalElevation = 0.dp,
+                    ) {
                         AdminTab.entries.forEach { t ->
                             NavigationBarItem(
                                 selected = tab == t,
@@ -181,13 +199,22 @@ private fun AdminRoot(vm: AdminViewModel) {
                                 icon = { Icon(t.icon, contentDescription = t.label) },
                                 label = { Text(t.label) },
                                 alwaysShowLabel = false,
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = Navy,
+                                    selectedTextColor = Navy,
+                                    indicatorColor = Cyan.copy(alpha = 0.16f),
+                                    unselectedIconColor = InkMuted,
+                                    unselectedTextColor = InkMuted,
+                                ),
                             )
                         }
                     }
                 },
                 snackbarHost = { SnackbarHost(snack) },
             ) { padding ->
-                val mod = Modifier.padding(padding)
+                val mod = Modifier
+                    .padding(padding)
+                    .fillMaxWidth()
                 when (tab) {
                     AdminTab.Dashboard -> DashboardScreen(state.stats, mod)
                     AdminTab.Payments -> PaymentsScreen(

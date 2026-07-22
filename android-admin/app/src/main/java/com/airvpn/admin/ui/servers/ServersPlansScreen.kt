@@ -7,15 +7,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -29,6 +31,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.airvpn.admin.data.model.PlanItem
 import com.airvpn.admin.data.model.VpnServerInfo
+import com.airvpn.admin.ui.components.AdminScreen
+import com.airvpn.admin.ui.components.ListRowCard
+import com.airvpn.admin.ui.components.SectionLabel
+import com.airvpn.admin.ui.components.StatusChip
+import com.airvpn.admin.ui.components.StatusTone
+import com.airvpn.admin.ui.theme.Cyan
+import com.airvpn.admin.ui.theme.Ink
 import com.airvpn.admin.ui.theme.InkMuted
 import com.airvpn.admin.ui.theme.Navy
 import java.text.NumberFormat
@@ -46,41 +55,69 @@ fun ServersPlansScreen(
     var creating by remember { mutableStateOf(false) }
     val fmt = NumberFormat.getIntegerInstance(Locale.US)
 
-    LazyColumn(
-        modifier = modifier.fillMaxSize().padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+    AdminScreen(
+        title = "Servers & plans",
+        eyebrow = "Catalog",
+        subtitle = "Locations from .env · prices from database",
+        modifier = modifier.fillMaxSize(),
+        actions = {
+            Button(
+                onClick = { creating = true },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Navy),
+            ) { Text("Add plan") }
+        },
     ) {
-        item {
-            Text("VPN locations", style = MaterialTheme.typography.titleLarge, color = Navy)
-            Spacer(Modifier.height(8.dp))
-        }
-        items(servers, key = { it.id }) { s ->
-            Column {
-                Text("${s.id.uppercase()} · ${s.nameEn}", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "${s.vpsHost}:${s.vpsPort} · panel ${if (s.panelConfigured) "OK" else "missing"} · ${s.planCount} env plans",
-                    color = InkMuted,
-                )
-            }
-        }
-        item {
-            Spacer(modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Price plans (DB)", style = MaterialTheme.typography.titleMedium, color = Navy)
-                Button(onClick = { creating = true }) { Text("Add plan") }
-            }
-        }
-        items(plans, key = { it.id }) { p ->
-            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("${p.title} · ${p.serverId.uppercase()}", fontWeight = FontWeight.SemiBold)
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            item { SectionLabel("VPN locations") }
+            items(servers, key = { it.id }) { s ->
+                ListRowCard {
+                    Text("${s.id.uppercase()} · ${s.nameEn}", fontWeight = FontWeight.SemiBold, color = Ink)
                     Text(
-                        "${p.dataGb} GB · ${fmt.format(p.priceKs)} Ks · ${p.durationDays}d",
+                        "${s.vpsHost}:${s.vpsPort}",
+                        style = MaterialTheme.typography.bodyMedium,
                         color = InkMuted,
                     )
+                    Spacer(Modifier.height(6.dp))
+                    StatusChip(
+                        if (s.panelConfigured) "Panel OK" else "Panel missing",
+                        if (s.panelConfigured) StatusTone.Success else StatusTone.Warning,
+                    )
                 }
-                Switch(checked = p.isActive, onCheckedChange = { onTogglePlan(p.id, it) })
-                OutlinedButton(onClick = { editing = p }) { Text("Edit") }
+            }
+            item {
+                Spacer(Modifier.height(6.dp))
+                SectionLabel("Price plans")
+            }
+            items(plans, key = { it.id }) { p ->
+                ListRowCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${p.title} · ${p.serverId.uppercase()}",
+                                fontWeight = FontWeight.SemiBold,
+                                color = Ink,
+                            )
+                            Text(
+                                "${p.dataGb} GB · ${fmt.format(p.priceKs)} Ks · ${p.durationDays}d",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = InkMuted,
+                            )
+                        }
+                        Switch(
+                            checked = p.isActive,
+                            onCheckedChange = { onTogglePlan(p.id, it) },
+                            colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+                        )
+                        OutlinedButton(
+                            onClick = { editing = p },
+                            shape = RoundedCornerShape(10.dp),
+                        ) { Text("Edit") }
+                    }
+                }
             }
         }
     }

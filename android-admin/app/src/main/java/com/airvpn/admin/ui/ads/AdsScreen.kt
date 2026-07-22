@@ -3,6 +3,9 @@ package com.airvpn.admin.ui.ads
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -10,17 +13,21 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -30,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -37,7 +45,14 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.airvpn.admin.data.api.ApiFactory
 import com.airvpn.admin.data.model.AdItem
+import com.airvpn.admin.ui.components.AdminScreen
+import com.airvpn.admin.ui.components.ListRowCard
+import com.airvpn.admin.ui.components.StatusChip
+import com.airvpn.admin.ui.components.StatusTone
+import com.airvpn.admin.ui.theme.Cyan
 import com.airvpn.admin.ui.theme.Danger
+import com.airvpn.admin.ui.theme.Hairline
+import com.airvpn.admin.ui.theme.Ink
 import com.airvpn.admin.ui.theme.InkMuted
 import com.airvpn.admin.ui.theme.Navy
 import java.io.File
@@ -66,35 +81,87 @@ fun AdsScreen(
     var creating by remember { mutableStateOf(false) }
     val shown = ads.filter { filter == null || it.placement == filter }
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        Row(modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Ads Manager", style = MaterialTheme.typography.titleLarge, color = Navy)
-            Button(onClick = { creating = true }) { Text("Add ad") }
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    AdminScreen(
+        title = "Ads Manager",
+        eyebrow = "Growth",
+        subtitle = "Banner and connect-dialog creatives",
+        modifier = modifier.fillMaxSize(),
+        actions = {
+            Button(
+                onClick = { creating = true },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Navy),
+            ) { Text("Add ad") }
+        },
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             listOf(null to "All", "banner" to "Banner", "dialog" to "Dialog").forEach { (v, label) ->
-                FilterChip(selected = filter == v, onClick = { filter = v }, label = { Text(label) })
+                FilterChip(
+                    selected = filter == v,
+                    onClick = { filter = v },
+                    label = { Text(label) },
+                    shape = RoundedCornerShape(10.dp),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Cyan.copy(alpha = 0.18f),
+                        selectedLabelColor = Navy,
+                    ),
+                )
             }
         }
         Spacer(Modifier.height(12.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(shown, key = { it.id }) { ad ->
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    AsyncImage(
-                        model = ApiFactory.absoluteUrl(ad.imageUrl),
-                        contentDescription = ad.title,
-                        modifier = Modifier.width(96.dp).height(56.dp),
-                        contentScale = ContentScale.Crop,
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("${ad.placement.uppercase()} · ${ad.id}", fontWeight = FontWeight.SemiBold)
-                        Text(ad.title.ifBlank { ad.clickUrl.ifBlank { "—" } }, color = InkMuted, maxLines = 1)
+                ListRowCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        AsyncImage(
+                            model = ApiFactory.absoluteUrl(ad.imageUrl),
+                            contentDescription = ad.title,
+                            modifier = Modifier
+                                .width(96.dp)
+                                .height(56.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .border(1.dp, Hairline, RoundedCornerShape(10.dp))
+                                .background(Hairline),
+                            contentScale = ContentScale.Crop,
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                "${ad.placement.uppercase()} · ${ad.id}",
+                                fontWeight = FontWeight.SemiBold,
+                                color = Ink,
+                            )
+                            Text(
+                                ad.title.ifBlank { ad.clickUrl.ifBlank { "—" } },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = InkMuted,
+                                maxLines = 1,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            StatusChip(
+                                if (ad.enabled) "Live" else "Off",
+                                if (ad.enabled) StatusTone.Success else StatusTone.Neutral,
+                            )
+                        }
+                        Switch(
+                            checked = ad.enabled,
+                            onCheckedChange = { onToggle(ad.id, it) },
+                            colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+                        )
+                        OutlinedButton(
+                            onClick = { editing = ad },
+                            shape = RoundedCornerShape(10.dp),
+                        ) { Text("Edit") }
+                        TextButton(onClick = { onDelete(ad.id) }) { Text("Del", color = Danger) }
                     }
-                    Switch(checked = ad.enabled, onCheckedChange = { onToggle(ad.id, it) })
-                    OutlinedButton(onClick = { editing = ad }) { Text("Edit") }
-                    TextButton(onClick = { onDelete(ad.id) }) { Text("Del", color = Danger) }
                 }
             }
         }

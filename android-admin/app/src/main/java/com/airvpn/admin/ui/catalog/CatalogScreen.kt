@@ -7,15 +7,17 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,7 +30,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.airvpn.admin.data.model.CatalogServer
+import com.airvpn.admin.ui.components.AdminScreen
+import com.airvpn.admin.ui.components.ListRowCard
+import com.airvpn.admin.ui.theme.Cyan
 import com.airvpn.admin.ui.theme.Danger
+import com.airvpn.admin.ui.theme.Ink
 import com.airvpn.admin.ui.theme.InkMuted
 import com.airvpn.admin.ui.theme.Navy
 
@@ -43,22 +49,45 @@ fun CatalogScreen(
     var editing by remember { mutableStateOf<CatalogServer?>(null) }
     var creating by remember { mutableStateOf(false) }
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("App catalog", style = MaterialTheme.typography.titleLarge, color = Navy)
-            Button(onClick = { creating = true }) { Text("Add") }
-        }
-        Spacer(Modifier.height(12.dp))
+    AdminScreen(
+        title = "App catalog",
+        eyebrow = "Mobile",
+        subtitle = "Free and paid nodes shown in the consumer app",
+        modifier = modifier.fillMaxSize(),
+        actions = {
+            Button(
+                onClick = { creating = true },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Navy),
+            ) { Text("Add") }
+        },
+    ) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(servers, key = { it.id }) { s ->
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("${s.name} · ${s.tier}", fontWeight = FontWeight.SemiBold)
-                        Text("${s.id} · ${s.region.ifBlank { "—" }}", color = InkMuted)
+                ListRowCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("${s.name} · ${s.tier}", fontWeight = FontWeight.SemiBold, color = Ink)
+                            Text(
+                                "${s.id} · ${s.region.ifBlank { "—" }}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = InkMuted,
+                            )
+                        }
+                        Switch(
+                            checked = s.enabled,
+                            onCheckedChange = { onToggle(s.id, it) },
+                            colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+                        )
+                        OutlinedButton(
+                            onClick = { editing = s },
+                            shape = RoundedCornerShape(10.dp),
+                        ) { Text("Edit") }
+                        TextButton(onClick = { onDelete(s.id) }) { Text("Del", color = Danger) }
                     }
-                    Switch(checked = s.enabled, onCheckedChange = { onToggle(s.id, it) })
-                    OutlinedButton(onClick = { editing = s }) { Text("Edit") }
-                    TextButton(onClick = { onDelete(s.id) }) { Text("Del", color = Danger) }
                 }
             }
         }

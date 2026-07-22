@@ -7,15 +7,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -28,6 +31,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.airvpn.admin.data.model.PaymentAccount
+import com.airvpn.admin.ui.components.AdminScreen
+import com.airvpn.admin.ui.components.ListRowCard
+import com.airvpn.admin.ui.components.StatusChip
+import com.airvpn.admin.ui.components.StatusTone
+import com.airvpn.admin.ui.theme.Cyan
+import com.airvpn.admin.ui.theme.Ink
 import com.airvpn.admin.ui.theme.InkMuted
 import com.airvpn.admin.ui.theme.Navy
 
@@ -41,34 +50,54 @@ fun AccountsScreen(
     var editing by remember { mutableStateOf<PaymentAccount?>(null) }
     var creating by remember { mutableStateOf(false) }
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("Payment accounts", style = MaterialTheme.typography.titleLarge, color = Navy)
-            Button(onClick = { creating = true }) { Text("Add") }
-        }
-        Spacer(Modifier.height(12.dp))
+    AdminScreen(
+        title = "Accounts",
+        eyebrow = "Finance",
+        subtitle = "KBZPay and payout destinations",
+        modifier = modifier.fillMaxSize(),
+        actions = {
+            Button(
+                onClick = { creating = true },
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Navy),
+            ) { Text("Add") }
+        },
+    ) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             items(accounts, key = { it.id }) { a ->
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("${a.method} · ${a.accountName}", fontWeight = FontWeight.SemiBold)
-                        Text(a.accountNumber, color = InkMuted)
-                        Text(if (a.isActive) "Active" else "Disabled", color = InkMuted)
+                ListRowCard {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("${a.method} · ${a.accountName}", fontWeight = FontWeight.SemiBold, color = Ink)
+                            Text(a.accountNumber, style = MaterialTheme.typography.bodyMedium, color = InkMuted)
+                            Spacer(Modifier.height(6.dp))
+                            StatusChip(
+                                if (a.isActive) "Active" else "Disabled",
+                                if (a.isActive) StatusTone.Success else StatusTone.Neutral,
+                            )
+                        }
+                        Switch(
+                            checked = a.isActive,
+                            onCheckedChange = { onToggle(a.id, it) },
+                            colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        OutlinedButton(
+                            onClick = { editing = a },
+                            shape = RoundedCornerShape(10.dp),
+                        ) { Text("Edit") }
                     }
-                    Switch(checked = a.isActive, onCheckedChange = { onToggle(a.id, it) })
-                    OutlinedButton(onClick = { editing = a }) { Text("Edit") }
                 }
             }
         }
     }
 
-    val draft = editing
-    if (creating || draft != null) {
+    if (creating || editing != null) {
         AccountDialog(
-            initial = draft,
+            initial = editing,
             onDismiss = { creating = false; editing = null },
             onSave = { id, method, number, name, active ->
                 onSave(id, method, number, name, active)
