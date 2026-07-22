@@ -13,10 +13,11 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+import config
 import database as db
 from api.crypto import encrypt_config_payload, key_fingerprint
 
@@ -457,6 +458,20 @@ async def _user_from_auth(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/sub/{token}")
+async def subscription(token: str) -> Response:
+    """Per-user subscription URL (same payload as standalone sub_server)."""
+    from services.subscription import fetch_user_subscription_payload
+
+    if not config.SUB_ENABLED:
+        return Response(status_code=503, content="Subscription service disabled")
+    result = await fetch_user_subscription_payload(token)
+    if not result:
+        return Response(status_code=404, content="Not found")
+    body, headers = result
+    return Response(content=body, headers=headers)
 
 
 @app.get("/v1/app/config")
