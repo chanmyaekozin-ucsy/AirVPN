@@ -81,7 +81,7 @@ SUB_ENABLED: bool = bool(SUB_PUBLIC_BASE_URL)
 
 # ─── AirVPN Android app ───────────────────────────────────────────────────────
 AIRVPN_TELEGRAM_URL: str = os.getenv(
-    "AIRVPN_TELEGRAM_URL", "https://t.me/AirVPNBot"
+    "AIRVPN_TELEGRAM_URL", "https://t.me/airvpn_myanmar_bot"
 ).strip()
 AIRVPN_PLAY_URL: str = os.getenv(
     "AIRVPN_PLAY_URL",
@@ -93,6 +93,10 @@ AIRVPN_APP_DEEP_LINK: str = os.getenv(
 AIRVPN_BUY_DEEP_LINK: str = os.getenv(
     "AIRVPN_BUY_DEEP_LINK", AIRVPN_TELEGRAM_URL
 ).strip()
+# Public HTTPS base for Admin deep-link buttons (Telegram requires http/https URLs)
+MOBILE_API_PUBLIC_BASE: str = os.getenv(
+    "MOBILE_API_PUBLIC_BASE", "https://airvpn.flash-myanmar.com"
+).rstrip("/")
 MOBILE_CONFIG_KEY: str = os.getenv("MOBILE_CONFIG_KEY", "").strip()
 MOBILE_API_HOST: str = os.getenv("MOBILE_API_HOST", "0.0.0.0")
 MOBILE_API_PORT: int = int(os.getenv("MOBILE_API_PORT", "8081"))

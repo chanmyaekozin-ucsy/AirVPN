@@ -13,6 +13,7 @@ from typing import Any, Optional
 from urllib.parse import urlparse
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -65,6 +66,56 @@ from api.admin import router as admin_router  # noqa: E402
 
 app.include_router(admin_router)
 
+
+@app.get("/admin/login", response_class=HTMLResponse)
+async def admin_app_login_bridge(tid: str = "", code: str = "") -> HTMLResponse:
+    """
+    HTTPS bridge for Telegram inline buttons (http/https only).
+    Opens the Admin app via custom scheme + Android intent fallback.
+    """
+    tid_clean = "".join(c for c in (tid or "") if c.isdigit())[:20]
+    code_clean = "".join(c for c in (code or "") if c.isdigit())[:12]
+    deep = f"airvpn-admin://login?tid={tid_clean}&code={code_clean}"
+    intent = (
+        f"intent://login?tid={tid_clean}&code={code_clean}"
+        f"#Intent;scheme=airvpn-admin;package=com.airvpn.admin;"
+        f"S.browser_fallback_url=https%3A%2F%2Fplay.google.com%2Fstore%2Fapps%2Fdetails%3Fid%3Dcom.airvpn.admin;end"
+    )
+    html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Open AirVPN Admin</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; background:#F7F9FC; color:#1B2A3A;
+         display:flex; min-height:100vh; align-items:center; justify-content:center; margin:0; }}
+  .box {{ background:#fff; padding:28px 24px; border-radius:16px; max-width:360px;
+          box-shadow:0 8px 28px rgba(26,83,155,.12); text-align:center; }}
+  a.btn {{ display:inline-block; margin-top:16px; padding:12px 18px; background:#1A539B;
+           color:#fff; text-decoration:none; border-radius:10px; font-weight:600; }}
+  p {{ color:#5A6B7D; line-height:1.45; }}
+</style>
+<script>
+  (function () {{
+    var deep = {deep!r};
+    var intent = {intent!r};
+    var ua = navigator.userAgent || "";
+    setTimeout(function () {{
+      window.location.href = /Android/i.test(ua) ? intent : deep;
+    }}, 80);
+  }})();
+</script>
+</head>
+<body>
+  <div class="box">
+    <h1 style="margin:0 0 8px;font-size:1.25rem;color:#1A539B">AirVPN Admin</h1>
+    <p>Opening the Admin app…</p>
+    <a class="btn" href="{deep}">Open Admin App</a>
+  </div>
+</body></html>"""
+    return HTMLResponse(content=html)
+
+
 # Local ad creatives: put files in data/ads/ and reference as /ads/filename.png
 app.mount("/ads", StaticFiles(directory=str(_ADS_DIR)), name="ads")
 
@@ -85,7 +136,7 @@ class AnalyticsEventBody(BaseModel):
 
 
 def _telegram_url() -> str:
-    return os.getenv("AIRVPN_TELEGRAM_URL", "https://t.me/AirVPNBot").strip()
+    return os.getenv("AIRVPN_TELEGRAM_URL", "https://t.me/airvpn_myanmar_bot").strip()
 
 
 def _play_url() -> str:

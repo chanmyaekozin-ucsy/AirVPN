@@ -15,6 +15,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,11 +34,24 @@ import com.airvpn.admin.ui.theme.Navy
 fun LoginScreen(
     loading: Boolean,
     error: String?,
+    initialTelegramId: Long? = null,
+    initialCode: String? = null,
     onLogin: (Long, String) -> Unit,
 ) {
-    var telegramId by remember { mutableStateOf("") }
-    var code by remember { mutableStateOf("") }
+    var telegramId by remember {
+        mutableStateOf(initialTelegramId?.takeIf { it > 0 }?.toString().orEmpty())
+    }
+    var code by remember {
+        mutableStateOf(initialCode.orEmpty().filter { it.isDigit() }.take(6))
+    }
     val uri = LocalUriHandler.current
+
+    LaunchedEffect(initialTelegramId, initialCode) {
+        initialTelegramId?.takeIf { it > 0 }?.let { telegramId = it.toString() }
+        initialCode?.filter { it.isDigit() }?.takeIf { it.isNotEmpty() }?.let {
+            code = it.take(6)
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -54,7 +68,7 @@ fun LoginScreen(
         )
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "Send /admin_login in Telegram to get a one-time code.",
+            text = "Send /admin_login in Telegram, then tap Open AirVPN Admin.",
             style = MaterialTheme.typography.bodyMedium,
             color = InkMuted,
         )

@@ -36,6 +36,8 @@ data class AdminUiState(
     val loading: Boolean = false,
     val message: String? = null,
     val error: String? = null,
+    val pendingLoginTid: Long? = null,
+    val pendingLoginCode: String? = null,
     val stats: AdminStats = AdminStats(),
     val payments: List<PaymentItem> = emptyList(),
     val paymentFilter: String? = "pending",
@@ -95,6 +97,37 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearFlash() {
         _state.update { it.copy(message = null, error = null) }
+    }
+
+    /** Deep link / intent: queue credentials for auto-login after boot. */
+    fun applyLoginDeepLink(telegramId: Long, code: String) {
+        if (telegramId <= 0L || code.isBlank()) return
+        val clean = code.filter { it.isDigit() }
+        if (clean.length < 4) return
+        if (_state.value.loggedIn) {
+            _state.update { it.copy(message = "Already signed in") }
+            return
+        }
+        _state.update {
+            it.copy(
+                pendingLoginTid = telegramId,
+                pendingLoginCode = clean,
+                error = null,
+            )
+        }
+    }
+
+    fun consumePendingLogin() {
+        _state.update { it.copy(pendingLoginTid = null, pendingLoginCode = null) }
+    }
+
+    /** One-shot auto-login from a deep link (OTP is single-use). */
+    fun loginFromPendingDeepLink() {
+        val tid = _state.value.pendingLoginTid ?: return
+        val code = _state.value.pendingLoginCode ?: return
+        if (_state.value.loggedIn || _state.value.loading || _state.value.booting) return
+        consumePendingLogin()
+        login(tid, code)
     }
 
     fun login(telegramId: Long, code: String) {

@@ -70,7 +70,7 @@ Paid `plan_id` is the numeric `plans.id` from the bot DB.
 Admin → **App Ads**, then:
 
 ```
-ad add banner|summer|/ads/summer.png|https://t.me/AirVPNBot|640|100|Summer sale
+ad add banner|summer|/ads/summer.png|https://t.me/airvpn_myanmar_bot|640|100|Summer sale
 ad add dialog|promo|https://cdn.example/promo.jpg|https://shop.example|600|800
 ad on summer
 ad off summer

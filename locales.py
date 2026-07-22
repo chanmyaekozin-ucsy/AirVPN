@@ -688,14 +688,20 @@ STRINGS: dict[str, dict[str, str]] = {
     "admin_login_otp": {
         "my": (
             "<b>AirVPN Admin Login</b>\n\n"
+            "Telegram ID: <code>{telegram_id}</code>\n"
             "OTP: <code>{code}</code>\n"
-            "၅ မိနစ်အတွင်း Admin app တွင် Telegram ID နှင့်အတူ ထည့်ပါ။"
+            "အောက်က ခလုတ်ကို နှိပ်ပြီး Admin app ကို ဖွင့်ပါ (၅ မိနစ်)။"
         ),
         "en": (
             "<b>AirVPN Admin Login</b>\n\n"
+            "Telegram ID: <code>{telegram_id}</code>\n"
             "OTP: <code>{code}</code>\n"
-            "Enter this with your Telegram ID in the Admin app (expires in 5 minutes)."
+            "Tap the button below to open the Admin app (expires in 5 minutes)."
         ),
+    },
+    "admin_login_open_app": {
+        "my": "Open AirVPN Admin",
+        "en": "Open AirVPN Admin",
     },
     "banned": {
         "my": "စည်းကမ်းချက် တစ်စုံတစ်ရာကြောင့် သင့်အကောင့်ကို အသုံးပြုခွင့် ပိတ်ပင်ထားပါတယ်ခင်ဗျာ။",

@@ -25,7 +25,7 @@ android {
             "CONFIG_KEY_MATERIAL",
             "\"ILoveWathanIn2023andStill2026AndAStillCounting9999\"",
         )
-        buildConfigField("String", "TELEGRAM_URL", "\"https://t.me/AirVPNBot\"")
+        buildConfigField("String", "TELEGRAM_URL", "\"https://t.me/airvpn_myanmar_bot\"")
         buildConfigField("String", "PRIVACY_URL", "\"https://airvpn.app/privacy\"")
     }
 

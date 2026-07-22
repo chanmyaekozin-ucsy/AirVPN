@@ -1,5 +1,7 @@
 package com.airvpn.admin
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -50,12 +52,49 @@ import com.airvpn.admin.ui.theme.Navy
 import com.airvpn.admin.ui.users.UsersScreen
 
 class MainActivity : ComponentActivity() {
+    private var viewModel: AdminViewModel? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             AirVpnAdminTheme {
-                AdminRoot()
+                val vm: AdminViewModel = viewModel()
+                viewModel = vm
+                LaunchedEffect(intent) {
+                    handleLoginIntent(intent, vm)
+                }
+                AdminRoot(vm)
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        viewModel?.let { handleLoginIntent(intent, it) }
+    }
+
+    companion object {
+        fun handleLoginIntent(intent: Intent?, vm: AdminViewModel) {
+            val uri = intent?.data ?: return
+            parseLoginUri(uri)?.let { (tid, code) ->
+                vm.applyLoginDeepLink(tid, code)
+            }
+        }
+
+        fun parseLoginUri(uri: Uri): Pair<Long, String>? {
+            val tid = (
+                uri.getQueryParameter("tid")
+                    ?: uri.getQueryParameter("telegram_id")
+                    ?: ""
+            ).filter { it.isDigit() }.toLongOrNull() ?: return null
+            val code = (
+                uri.getQueryParameter("code")
+                    ?: uri.getQueryParameter("otp")
+                    ?: ""
+            ).filter { it.isDigit() }
+            if (tid <= 0 || code.length < 4) return null
+            return tid to code
         }
     }
 }
@@ -72,7 +111,7 @@ private enum class AdminTab(val label: String, val icon: ImageVector) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AdminRoot(vm: AdminViewModel = viewModel()) {
+private fun AdminRoot(vm: AdminViewModel) {
     val state by vm.state.collectAsState()
     val snack = remember { SnackbarHostState() }
     var tab by remember { mutableStateOf(AdminTab.Dashboard) }
@@ -88,6 +127,21 @@ private fun AdminRoot(vm: AdminViewModel = viewModel()) {
         }
     }
 
+    // Auto-login exactly once when a deep link provided credentials
+    LaunchedEffect(
+        state.booting,
+        state.loggedIn,
+        state.pendingLoginTid,
+        state.pendingLoginCode,
+    ) {
+        if (!state.booting && !state.loggedIn &&
+            state.pendingLoginTid != null &&
+            !state.pendingLoginCode.isNullOrBlank()
+        ) {
+            vm.loginFromPendingDeepLink()
+        }
+    }
+
     when {
         state.booting -> {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -98,6 +152,8 @@ private fun AdminRoot(vm: AdminViewModel = viewModel()) {
             LoginScreen(
                 loading = state.loading,
                 error = state.error,
+                initialTelegramId = state.pendingLoginTid ?: state.telegramId.takeIf { it > 0 },
+                initialCode = state.pendingLoginCode,
                 onLogin = vm::login,
             )
         }

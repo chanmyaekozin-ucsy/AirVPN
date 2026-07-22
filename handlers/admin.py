@@ -152,15 +152,36 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def admin_login_otp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Generate a one-time code for the AirVPN Admin Android app."""
     import secrets
+    from urllib.parse import urlencode
+
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
     ok, lang = await _admin_guard(update)
     if not ok or not update.message or not update.effective_user:
         return
     code = f"{secrets.randbelow(1_000_000):06d}"
-    await db.store_admin_login_otp(update.effective_user.id, code, ttl_sec=300)
+    tid = int(update.effective_user.id)
+    await db.store_admin_login_otp(tid, code, ttl_sec=300)
+
+    base = (config.MOBILE_API_PUBLIC_BASE or "https://airvpn.flash-myanmar.com").rstrip(
+        "/"
+    )
+    qs = urlencode({"tid": tid, "code": code})
+    open_url = f"{base}/admin/login?{qs}"
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    t(lang, "admin_login_open_app"),
+                    url=open_url,
+                )
+            ]
+        ]
+    )
     await update.message.reply_text(
-        t(lang, "admin_login_otp", code=code),
+        t(lang, "admin_login_otp", code=code, telegram_id=tid),
         parse_mode=PARSE_MODE,
+        reply_markup=keyboard,
     )
 
 
