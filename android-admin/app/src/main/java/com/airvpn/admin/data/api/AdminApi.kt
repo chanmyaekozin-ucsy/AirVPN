@@ -7,6 +7,7 @@ import com.airvpn.admin.data.model.CatalogServer
 import com.airvpn.admin.data.model.PaymentAccount
 import com.airvpn.admin.data.model.PaymentItem
 import com.airvpn.admin.data.model.PlanItem
+import com.airvpn.admin.data.model.SubscriptionItem
 import com.airvpn.admin.data.model.UserItem
 import com.airvpn.admin.data.model.VpnServerInfo
 import com.squareup.moshi.Json
@@ -49,7 +50,7 @@ interface AdminApi {
         @Header("Authorization") auth: String,
         @Query("status") status: String? = null,
         @Query("page") page: Int = 1,
-        @Query("per_page") perPage: Int = 40,
+        @Query("per_page") perPage: Int = 20,
     ): PaymentsPageDto
 
     @POST("v1/admin/payments/{id}/approve")
@@ -122,6 +123,7 @@ interface AdminApi {
         @Header("Authorization") auth: String,
         @Query("q") q: String = "",
         @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 20,
     ): UsersPageDto
 
     @POST("v1/admin/users/{telegramId}/ban")
@@ -131,8 +133,37 @@ interface AdminApi {
         @Body body: BanBody,
     ): BanResponse
 
+    @GET("v1/admin/users/{telegramId}/subscriptions")
+    suspend fun userSubscriptions(
+        @Header("Authorization") auth: String,
+        @Path("telegramId") telegramId: Long,
+    ): UserSubsDto
+
+    @POST("v1/admin/subscriptions/{id}/adjust")
+    suspend fun adjustSubscription(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Int,
+        @Body body: SubAdjustBody,
+    ): SubWrapDto
+
+    @POST("v1/admin/subscriptions/{id}/replace-key")
+    suspend fun replaceSubscriptionKey(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Int,
+    ): SubWrapDto
+
+    @POST("v1/admin/subscriptions/create")
+    suspend fun createSubscription(
+        @Header("Authorization") auth: String,
+        @Body body: ManualSubBody,
+    ): SubWrapDto
+
     @GET("v1/admin/catalog")
-    suspend fun catalog(@Header("Authorization") auth: String): CatalogDto
+    suspend fun catalog(
+        @Header("Authorization") auth: String,
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 20,
+    ): CatalogDto
 
     @POST("v1/admin/catalog")
     suspend fun upsertCatalog(
@@ -154,7 +185,11 @@ interface AdminApi {
     ): StatusResponse
 
     @GET("v1/admin/ads")
-    suspend fun ads(@Header("Authorization") auth: String): AdsDto
+    suspend fun ads(
+        @Header("Authorization") auth: String,
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 20,
+    ): AdsDto
 
     @POST("v1/admin/ads")
     suspend fun upsertAd(
@@ -251,6 +286,18 @@ data class PaymentDto(
     @Json(name = "first_name") val firstName: String? = null,
     @Json(name = "reject_reason") val rejectReason: String? = null,
     @Json(name = "created_at") val createdAt: String? = null,
+    @Json(name = "receipt_tx_id") val receiptTxId: String? = null,
+    @Json(name = "receipt_note") val receiptNote: String? = null,
+    @Json(name = "has_receipt") val hasReceipt: Boolean = false,
+    @Json(name = "receipt_url") val receiptUrl: String? = null,
+    @Json(name = "data_gb") val dataGb: Double? = null,
+    @Json(name = "duration_days") val durationDays: Int? = null,
+    @Json(name = "sub_data_limit_gb") val subDataLimitGb: Double? = null,
+    @Json(name = "sub_data_used_gb") val subDataUsedGb: Double? = null,
+    @Json(name = "sub_data_left_gb") val subDataLeftGb: Double? = null,
+    @Json(name = "sub_expires_at") val subExpiresAt: String? = null,
+    @Json(name = "sub_days_left") val subDaysLeft: Int? = null,
+    @Json(name = "sub_is_active") val subIsActive: Boolean? = null,
 ) {
     fun toModel() = PaymentItem(
         id = id,
@@ -264,6 +311,18 @@ data class PaymentDto(
         firstName = firstName,
         rejectReason = rejectReason,
         createdAt = createdAt,
+        receiptTxId = receiptTxId?.takeIf { it.isNotBlank() },
+        receiptNote = receiptNote?.takeIf { it.isNotBlank() },
+        hasReceipt = hasReceipt,
+        receiptUrl = receiptUrl?.takeIf { it.isNotBlank() },
+        dataGb = dataGb,
+        durationDays = durationDays,
+        subDataLimitGb = subDataLimitGb,
+        subDataUsedGb = subDataUsedGb,
+        subDataLeftGb = subDataLeftGb,
+        subExpiresAt = subExpiresAt,
+        subDaysLeft = subDaysLeft,
+        subIsActive = subIsActive,
     )
 }
 
@@ -271,6 +330,8 @@ data class PaymentsPageDto(
     val items: List<PaymentDto> = emptyList(),
     val total: Int = 0,
     val page: Int = 1,
+    @Json(name = "per_page") val perPage: Int = 20,
+    @Json(name = "total_pages") val totalPages: Int = 1,
 )
 
 data class AccountDto(
@@ -370,6 +431,67 @@ data class UsersPageDto(
     val users: List<UserDto> = emptyList(),
     val total: Int = 0,
     val page: Int = 1,
+    @Json(name = "per_page") val perPage: Int = 20,
+    @Json(name = "total_pages") val totalPages: Int = 1,
+)
+
+data class SubscriptionDto(
+    val id: Int,
+    @Json(name = "telegram_id") val telegramId: Long = 0,
+    val username: String? = null,
+    @Json(name = "first_name") val firstName: String? = null,
+    @Json(name = "plan_title") val planTitle: String? = null,
+    @Json(name = "server_id") val serverId: String? = null,
+    @Json(name = "is_free") val isFree: Boolean = false,
+    @Json(name = "is_active") val isActive: Boolean = true,
+    @Json(name = "data_limit_gb") val dataLimitGb: Double = 0.0,
+    @Json(name = "data_used_gb") val dataUsedGb: Double = 0.0,
+    @Json(name = "data_left_gb") val dataLeftGb: Double = 0.0,
+    @Json(name = "expires_at") val expiresAt: String? = null,
+    @Json(name = "days_left") val daysLeft: Int? = null,
+    @Json(name = "vless_key") val vlessKey: String? = null,
+    @Json(name = "subscription_url") val subscriptionUrl: String? = null,
+    @Json(name = "payment_id") val paymentId: Int? = null,
+) {
+    fun toModel() = SubscriptionItem(
+        id = id,
+        telegramId = telegramId,
+        username = username,
+        firstName = firstName,
+        planTitle = planTitle,
+        serverId = serverId ?: "sg",
+        isFree = isFree,
+        isActive = isActive,
+        dataLimitGb = dataLimitGb,
+        dataUsedGb = dataUsedGb,
+        dataLeftGb = dataLeftGb,
+        expiresAt = expiresAt,
+        daysLeft = daysLeft,
+        vlessKey = vlessKey,
+        subscriptionUrl = subscriptionUrl,
+        paymentId = paymentId,
+    )
+}
+
+data class UserSubsDto(
+    @Json(name = "telegram_id") val telegramId: Long = 0,
+    val subscriptions: List<SubscriptionDto> = emptyList(),
+)
+
+data class SubWrapDto(val status: String? = null, val subscription: SubscriptionDto? = null)
+
+data class SubAdjustBody(
+    @Json(name = "days_delta") val daysDelta: Int = 0,
+    @Json(name = "data_gb_delta") val dataGbDelta: Double = 0.0,
+)
+
+data class ManualSubBody(
+    @Json(name = "telegram_id") val telegramId: Long,
+    @Json(name = "server_id") val serverId: String = "sg",
+    @Json(name = "data_gb") val dataGb: Double,
+    val days: Int,
+    @Json(name = "plan_id") val planId: Int? = null,
+    val notify: Boolean = false,
 )
 
 data class CatalogServerDto(
@@ -394,7 +516,13 @@ data class CatalogServerDto(
     )
 }
 
-data class CatalogDto(val servers: List<CatalogServerDto> = emptyList())
+data class CatalogDto(
+    val servers: List<CatalogServerDto> = emptyList(),
+    val total: Int = 0,
+    val page: Int = 1,
+    @Json(name = "per_page") val perPage: Int = 20,
+    @Json(name = "total_pages") val totalPages: Int = 1,
+)
 data class CatalogWrapDto(val server: CatalogServerDto)
 data class CatalogBody(
     @Json(name = "public_id") val publicId: String,
@@ -431,7 +559,13 @@ data class AdDto(
     )
 }
 
-data class AdsDto(val ads: List<AdDto> = emptyList())
+data class AdsDto(
+    val ads: List<AdDto> = emptyList(),
+    val total: Int = 0,
+    val page: Int = 1,
+    @Json(name = "per_page") val perPage: Int = 20,
+    @Json(name = "total_pages") val totalPages: Int = 1,
+)
 data class AdWrapDto(val ad: AdDto)
 data class AdBody(
     @Json(name = "public_id") val publicId: String,

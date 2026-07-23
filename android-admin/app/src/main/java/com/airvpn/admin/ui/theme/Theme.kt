@@ -27,6 +27,7 @@ val Success = Color(0xFF1F8A5B)
 val Warning = Color(0xFFC47F17)
 val OnNight = Color(0xFFF4F7FB)
 val OnNightMuted = Color(0xFF9BB0C5)
+val OnPrimary = Color(0xFFFFFFFF)
 
 val NightGradient = Brush.verticalGradient(
     colors = listOf(Color(0xFF0B1C2E), Color(0xFF143356), Color(0xFF0F2744)),
@@ -38,7 +39,7 @@ val AccentWash = Brush.linearGradient(
 
 private val AdminColorScheme = lightColorScheme(
     primary = Navy,
-    onPrimary = Color.White,
+    onPrimary = OnPrimary,
     secondary = Cyan,
     onSecondary = Night,
     background = SurfaceBg,
@@ -49,6 +50,7 @@ private val AdminColorScheme = lightColorScheme(
     onSurfaceVariant = InkMuted,
     outline = Hairline,
     error = Danger,
+    onError = OnPrimary,
     tertiary = Night,
     onTertiary = OnNight,
 )
@@ -59,47 +61,40 @@ private val AdminTypography = androidx.compose.material3.Typography(
         fontWeight = FontWeight.SemiBold,
         fontSize = 28.sp,
         letterSpacing = (-0.4).sp,
-        color = Ink,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 22.sp,
         letterSpacing = (-0.2).sp,
-        color = Ink,
     ),
     titleMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 16.sp,
-        color = Ink,
     ),
     bodyLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
         fontSize = 15.sp,
-        color = Ink,
     ),
     bodyMedium = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Normal,
         fontSize = 13.sp,
         lineHeight = 18.sp,
-        color = InkMuted,
     ),
     labelLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.SemiBold,
         fontSize = 13.sp,
         letterSpacing = 0.2.sp,
-        color = Ink,
     ),
     labelSmall = TextStyle(
         fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Medium,
         fontSize = 11.sp,
         letterSpacing = 1.1.sp,
-        color = InkMuted,
     ),
 )
 

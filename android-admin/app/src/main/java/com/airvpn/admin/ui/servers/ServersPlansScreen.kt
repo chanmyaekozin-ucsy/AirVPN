@@ -9,17 +9,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -31,7 +26,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.airvpn.admin.data.model.PlanItem
 import com.airvpn.admin.data.model.VpnServerInfo
+import com.airvpn.admin.ui.components.AdminOutlinedButton
+import com.airvpn.admin.ui.components.AdminPrimaryButton
 import com.airvpn.admin.ui.components.AdminScreen
+import com.airvpn.admin.ui.components.AdminTextButton
 import com.airvpn.admin.ui.components.ListRowCard
 import com.airvpn.admin.ui.components.SectionLabel
 import com.airvpn.admin.ui.components.StatusChip
@@ -61,24 +59,25 @@ fun ServersPlansScreen(
         subtitle = "Locations from .env · prices from database",
         modifier = modifier.fillMaxSize(),
         actions = {
-            Button(
+            AdminPrimaryButton(
+                text = "Add plan",
                 onClick = { creating = true },
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Navy),
-            ) { Text("Add plan") }
+                compact = true,
+            )
         },
     ) {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { SectionLabel("VPN locations") }
             items(servers, key = { it.id }) { s ->
                 ListRowCard {
                     Text("${s.id.uppercase()} · ${s.nameEn}", fontWeight = FontWeight.SemiBold, color = Ink)
+                    Spacer(Modifier.height(4.dp))
                     Text(
                         "${s.vpsHost}:${s.vpsPort}",
                         style = MaterialTheme.typography.bodyMedium,
                         color = InkMuted,
                     )
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
                     StatusChip(
                         if (s.panelConfigured) "Panel OK" else "Panel missing",
                         if (s.panelConfigured) StatusTone.Success else StatusTone.Warning,
@@ -86,7 +85,7 @@ fun ServersPlansScreen(
                 }
             }
             item {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(8.dp))
                 SectionLabel("Price plans")
             }
             items(plans, key = { it.id }) { p ->
@@ -94,6 +93,7 @@ fun ServersPlansScreen(
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -101,6 +101,7 @@ fun ServersPlansScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 color = Ink,
                             )
+                            Spacer(Modifier.height(4.dp))
                             Text(
                                 "${p.dataGb} GB · ${fmt.format(p.priceKs)} Ks · ${p.durationDays}d",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -112,10 +113,11 @@ fun ServersPlansScreen(
                             onCheckedChange = { onTogglePlan(p.id, it) },
                             colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
                         )
-                        OutlinedButton(
+                        AdminOutlinedButton(
+                            text = "Edit",
                             onClick = { editing = p },
-                            shape = RoundedCornerShape(10.dp),
-                        ) { Text("Edit") }
+                            compact = true,
+                        )
                     }
                 }
             }
@@ -155,7 +157,7 @@ private fun PlanDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "Add plan" else "Edit plan") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(data, { data = it }, label = { Text("Data GB") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(price, { price = it }, label = { Text("Price Ks") }, modifier = Modifier.fillMaxWidth())
@@ -163,26 +165,32 @@ private fun PlanDialog(
                 OutlinedTextField(server, { server = it }, label = { Text("Server id") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(sort, { sort = it }, label = { Text("Sort order") }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Active")
+                    Text("Active", color = Ink)
                     Spacer(Modifier.weight(1f))
                     Switch(checked = active, onCheckedChange = { active = it })
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                onSave(
-                    initial?.id,
-                    title,
-                    data.toDoubleOrNull() ?: return@TextButton,
-                    price.toIntOrNull() ?: return@TextButton,
-                    days.toIntOrNull() ?: return@TextButton,
-                    server,
-                    sort.toIntOrNull() ?: 0,
-                    active,
-                )
-            }) { Text("Save") }
+            AdminTextButton(
+                text = "Save",
+                onClick = {
+                    onSave(
+                        initial?.id,
+                        title,
+                        data.toDoubleOrNull() ?: return@AdminTextButton,
+                        price.toIntOrNull() ?: return@AdminTextButton,
+                        days.toIntOrNull() ?: return@AdminTextButton,
+                        server,
+                        sort.toIntOrNull() ?: 0,
+                        active,
+                    )
+                },
+                contentColor = Navy,
+            )
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            AdminTextButton(text = "Cancel", onClick = onDismiss, contentColor = InkMuted)
+        },
     )
 }

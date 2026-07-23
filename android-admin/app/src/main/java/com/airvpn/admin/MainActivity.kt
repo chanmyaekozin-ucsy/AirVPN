@@ -5,12 +5,16 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.core.view.WindowCompat
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ListAlt
 import androidx.compose.material.icons.automirrored.outlined.Logout
@@ -22,7 +26,6 @@ import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -31,6 +34,9 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -47,16 +53,16 @@ import com.airvpn.admin.ui.accounts.AccountsScreen
 import com.airvpn.admin.ui.ads.AdsScreen
 import com.airvpn.admin.ui.catalog.CatalogScreen
 import com.airvpn.admin.ui.components.AdminTopChrome
+import com.airvpn.admin.ui.components.LoadingTopBar
+import com.airvpn.admin.ui.components.ShimmerList
 import com.airvpn.admin.ui.dashboard.DashboardScreen
 import com.airvpn.admin.ui.login.LoginScreen
 import com.airvpn.admin.ui.payments.PaymentsScreen
 import com.airvpn.admin.ui.servers.ServersPlansScreen
 import com.airvpn.admin.ui.theme.AirVpnAdminTheme
 import com.airvpn.admin.ui.theme.Cyan
-import com.airvpn.admin.ui.theme.Hairline
 import com.airvpn.admin.ui.theme.InkMuted
 import com.airvpn.admin.ui.theme.Navy
-import com.airvpn.admin.ui.theme.Night
 import com.airvpn.admin.ui.theme.Panel
 import com.airvpn.admin.ui.theme.SurfaceBg
 import com.airvpn.admin.ui.users.UsersScreen
@@ -66,6 +72,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
         setContent {
             AirVpnAdminTheme {
                 val vm: AdminViewModel = viewModel()
@@ -119,6 +130,7 @@ private enum class AdminTab(val label: String, val icon: ImageVector) {
     Ads("Ads", Icons.Outlined.Campaign),
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AdminRoot(vm: AdminViewModel) {
     val state by vm.state.collectAsState()
@@ -155,10 +167,11 @@ private fun AdminRoot(vm: AdminViewModel) {
             Box(
                 Modifier
                     .fillMaxSize()
-                    .background(Night),
+                    .background(SurfaceBg)
+                    .statusBarsPadding(),
                 contentAlignment = Alignment.Center,
             ) {
-                CircularProgressIndicator(color = Cyan)
+                CircularProgressIndicator(color = Navy)
             }
         }
         !state.loggedIn -> {
@@ -173,17 +186,18 @@ private fun AdminRoot(vm: AdminViewModel) {
         else -> {
             Scaffold(
                 containerColor = SurfaceBg,
+                contentWindowInsets = WindowInsets(0, 0, 0, 0),
                 topBar = {
                     Column {
                         AdminTopChrome(
-                            title = "AirVPN Console",
-                            subtitle = "Operator · ${state.telegramId}",
-                            onRefresh = { vm.refreshAll() },
+                            title = "AirVPN Admin",
+                            subtitle = state.telegramId.toString(),
+                            onRefresh = { vm.pullRefresh() },
                             onLogout = { vm.logout() },
                             refreshIcon = Icons.Outlined.Refresh,
                             logoutIcon = Icons.AutoMirrored.Outlined.Logout,
                         )
-                        HorizontalDivider(color = Hairline.copy(alpha = 0.35f), thickness = 1.dp)
+                        LoadingTopBar(visible = state.refreshing || state.loading)
                     }
                 },
                 bottomBar = {
@@ -212,55 +226,102 @@ private fun AdminRoot(vm: AdminViewModel) {
                 },
                 snackbarHost = { SnackbarHost(snack) },
             ) { padding ->
-                val mod = Modifier
-                    .padding(padding)
-                    .fillMaxWidth()
-                when (tab) {
-                    AdminTab.Dashboard -> DashboardScreen(state.stats, mod)
-                    AdminTab.Payments -> PaymentsScreen(
-                        payments = state.payments,
-                        filter = state.paymentFilter,
-                        onFilter = vm::setPaymentFilter,
-                        onApprove = vm::approvePayment,
-                        onReject = vm::rejectPayment,
-                        modifier = mod,
-                    )
-                    AdminTab.Accounts -> AccountsScreen(
-                        accounts = state.accounts,
-                        onSave = vm::saveAccount,
-                        onToggle = vm::setAccountActive,
-                        modifier = mod,
-                    )
-                    AdminTab.Servers -> ServersPlansScreen(
-                        servers = state.servers,
-                        plans = state.plans,
-                        onSavePlan = vm::savePlan,
-                        onTogglePlan = vm::setPlanActive,
-                        modifier = mod,
-                    )
-                    AdminTab.Users -> UsersScreen(
-                        users = state.users,
-                        query = state.userQuery,
-                        onQueryChange = vm::setUserQuery,
-                        onSearch = vm::refreshUsers,
-                        onBan = vm::banUser,
-                        modifier = mod,
-                    )
-                    AdminTab.Catalog -> CatalogScreen(
-                        servers = state.catalog,
-                        onSave = vm::saveCatalog,
-                        onToggle = vm::setCatalogEnabled,
-                        onDelete = vm::deleteCatalog,
-                        modifier = mod,
-                    )
-                    AdminTab.Ads -> AdsScreen(
-                        ads = state.ads,
-                        onSave = vm::saveAd,
-                        onToggle = vm::setAdEnabled,
-                        onDelete = vm::deleteAd,
-                        onUpload = vm::uploadAdImage,
-                        modifier = mod,
-                    )
+                val pullState = rememberPullToRefreshState()
+                PullToRefreshBox(
+                    isRefreshing = state.refreshing,
+                    onRefresh = { vm.pullRefresh() },
+                    state = pullState,
+                    modifier = Modifier
+                        .padding(padding)
+                        .fillMaxSize(),
+                ) {
+                    val showShimmer = state.refreshing && when (tab) {
+                        AdminTab.Dashboard -> false
+                        AdminTab.Payments -> state.payments.isEmpty()
+                        AdminTab.Accounts -> state.accounts.isEmpty()
+                        AdminTab.Servers -> state.servers.isEmpty() && state.plans.isEmpty()
+                        AdminTab.Users -> state.users.isEmpty()
+                        AdminTab.Catalog -> state.catalog.isEmpty()
+                        AdminTab.Ads -> state.ads.isEmpty()
+                    }
+                    if (showShimmer) {
+                        ShimmerList(count = 5, modifier = Modifier.fillMaxSize())
+                    } else {
+                        val mod = Modifier.fillMaxSize()
+                        when (tab) {
+                            AdminTab.Dashboard -> DashboardScreen(state.stats, mod)
+                            AdminTab.Payments -> PaymentsScreen(
+                                payments = state.payments,
+                                filter = state.paymentFilter,
+                                authToken = state.authToken,
+                                loadingMore = state.paymentsLoadingMore,
+                                canLoadMore = state.paymentsCanLoadMore,
+                                onFilter = vm::setPaymentFilter,
+                                onApprove = vm::approvePayment,
+                                onReject = vm::rejectPayment,
+                                onLoadMore = vm::loadMorePayments,
+                                modifier = mod,
+                            )
+                            AdminTab.Accounts -> AccountsScreen(
+                                accounts = state.accounts,
+                                onSave = vm::saveAccount,
+                                onToggle = vm::setAccountActive,
+                                modifier = mod,
+                            )
+                            AdminTab.Servers -> ServersPlansScreen(
+                                servers = state.servers,
+                                plans = state.plans,
+                                onSavePlan = vm::savePlan,
+                                onTogglePlan = vm::setPlanActive,
+                                modifier = mod,
+                            )
+                            AdminTab.Users -> UsersScreen(
+                                users = state.users,
+                                query = state.userQuery,
+                                onQueryChange = vm::setUserQuery,
+                                onSearch = { vm.refreshUsers(reset = true) },
+                                onBan = vm::banUser,
+                                managedTelegramId = state.managedTelegramId,
+                                managedSubs = state.managedSubs,
+                                lastCreatedKey = state.lastCreatedKey,
+                                lastCreatedSubUrl = state.lastCreatedSubUrl,
+                                serverIds = state.servers.map { it.id },
+                                onManage = vm::openUserKeys,
+                                onCloseManage = vm::closeUserKeys,
+                                onAdjust = vm::adjustSubscription,
+                                onReplaceKey = vm::replaceSubscriptionKey,
+                                onCreateKey = { tid, server, gb, days, notify ->
+                                    vm.createManualSubscription(tid, server, gb, days, notify)
+                                },
+                                onClearCreatedFlash = vm::clearCreatedKeyFlash,
+                                loadingMore = state.usersLoadingMore,
+                                canLoadMore = state.usersCanLoadMore,
+                                onLoadMore = vm::loadMoreUsers,
+                                modifier = mod,
+                            )
+                            AdminTab.Catalog -> CatalogScreen(
+                                servers = state.catalog,
+                                loadingMore = state.catalogLoadingMore,
+                                canLoadMore = state.catalogCanLoadMore,
+                                onSave = vm::saveCatalog,
+                                onToggle = vm::setCatalogEnabled,
+                                onDelete = vm::deleteCatalog,
+                                onLoadMore = vm::loadMoreCatalog,
+                                modifier = mod,
+                            )
+                            AdminTab.Ads -> AdsScreen(
+                                ads = state.ads,
+                                loadingMore = state.adsLoadingMore,
+                                canLoadMore = state.adsCanLoadMore,
+                                onSave = vm::saveAd,
+                                onToggle = vm::setAdEnabled,
+                                onDelete = vm::deleteAd,
+                                onUpload = vm::uploadAdImage,
+                                onLoadMore = vm::loadMoreAds,
+                                modifier = mod,
+                            )
+                        }
+                    }
                 }
             }
         }

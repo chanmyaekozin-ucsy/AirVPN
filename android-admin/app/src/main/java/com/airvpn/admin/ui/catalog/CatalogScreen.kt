@@ -9,17 +9,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,8 +26,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.airvpn.admin.data.model.CatalogServer
+import com.airvpn.admin.ui.components.AdminOutlinedButton
+import com.airvpn.admin.ui.components.AdminPrimaryButton
 import com.airvpn.admin.ui.components.AdminScreen
+import com.airvpn.admin.ui.components.AdminTextButton
+import com.airvpn.admin.ui.components.InfiniteListHandler
 import com.airvpn.admin.ui.components.ListRowCard
+import com.airvpn.admin.ui.components.LoadMoreFooter
 import com.airvpn.admin.ui.theme.Cyan
 import com.airvpn.admin.ui.theme.Danger
 import com.airvpn.admin.ui.theme.Ink
@@ -41,13 +42,23 @@ import com.airvpn.admin.ui.theme.Navy
 @Composable
 fun CatalogScreen(
     servers: List<CatalogServer>,
+    loadingMore: Boolean = false,
+    canLoadMore: Boolean = false,
     onSave: (id: String, name: String, region: String, tier: String, configUri: String?, enabled: Boolean, sortOrder: Int) -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onDelete: (String) -> Unit,
+    onLoadMore: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var editing by remember { mutableStateOf<CatalogServer?>(null) }
     var creating by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+
+    InfiniteListHandler(
+        listState = listState,
+        enabled = canLoadMore && !loadingMore,
+        onLoadMore = onLoadMore,
+    )
 
     AdminScreen(
         title = "App catalog",
@@ -55,40 +66,68 @@ fun CatalogScreen(
         subtitle = "Free and paid nodes shown in the consumer app",
         modifier = modifier.fillMaxSize(),
         actions = {
-            Button(
+            AdminPrimaryButton(
+                text = "Add",
                 onClick = { creating = true },
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Navy),
-            ) { Text("Add") }
+                compact = true,
+            )
         },
     ) {
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        LazyColumn(
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             items(servers, key = { it.id }) { s ->
                 ListRowCard {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text("${s.name} · ${s.tier}", fontWeight = FontWeight.SemiBold, color = Ink)
+                            Spacer(Modifier.height(4.dp))
                             Text(
                                 "${s.id} · ${s.region.ifBlank { "—" }}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = InkMuted,
                             )
+                            val cfg = s.configUri.orEmpty()
+                            if (cfg.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    when {
+                                        cfg.startsWith("http", ignoreCase = true) -> "Source: subscription link"
+                                        else -> "Source: share key"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = InkMuted,
+                                )
+                            }
                         }
                         Switch(
                             checked = s.enabled,
                             onCheckedChange = { onToggle(s.id, it) },
                             colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
                         )
-                        OutlinedButton(
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AdminOutlinedButton(
+                            text = "Edit",
                             onClick = { editing = s },
-                            shape = RoundedCornerShape(10.dp),
-                        ) { Text("Edit") }
-                        TextButton(onClick = { onDelete(s.id) }) { Text("Del", color = Danger) }
+                            compact = true,
+                        )
+                        AdminTextButton(
+                            text = "Delete",
+                            onClick = { onDelete(s.id) },
+                            contentColor = Danger,
+                        )
                     }
                 }
+            }
+            item(key = "catalog-footer") {
+                LoadMoreFooter(visible = loadingMore)
             }
         }
     }
@@ -124,7 +163,7 @@ private fun CatalogDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "Add server" else "Edit server") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     id, { id = it },
                     label = { Text("Public id") },
@@ -133,22 +172,38 @@ private fun CatalogDialog(
                 )
                 OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(region, { region = it }, label = { Text("Region / CC") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(tier, { tier = it }, label = { Text("Tier (free/paid)") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(uri, { uri = it }, label = { Text("Config URI") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(
+                    tier, { tier = it },
+                    label = { Text("Tier (free/paid)") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    uri, { uri = it },
+                    label = { Text("Config: vless:// or https:// sub") },
+                    placeholder = { Text("vless://… or https://…/sub") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
                 OutlinedTextField(sort, { sort = it }, label = { Text("Sort") }, modifier = Modifier.fillMaxWidth())
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Enabled")
+                    Text("Enabled", color = Ink)
                     Spacer(Modifier.weight(1f))
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                if (id.isBlank() || name.isBlank()) return@TextButton
-                onSave(id, name, region, tier, uri.ifBlank { null }, enabled, sort.toIntOrNull() ?: 0)
-            }) { Text("Save") }
+            AdminTextButton(
+                text = "Save",
+                onClick = {
+                    if (id.isBlank() || name.isBlank()) return@AdminTextButton
+                    onSave(id, name, region, tier, uri.ifBlank { null }, enabled, sort.toIntOrNull() ?: 0)
+                },
+                contentColor = Navy,
+            )
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            AdminTextButton(text = "Cancel", onClick = onDismiss, contentColor = InkMuted)
+        },
     )
 }

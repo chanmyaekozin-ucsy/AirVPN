@@ -819,10 +819,22 @@ async def get_payment(payment_id: int) -> dict[str, Any] | None:
         async with db.execute(
             """
             SELECT p.*, u.telegram_id, u.first_name, u.username,
-                   pl.title AS plan_title, pl.data_gb, pl.duration_days
+                   pl.title AS plan_title, pl.data_gb, pl.duration_days,
+                   s.id AS subscription_id,
+                   s.data_limit_gb AS sub_data_limit_gb,
+                   s.data_used_gb AS sub_data_used_gb,
+                   s.bonus_data_mb AS sub_bonus_data_mb,
+                   s.expires_at AS sub_expires_at,
+                   s.is_active AS sub_is_active,
+                   s.server_id AS sub_server_id
             FROM payments p
             JOIN users u ON u.id = p.user_id
             JOIN plans pl ON pl.id = p.plan_id
+            LEFT JOIN subscriptions s ON s.id = (
+                SELECT id FROM subscriptions
+                WHERE payment_id = p.id
+                ORDER BY id DESC LIMIT 1
+            )
             WHERE p.id = ?
             """,
             (payment_id,),
@@ -1059,14 +1071,114 @@ async def update_free_subscription(
 async def get_subscription_by_id(sub_id: int) -> dict[str, Any] | None:
     async with _db() as db:
         async with db.execute(
-            """SELECT s.*, p.title AS plan_title
+            """SELECT s.*, p.title AS plan_title, u.telegram_id, u.username, u.first_name,
+                      u.sub_token
                FROM subscriptions s
                JOIN plans p ON p.id = s.plan_id
+               JOIN users u ON u.id = s.user_id
                WHERE s.id = ?""",
             (sub_id,),
         ) as cur:
             row = await cur.fetchone()
     return dict(row) if row else None
+
+
+async def list_subscriptions_for_telegram(telegram_id: int) -> list[dict[str, Any]]:
+    async with _db() as db:
+        async with db.execute(
+            """SELECT s.*, p.title AS plan_title, u.telegram_id, u.username, u.first_name,
+                      u.sub_token
+               FROM subscriptions s
+               JOIN plans p ON p.id = s.plan_id
+               JOIN users u ON u.id = s.user_id
+               WHERE u.telegram_id = ?
+               ORDER BY s.is_active DESC, s.id DESC""",
+            (telegram_id,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def update_subscription_quota(
+    sub_id: int,
+    *,
+    data_limit_gb: float | None = None,
+    bonus_data_mb: int | None = None,
+    expires_at: str | None = None,
+    vless_uuid: str | None = None,
+    vless_key: str | None = None,
+    panel_email: str | None = None,
+    is_active: bool | None = None,
+) -> dict[str, Any] | None:
+    """Patch quota / key fields on a subscription."""
+    fields: list[str] = []
+    args: list[Any] = []
+    if data_limit_gb is not None:
+        fields.append("data_limit_gb = ?")
+        args.append(float(data_limit_gb))
+    if bonus_data_mb is not None:
+        fields.append("bonus_data_mb = ?")
+        args.append(int(bonus_data_mb))
+    if expires_at is not None:
+        fields.append("expires_at = ?")
+        args.append(expires_at)
+    if vless_uuid is not None:
+        fields.append("vless_uuid = ?")
+        args.append(vless_uuid)
+    if vless_key is not None:
+        fields.append("vless_key = ?")
+        args.append(vless_key)
+    if panel_email is not None:
+        fields.append("panel_email = ?")
+        args.append(panel_email)
+    if is_active is not None:
+        fields.append("is_active = ?")
+        args.append(1 if is_active else 0)
+    if not fields:
+        return await get_subscription_by_id(sub_id)
+    args.append(sub_id)
+    async with _db() as db:
+        await db.execute(
+            f"UPDATE subscriptions SET {', '.join(fields)} WHERE id = ?",
+            tuple(args),
+        )
+        await db.commit()
+    return await get_subscription_by_id(sub_id)
+
+
+async def create_manual_subscription(
+    *,
+    user_id: int,
+    plan_id: int,
+    server_id: str,
+    vless_uuid: str,
+    vless_key: str,
+    panel_email: str,
+    data_limit_gb: float,
+    expires_at: str,
+) -> dict[str, Any]:
+    async with _db() as db:
+        cur = await db.execute(
+            """INSERT INTO subscriptions
+               (user_id, plan_id, payment_id, vless_uuid, vless_key, panel_email,
+                data_limit_gb, expires_at, is_free, server_id, is_active)
+               VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 0, ?, 1)""",
+            (
+                user_id,
+                plan_id,
+                vless_uuid,
+                vless_key,
+                panel_email,
+                data_limit_gb,
+                expires_at,
+                server_id,
+            ),
+        )
+        await db.commit()
+        sub_id = cur.lastrowid
+    row = await get_subscription_by_id(int(sub_id))
+    if not row:
+        raise RuntimeError("Failed to load created subscription")
+    return row
 
 
 async def get_subscription_by_payment_id(payment_id: int) -> dict[str, Any] | None:
@@ -1486,7 +1598,12 @@ async def list_restore_hints(user_id: int) -> list[dict[str, Any]]:
 
 # ─── Mobile server catalog ───────────────────────────────────────────────────
 
-async def list_mobile_servers(*, enabled_only: bool = True) -> list[dict[str, Any]]:
+async def list_mobile_servers(
+    *,
+    enabled_only: bool = True,
+    page: int | None = None,
+    per_page: int = 20,
+) -> list[dict[str, Any]] | dict[str, Any]:
     async with _db() as db:
         sql = """
             SELECT m.*, p.title AS plan_title, p.price_ks AS plan_price_ks,
@@ -1494,11 +1611,32 @@ async def list_mobile_servers(*, enabled_only: bool = True) -> list[dict[str, An
             FROM mobile_servers m
             LEFT JOIN plans p ON p.id = m.plan_id
         """
+        args: list[Any] = []
         if enabled_only:
             sql += " WHERE m.enabled = 1"
         sql += " ORDER BY m.sort_order ASC, m.id ASC"
-        async with db.execute(sql) as cur:
-            return [dict(r) for r in await cur.fetchall()]
+        if page is None:
+            async with db.execute(sql, tuple(args)) as cur:
+                return [dict(r) for r in await cur.fetchall()]
+        page = max(1, page)
+        per_page = min(100, max(1, per_page))
+        count_sql = "SELECT COUNT(*) AS c FROM mobile_servers m"
+        if enabled_only:
+            count_sql += " WHERE m.enabled = 1"
+        async with db.execute(count_sql) as cur:
+            total = int((await cur.fetchone())["c"])
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        offset = (page - 1) * per_page
+        async with db.execute(sql + " LIMIT ? OFFSET ?", (*args, per_page, offset)) as cur:
+            items = [dict(r) for r in await cur.fetchall()]
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+        }
 
 
 async def get_mobile_server(public_id: str) -> dict[str, Any] | None:
@@ -1585,20 +1723,39 @@ async def delete_mobile_server(public_id: str) -> bool:
 
 # ─── Mobile ads (first-party banner / dialog) ─────────────────────────────────
 
-async def list_mobile_ads(*, enabled_only: bool = True) -> list[dict[str, Any]]:
+async def list_mobile_ads(
+    *,
+    enabled_only: bool = True,
+    page: int | None = None,
+    per_page: int = 20,
+) -> list[dict[str, Any]] | dict[str, Any]:
     async with _db() as db:
-        if enabled_only:
-            sql = """SELECT * FROM mobile_ads
-                     WHERE enabled = 1
-                     ORDER BY sort_order ASC, id ASC"""
-            args: tuple[Any, ...] = ()
-        else:
-            sql = """SELECT * FROM mobile_ads
-                     ORDER BY sort_order ASC, id ASC"""
-            args = ()
-        async with db.execute(sql, args) as cur:
-            rows = await cur.fetchall()
-            return [dict(r) for r in rows]
+        where = " WHERE enabled = 1" if enabled_only else ""
+        order = " ORDER BY sort_order ASC, id ASC"
+        if page is None:
+            async with db.execute(
+                f"SELECT * FROM mobile_ads{where}{order}"
+            ) as cur:
+                return [dict(r) for r in await cur.fetchall()]
+        page = max(1, page)
+        per_page = min(100, max(1, per_page))
+        async with db.execute(f"SELECT COUNT(*) AS c FROM mobile_ads{where}") as cur:
+            total = int((await cur.fetchone())["c"])
+        total_pages = max(1, (total + per_page - 1) // per_page)
+        page = min(page, total_pages)
+        offset = (page - 1) * per_page
+        async with db.execute(
+            f"SELECT * FROM mobile_ads{where}{order} LIMIT ? OFFSET ?",
+            (per_page, offset),
+        ) as cur:
+            items = [dict(r) for r in await cur.fetchall()]
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": total_pages,
+        }
 
 
 async def get_mobile_ad(public_id: str) -> dict[str, Any] | None:
@@ -1878,11 +2035,30 @@ async def list_payments(
     *,
     status: str | None = None,
     page: int = 1,
-    per_page: int = 30,
+    per_page: int = 20,
 ) -> dict[str, Any]:
     page = max(1, page)
     per_page = min(100, max(1, per_page))
     offset = (page - 1) * per_page
+    select_sql = """
+        SELECT p.*, u.telegram_id, u.first_name, u.username,
+               pl.title AS plan_title, pl.data_gb, pl.duration_days,
+               s.id AS subscription_id,
+               s.data_limit_gb AS sub_data_limit_gb,
+               s.data_used_gb AS sub_data_used_gb,
+               s.bonus_data_mb AS sub_bonus_data_mb,
+               s.expires_at AS sub_expires_at,
+               s.is_active AS sub_is_active,
+               s.server_id AS sub_server_id
+        FROM payments p
+        JOIN users u ON u.id = p.user_id
+        JOIN plans pl ON pl.id = p.plan_id
+        LEFT JOIN subscriptions s ON s.id = (
+            SELECT id FROM subscriptions
+            WHERE payment_id = p.id
+            ORDER BY id DESC LIMIT 1
+        )
+    """
     async with _db() as db:
         if status:
             async with db.execute(
@@ -1890,12 +2066,7 @@ async def list_payments(
                 (status,),
             ) as cur:
                 total = int((await cur.fetchone())["c"])
-            sql = """
-                SELECT p.*, u.telegram_id, u.first_name, u.username,
-                       pl.title AS plan_title, pl.data_gb, pl.duration_days
-                FROM payments p
-                JOIN users u ON u.id = p.user_id
-                JOIN plans pl ON pl.id = p.plan_id
+            sql = select_sql + """
                 WHERE p.status = ?
                 ORDER BY p.created_at DESC
                 LIMIT ? OFFSET ?
@@ -1904,12 +2075,7 @@ async def list_payments(
         else:
             async with db.execute("SELECT COUNT(*) AS c FROM payments") as cur:
                 total = int((await cur.fetchone())["c"])
-            sql = """
-                SELECT p.*, u.telegram_id, u.first_name, u.username,
-                       pl.title AS plan_title, pl.data_gb, pl.duration_days
-                FROM payments p
-                JOIN users u ON u.id = p.user_id
-                JOIN plans pl ON pl.id = p.plan_id
+            sql = select_sql + """
                 ORDER BY p.created_at DESC
                 LIMIT ? OFFSET ?
             """

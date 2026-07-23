@@ -10,8 +10,10 @@ import com.airvpn.admin.data.api.ApiFactory
 import com.airvpn.admin.data.api.BanBody
 import com.airvpn.admin.data.api.CatalogBody
 import com.airvpn.admin.data.api.LoginBody
+import com.airvpn.admin.data.api.ManualSubBody
 import com.airvpn.admin.data.api.PlanBody
 import com.airvpn.admin.data.api.RejectBody
+import com.airvpn.admin.data.api.SubAdjustBody
 import com.airvpn.admin.data.local.SessionStore
 import com.airvpn.admin.data.model.AdItem
 import com.airvpn.admin.data.model.AdminStats
@@ -19,8 +21,12 @@ import com.airvpn.admin.data.model.CatalogServer
 import com.airvpn.admin.data.model.PaymentAccount
 import com.airvpn.admin.data.model.PaymentItem
 import com.airvpn.admin.data.model.PlanItem
+import com.airvpn.admin.data.model.SubscriptionItem
 import com.airvpn.admin.data.model.UserItem
 import com.airvpn.admin.data.model.VpnServerInfo
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +39,7 @@ data class AdminUiState(
     val booting: Boolean = true,
     val loggedIn: Boolean = false,
     val telegramId: Long = 0,
+    val authToken: String? = null,
     val loading: Boolean = false,
     val message: String? = null,
     val error: String? = null,
@@ -41,14 +48,40 @@ data class AdminUiState(
     val stats: AdminStats = AdminStats(),
     val payments: List<PaymentItem> = emptyList(),
     val paymentFilter: String? = "pending",
+    val paymentsPage: Int = 0,
+    val paymentsTotalPages: Int = 1,
+    val paymentsLoadingMore: Boolean = false,
     val accounts: List<PaymentAccount> = emptyList(),
     val servers: List<VpnServerInfo> = emptyList(),
     val plans: List<PlanItem> = emptyList(),
     val users: List<UserItem> = emptyList(),
     val userQuery: String = "",
+    val usersPage: Int = 0,
+    val usersTotalPages: Int = 1,
+    val usersLoadingMore: Boolean = false,
     val catalog: List<CatalogServer> = emptyList(),
+    val catalogPage: Int = 0,
+    val catalogTotalPages: Int = 1,
+    val catalogLoadingMore: Boolean = false,
     val ads: List<AdItem> = emptyList(),
-)
+    val adsPage: Int = 0,
+    val adsTotalPages: Int = 1,
+    val adsLoadingMore: Boolean = false,
+    val refreshing: Boolean = false,
+    val managedTelegramId: Long? = null,
+    val managedSubs: List<SubscriptionItem> = emptyList(),
+    val lastCreatedKey: String? = null,
+    val lastCreatedSubUrl: String? = null,
+) {
+    val paymentsCanLoadMore: Boolean
+        get() = paymentsPage > 0 && paymentsPage < paymentsTotalPages && !paymentsLoadingMore
+    val usersCanLoadMore: Boolean
+        get() = usersPage > 0 && usersPage < usersTotalPages && !usersLoadingMore
+    val catalogCanLoadMore: Boolean
+        get() = catalogPage > 0 && catalogPage < catalogTotalPages && !catalogLoadingMore
+    val adsCanLoadMore: Boolean
+        get() = adsPage > 0 && adsPage < adsTotalPages && !adsLoadingMore
+}
 
 class AdminViewModel(app: Application) : AndroidViewModel(app) {
     private val store = SessionStore(app)
@@ -56,6 +89,10 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(AdminUiState())
     val state: StateFlow<AdminUiState> = _state.asStateFlow()
+
+    companion object {
+        const val PAGE_SIZE = 20
+    }
 
     init {
         viewModelScope.launch {
@@ -68,7 +105,12 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
                 val me = api.me(ApiFactory.auth(token))
                 store.telegramId = me.telegramId
                 _state.update {
-                    it.copy(booting = false, loggedIn = true, telegramId = me.telegramId)
+                    it.copy(
+                        booting = false,
+                        loggedIn = true,
+                        telegramId = me.telegramId,
+                        authToken = token,
+                    )
                 }
                 refreshAll()
             } catch (_: Exception) {
@@ -138,7 +180,12 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
                 store.adminToken = res.adminToken
                 store.telegramId = res.telegramId
                 _state.update {
-                    it.copy(loading = false, loggedIn = true, telegramId = res.telegramId)
+                    it.copy(
+                        loading = false,
+                        loggedIn = true,
+                        telegramId = res.telegramId,
+                        authToken = res.adminToken,
+                    )
                 }
                 refreshAll()
             } catch (e: Exception) {
@@ -158,14 +205,118 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun refreshAll() {
-        refreshStats()
-        refreshPayments()
-        refreshAccounts()
-        refreshServersPlans()
-        refreshUsers()
-        refreshCatalog()
-        refreshAds()
+    fun refreshAll() = pullRefresh()
+
+    /** Pull-to-refresh / top-bar refresh: reload all admin data in parallel. */
+    fun pullRefresh() {
+        if (_state.value.refreshing) return
+        viewModelScope.launch {
+            _state.update { it.copy(refreshing = true, error = null) }
+            try {
+                coroutineScope {
+                    val jobs = listOf(
+                        async {
+                            runCatching {
+                                val s = api.stats(auth()).toModel()
+                                _state.update { it.copy(stats = s) }
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "stats: ${errMsg(e)}") }
+                            }
+                        },
+                        async {
+                            runCatching {
+                                val page = api.payments(
+                                    auth(),
+                                    status = _state.value.paymentFilter,
+                                    page = 1,
+                                    perPage = PAGE_SIZE,
+                                )
+                                _state.update {
+                                    it.copy(
+                                        payments = page.items.map { p -> p.toModel() },
+                                        paymentsPage = page.page,
+                                        paymentsTotalPages = page.totalPages.coerceAtLeast(1),
+                                        paymentsLoadingMore = false,
+                                    )
+                                }
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "payments: ${errMsg(e)}") }
+                            }
+                        },
+                        async {
+                            runCatching {
+                                val rows = api.paymentAccounts(auth()).accounts.map { it.toModel() }
+                                _state.update { it.copy(accounts = rows) }
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "accounts: ${errMsg(e)}") }
+                            }
+                        },
+                        async {
+                            runCatching {
+                                val servers = api.servers(auth()).servers.map { it.toModel() }
+                                val plans = api.plans(auth()).plans.map { it.toModel() }
+                                _state.update { it.copy(servers = servers, plans = plans) }
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "servers: ${errMsg(e)}") }
+                            }
+                        },
+                        async {
+                            runCatching {
+                                val page = api.users(
+                                    auth(),
+                                    q = _state.value.userQuery,
+                                    page = 1,
+                                    perPage = PAGE_SIZE,
+                                )
+                                _state.update {
+                                    it.copy(
+                                        users = page.users.map { u -> u.toModel() },
+                                        usersPage = page.page,
+                                        usersTotalPages = page.totalPages.coerceAtLeast(1),
+                                        usersLoadingMore = false,
+                                    )
+                                }
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "users: ${errMsg(e)}") }
+                            }
+                        },
+                        async {
+                            runCatching {
+                                val page = api.catalog(auth(), page = 1, perPage = PAGE_SIZE)
+                                _state.update {
+                                    it.copy(
+                                        catalog = page.servers.map { s -> s.toModel() },
+                                        catalogPage = page.page,
+                                        catalogTotalPages = page.totalPages.coerceAtLeast(1),
+                                        catalogLoadingMore = false,
+                                    )
+                                }
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "catalog: ${errMsg(e)}") }
+                            }
+                        },
+                        async {
+                            runCatching {
+                                val page = api.ads(auth(), page = 1, perPage = PAGE_SIZE)
+                                _state.update {
+                                    it.copy(
+                                        ads = page.ads.map { a -> a.toModel() },
+                                        adsPage = page.page,
+                                        adsTotalPages = page.totalPages.coerceAtLeast(1),
+                                        adsLoadingMore = false,
+                                    )
+                                }
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "ads: ${errMsg(e)}") }
+                            }
+                        },
+                    )
+                    jobs.awaitAll()
+                }
+            } finally {
+                _state.update { it.copy(refreshing = false) }
+            }
+        }
     }
 
     fun refreshStats() = launch("stats") {
@@ -174,26 +325,66 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setPaymentFilter(status: String?) {
-        _state.update { it.copy(paymentFilter = status) }
-        refreshPayments()
+        _state.update {
+            it.copy(
+                paymentFilter = status,
+                paymentsPage = 0,
+                paymentsTotalPages = 1,
+            )
+        }
+        refreshPayments(reset = true)
     }
 
-    fun refreshPayments() = launch("payments") {
-        val page = api.payments(auth(), status = _state.value.paymentFilter)
-        _state.update { it.copy(payments = page.items.map { p -> p.toModel() }) }
+    fun refreshPayments(reset: Boolean = true) {
+        if (!reset) {
+            val st = _state.value
+            if (!st.paymentsCanLoadMore || st.refreshing) return
+        }
+        viewModelScope.launch {
+            val nextPage = if (reset) 1 else _state.value.paymentsPage + 1
+            if (reset) {
+                _state.update { it.copy(loading = true, error = null) }
+            } else {
+                _state.update { it.copy(paymentsLoadingMore = true, error = null) }
+            }
+            try {
+                val page = api.payments(
+                    auth(),
+                    status = _state.value.paymentFilter,
+                    page = nextPage,
+                    perPage = PAGE_SIZE,
+                )
+                val mapped = page.items.map { it.toModel() }
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        paymentsLoadingMore = false,
+                        payments = if (reset) mapped else it.payments + mapped,
+                        paymentsPage = page.page,
+                        paymentsTotalPages = page.totalPages.coerceAtLeast(1),
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(loading = false, paymentsLoadingMore = false, error = "payments: ${errMsg(e)}")
+                }
+            }
+        }
     }
+
+    fun loadMorePayments() = refreshPayments(reset = false)
 
     fun approvePayment(id: Int) = launch("approve") {
         api.approvePayment(auth(), id)
         _state.update { it.copy(message = "Payment #$id approved") }
-        refreshPayments()
+        refreshPayments(reset = true)
         refreshStats()
     }
 
     fun rejectPayment(id: Int, reason: String) = launch("reject") {
         api.rejectPayment(auth(), id, RejectBody(reason.ifBlank { "Rejected by admin" }))
         _state.update { it.copy(message = "Payment #$id rejected") }
-        refreshPayments()
+        refreshPayments(reset = true)
         refreshStats()
     }
 
@@ -251,22 +442,184 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         _state.update { it.copy(userQuery = q) }
     }
 
-    fun refreshUsers() = launch("users") {
-        val page = api.users(auth(), q = _state.value.userQuery)
-        _state.update { it.copy(users = page.users.map { u -> u.toModel() }) }
+    fun refreshUsers(reset: Boolean = true) {
+        if (!reset) {
+            val st = _state.value
+            if (!st.usersCanLoadMore || st.refreshing) return
+        }
+        viewModelScope.launch {
+            val nextPage = if (reset) 1 else _state.value.usersPage + 1
+            if (reset) {
+                _state.update { it.copy(loading = true, error = null) }
+            } else {
+                _state.update { it.copy(usersLoadingMore = true, error = null) }
+            }
+            try {
+                val page = api.users(
+                    auth(),
+                    q = _state.value.userQuery,
+                    page = nextPage,
+                    perPage = PAGE_SIZE,
+                )
+                val mapped = page.users.map { it.toModel() }
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        usersLoadingMore = false,
+                        users = if (reset) mapped else it.users + mapped,
+                        usersPage = page.page,
+                        usersTotalPages = page.totalPages.coerceAtLeast(1),
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(loading = false, usersLoadingMore = false, error = "users: ${errMsg(e)}")
+                }
+            }
+        }
     }
+
+    fun loadMoreUsers() = refreshUsers(reset = false)
 
     fun banUser(telegramId: Long, banned: Boolean) = launch("ban") {
         api.banUser(auth(), telegramId, BanBody(banned))
         _state.update { it.copy(message = if (banned) "User banned" else "User unbanned") }
-        refreshUsers()
+        refreshUsers(reset = true)
         refreshStats()
     }
 
-    fun refreshCatalog() = launch("catalog") {
-        val rows = api.catalog(auth()).servers.map { it.toModel() }
-        _state.update { it.copy(catalog = rows) }
+    fun openUserKeys(telegramId: Long) = launch("userSubs") {
+        val res = api.userSubscriptions(auth(), telegramId)
+        _state.update {
+            it.copy(
+                managedTelegramId = telegramId,
+                managedSubs = res.subscriptions.map { s -> s.toModel() },
+            )
+        }
     }
+
+    fun closeUserKeys() {
+        _state.update {
+            it.copy(
+                managedTelegramId = null,
+                managedSubs = emptyList(),
+                lastCreatedKey = null,
+                lastCreatedSubUrl = null,
+            )
+        }
+    }
+
+    fun adjustSubscription(subId: Int, daysDelta: Int, dataGbDelta: Double) = launch("adjust") {
+        api.adjustSubscription(auth(), subId, SubAdjustBody(daysDelta, dataGbDelta))
+        val tid = _state.value.managedTelegramId
+        if (tid != null) {
+            val res = api.userSubscriptions(auth(), tid)
+            _state.update {
+                it.copy(
+                    managedSubs = res.subscriptions.map { s -> s.toModel() },
+                    message = "Subscription #$subId updated",
+                )
+            }
+        } else {
+            _state.update { it.copy(message = "Subscription #$subId updated") }
+        }
+        refreshStats()
+    }
+
+    fun replaceSubscriptionKey(subId: Int) = launch("replaceKey") {
+        val res = api.replaceSubscriptionKey(auth(), subId)
+        val sub = res.subscription?.toModel()
+        val tid = _state.value.managedTelegramId
+        if (tid != null) {
+            val list = api.userSubscriptions(auth(), tid)
+            _state.update {
+                it.copy(
+                    managedSubs = list.subscriptions.map { s -> s.toModel() },
+                    message = "New key issued for #$subId",
+                    lastCreatedKey = sub?.vlessKey,
+                    lastCreatedSubUrl = sub?.subscriptionUrl,
+                )
+            }
+        } else {
+            _state.update {
+                it.copy(
+                    message = "New key issued for #$subId",
+                    lastCreatedKey = sub?.vlessKey,
+                    lastCreatedSubUrl = sub?.subscriptionUrl,
+                )
+            }
+        }
+    }
+
+    fun createManualSubscription(
+        telegramId: Long,
+        serverId: String,
+        dataGb: Double,
+        days: Int,
+        notify: Boolean,
+    ) = launch("createSub") {
+        val res = api.createSubscription(
+            auth(),
+            ManualSubBody(
+                telegramId = telegramId,
+                serverId = serverId,
+                dataGb = dataGb,
+                days = days,
+                notify = notify,
+            ),
+        )
+        val sub = res.subscription?.toModel()
+        val list = api.userSubscriptions(auth(), telegramId)
+        _state.update {
+            it.copy(
+                message = "Key created for $telegramId",
+                lastCreatedKey = sub?.vlessKey,
+                lastCreatedSubUrl = sub?.subscriptionUrl,
+                managedTelegramId = telegramId,
+                managedSubs = list.subscriptions.map { s -> s.toModel() },
+            )
+        }
+        refreshUsers(reset = true)
+        refreshStats()
+    }
+
+    fun clearCreatedKeyFlash() {
+        _state.update { it.copy(lastCreatedKey = null, lastCreatedSubUrl = null) }
+    }
+
+    fun refreshCatalog(reset: Boolean = true) {
+        if (!reset) {
+            val st = _state.value
+            if (!st.catalogCanLoadMore || st.refreshing) return
+        }
+        viewModelScope.launch {
+            val nextPage = if (reset) 1 else _state.value.catalogPage + 1
+            if (reset) {
+                _state.update { it.copy(loading = true, error = null) }
+            } else {
+                _state.update { it.copy(catalogLoadingMore = true, error = null) }
+            }
+            try {
+                val page = api.catalog(auth(), page = nextPage, perPage = PAGE_SIZE)
+                val mapped = page.servers.map { it.toModel() }
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        catalogLoadingMore = false,
+                        catalog = if (reset) mapped else it.catalog + mapped,
+                        catalogPage = page.page,
+                        catalogTotalPages = page.totalPages.coerceAtLeast(1),
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(loading = false, catalogLoadingMore = false, error = "catalog: ${errMsg(e)}")
+                }
+            }
+        }
+    }
+
+    fun loadMoreCatalog() = refreshCatalog(reset = false)
 
     fun saveCatalog(
         id: String,
@@ -290,23 +643,52 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
             ),
         )
         _state.update { it.copy(message = "Catalog server saved") }
-        refreshCatalog()
+        refreshCatalog(reset = true)
     }
 
     fun setCatalogEnabled(id: String, enabled: Boolean) = launch("catalogEnabled") {
         api.setCatalogEnabled(auth(), id, enabled)
-        refreshCatalog()
+        refreshCatalog(reset = true)
     }
 
     fun deleteCatalog(id: String) = launch("deleteCatalog") {
         api.deleteCatalog(auth(), id)
-        refreshCatalog()
+        refreshCatalog(reset = true)
     }
 
-    fun refreshAds() = launch("ads") {
-        val rows = api.ads(auth()).ads.map { it.toModel() }
-        _state.update { it.copy(ads = rows) }
+    fun refreshAds(reset: Boolean = true) {
+        if (!reset) {
+            val st = _state.value
+            if (!st.adsCanLoadMore || st.refreshing) return
+        }
+        viewModelScope.launch {
+            val nextPage = if (reset) 1 else _state.value.adsPage + 1
+            if (reset) {
+                _state.update { it.copy(loading = true, error = null) }
+            } else {
+                _state.update { it.copy(adsLoadingMore = true, error = null) }
+            }
+            try {
+                val page = api.ads(auth(), page = nextPage, perPage = PAGE_SIZE)
+                val mapped = page.ads.map { it.toModel() }
+                _state.update {
+                    it.copy(
+                        loading = false,
+                        adsLoadingMore = false,
+                        ads = if (reset) mapped else it.ads + mapped,
+                        adsPage = page.page,
+                        adsTotalPages = page.totalPages.coerceAtLeast(1),
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(loading = false, adsLoadingMore = false, error = "ads: ${errMsg(e)}")
+                }
+            }
+        }
     }
+
+    fun loadMoreAds() = refreshAds(reset = false)
 
     fun saveAd(
         id: String,

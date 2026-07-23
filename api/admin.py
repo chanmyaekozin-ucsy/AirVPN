@@ -5,15 +5,18 @@ import logging
 import re
 import secrets
 import uuid
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from telegram import Bot
 
 import config
 import database as db
+from database import mmt_now
 from services.admin_stats import fetch_admin_stats
 from vpn_servers import list_servers, reload_servers
 
@@ -26,6 +29,29 @@ _ADS_DIR = _ROOT / "data" / "ads"
 _ADS_DIR.mkdir(parents=True, exist_ok=True)
 
 _SAFE_NAME = re.compile(r"[^a-zA-Z0-9._-]+")
+
+
+def _parse_expires(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=mmt_now().tzinfo)
+    return dt
+
+
+def _days_left(expires_at: Any) -> int | None:
+    exp = _parse_expires(expires_at)
+    if not exp:
+        return None
+    delta = exp - mmt_now()
+    return int(delta.total_seconds() // 86400)
 
 
 # ─── Auth models / deps ──────────────────────────────────────────────────────
@@ -59,6 +85,20 @@ class PlanBody(BaseModel):
 
 class BanBody(BaseModel):
     banned: bool = True
+
+
+class SubAdjustBody(BaseModel):
+    days_delta: int = 0
+    data_gb_delta: float = 0.0
+
+
+class ManualSubBody(BaseModel):
+    telegram_id: int = Field(gt=0)
+    server_id: str = Field(default="sg", min_length=1, max_length=32)
+    data_gb: float = Field(gt=0)
+    days: int = Field(gt=0)
+    plan_id: Optional[int] = None
+    notify: bool = False
 
 
 class MobileServerBody(BaseModel):
@@ -123,6 +163,19 @@ def _bot() -> Bot:
 
 
 def _serialize_payment(row: dict[str, Any]) -> dict[str, Any]:
+    has_receipt = bool((row.get("receipt_file_id") or "").strip())
+    limit_gb = row.get("sub_data_limit_gb")
+    used_gb = row.get("sub_data_used_gb")
+    bonus_mb = float(row.get("sub_bonus_data_mb") or 0)
+    data_left_gb: float | None = None
+    if limit_gb is not None:
+        total = float(limit_gb) + (bonus_mb / 1024.0)
+        used = float(used_gb or 0)
+        data_left_gb = round(max(0.0, total - used), 3)
+
+    expires_at = row.get("sub_expires_at")
+    days_left = _days_left(expires_at) if expires_at else None
+
     return {
         "id": row["id"],
         "status": row.get("status"),
@@ -135,14 +188,24 @@ def _serialize_payment(row: dict[str, Any]) -> dict[str, Any]:
         "telegram_id": row.get("telegram_id"),
         "username": row.get("username"),
         "first_name": row.get("first_name"),
-        "receipt_file_id": row.get("receipt_file_id"),
+        "receipt_tx_id": row.get("receipt_tx_id"),
         "receipt_note": row.get("receipt_note"),
+        "has_receipt": has_receipt,
+        "receipt_url": f"/v1/admin/payments/{row['id']}/receipt" if has_receipt else None,
         "reject_reason": row.get("reject_reason"),
         "verify_status": row.get("verify_status"),
+        "verify_message": row.get("verify_message"),
         "auto_verified": bool(row.get("auto_verified")),
         "created_at": row.get("created_at"),
         "processed_at": row.get("processed_at"),
         "processed_by": row.get("processed_by"),
+        "subscription_id": row.get("subscription_id"),
+        "sub_data_limit_gb": float(limit_gb) if limit_gb is not None else None,
+        "sub_data_used_gb": round(float(used_gb or 0), 3) if limit_gb is not None else None,
+        "sub_data_left_gb": data_left_gb,
+        "sub_expires_at": expires_at,
+        "sub_days_left": days_left,
+        "sub_is_active": bool(row.get("sub_is_active")) if row.get("subscription_id") else None,
     }
 
 
@@ -391,7 +454,7 @@ async def admin_set_account_active(
 async def admin_list_payments(
     status: Optional[str] = None,
     page: int = 1,
-    per_page: int = 30,
+    per_page: int = 20,
     _admin_id: int = Depends(require_admin),
 ) -> dict[str, Any]:
     result = await db.list_payments(status=status, page=page, per_page=per_page)
@@ -408,6 +471,40 @@ async def admin_get_payment(
     if not row:
         raise HTTPException(status_code=404, detail="Payment not found")
     return {"payment": _serialize_payment(row)}
+
+
+@router.get("/payments/{payment_id}/receipt")
+async def admin_payment_receipt(
+    payment_id: int,
+    _admin_id: int = Depends(require_admin),
+) -> Response:
+    """Proxy Telegram receipt photo for the Admin app."""
+    row = await db.get_payment(payment_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    file_id = (row.get("receipt_file_id") or "").strip()
+    if not file_id:
+        raise HTTPException(status_code=404, detail="No receipt screenshot")
+    try:
+        bot = _bot()
+        tg_file = await bot.get_file(file_id)
+        data = bytes(await tg_file.download_as_bytearray())
+    except Exception as exc:
+        logger.exception("receipt download failed for payment %s", payment_id)
+        raise HTTPException(status_code=502, detail=f"Could not fetch receipt: {exc}") from exc
+    if not data:
+        raise HTTPException(status_code=404, detail="Empty receipt file")
+    media = "image/jpeg"
+    path = (getattr(tg_file, "file_path", None) or "").lower()
+    if path.endswith(".png"):
+        media = "image/png"
+    elif path.endswith(".webp"):
+        media = "image/webp"
+    return Response(
+        content=data,
+        media_type=media,
+        headers={"Cache-Control": "private, max-age=300"},
+    )
 
 
 @router.post("/payments/{payment_id}/approve")
@@ -478,15 +575,101 @@ async def admin_ban_user(
     return {"telegram_id": telegram_id, "banned": body.banned}
 
 
+# ─── Subscription power tools ────────────────────────────────────────────────
+
+
+@router.get("/users/{telegram_id}/subscriptions")
+async def admin_user_subscriptions(
+    telegram_id: int,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    from services.admin_subs import list_user_subscriptions
+
+    items = await list_user_subscriptions(telegram_id)
+    return {"telegram_id": telegram_id, "subscriptions": items}
+
+
+@router.post("/subscriptions/{sub_id}/adjust")
+async def admin_adjust_subscription(
+    sub_id: int,
+    body: SubAdjustBody,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    from services.admin_subs import adjust_subscription
+
+    try:
+        sub = await adjust_subscription(
+            sub_id,
+            days_delta=body.days_delta,
+            data_gb_delta=body.data_gb_delta,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("adjust_subscription failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok", "subscription": sub}
+
+
+@router.post("/subscriptions/{sub_id}/replace-key")
+async def admin_replace_subscription_key(
+    sub_id: int,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    from services.admin_subs import replace_subscription_key
+
+    try:
+        sub = await replace_subscription_key(sub_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("replace_subscription_key failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok", "subscription": sub}
+
+
+@router.post("/subscriptions/create")
+async def admin_create_subscription(
+    body: ManualSubBody,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    from services.admin_subs import create_manual_subscription
+
+    try:
+        sub = await create_manual_subscription(
+            telegram_id=body.telegram_id,
+            server_id=body.server_id,
+            data_gb=body.data_gb,
+            days=body.days,
+            plan_id=body.plan_id,
+            notify=body.notify,
+            bot=_bot() if body.notify else None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("create_manual_subscription failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok", "subscription": sub}
+
+
 # ─── Mobile catalog ──────────────────────────────────────────────────────────
 
 
 @router.get("/catalog")
 async def admin_list_catalog(
+    page: int = 1,
+    per_page: int = 20,
     _admin_id: int = Depends(require_admin),
 ) -> dict[str, Any]:
-    rows = await db.list_mobile_servers(enabled_only=False)
-    return {"servers": [_serialize_mobile_server(r) for r in rows]}
+    result = await db.list_mobile_servers(enabled_only=False, page=page, per_page=per_page)
+    assert isinstance(result, dict)
+    result["servers"] = [_serialize_mobile_server(r) for r in result.pop("items")]
+    return result
 
 
 @router.post("/catalog")
@@ -494,18 +677,43 @@ async def admin_upsert_catalog(
     body: MobileServerBody,
     _admin_id: int = Depends(require_admin),
 ) -> dict[str, Any]:
+    tier = (body.tier or "free").strip().lower()
+    config_uri = (body.config_uri or "").strip() or None
+    if tier == "free":
+        if not config_uri:
+            raise HTTPException(
+                status_code=400,
+                detail="Free servers need config_uri (vless://, ss://, or https:// subscription)",
+            )
+        low = config_uri.lower()
+        if not (
+            low.startswith("vless://")
+            or low.startswith("ss://")
+            or low.startswith("http://")
+            or low.startswith("https://")
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail="config_uri must be vless://, ss://, or an http(s) subscription URL",
+            )
     row = await db.upsert_mobile_server(
         public_id=body.public_id,
         name=body.name,
         region=body.region,
         protocol=body.protocol,
-        tier=body.tier,
+        tier=tier,
         vpn_server_id=body.vpn_server_id,
         plan_id=body.plan_id,
-        config_uri=body.config_uri,
+        config_uri=config_uri,
         enabled=body.enabled,
         sort_order=body.sort_order,
     )
+    try:
+        from services.sub_link import invalidate_subscription_cache
+
+        invalidate_subscription_cache(body.public_id)
+    except Exception:
+        pass
     return {"server": _serialize_mobile_server(row)}
 
 
@@ -529,6 +737,12 @@ async def admin_delete_catalog(
     ok = await db.delete_mobile_server(public_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Server not found")
+    try:
+        from services.sub_link import invalidate_subscription_cache
+
+        invalidate_subscription_cache(public_id)
+    except Exception:
+        pass
     return {"status": "ok"}
 
 
@@ -537,10 +751,14 @@ async def admin_delete_catalog(
 
 @router.get("/ads")
 async def admin_list_ads(
+    page: int = 1,
+    per_page: int = 20,
     _admin_id: int = Depends(require_admin),
 ) -> dict[str, Any]:
-    rows = await db.list_mobile_ads(enabled_only=False)
-    return {"ads": [_serialize_ad(r) for r in rows]}
+    result = await db.list_mobile_ads(enabled_only=False, page=page, per_page=per_page)
+    assert isinstance(result, dict)
+    result["ads"] = [_serialize_ad(r) for r in result.pop("items")]
+    return result
 
 
 @router.post("/ads")

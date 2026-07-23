@@ -175,6 +175,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "<b>App Server List</b>\n\n"
             "ပုံစံ:\n"
             "<code>ms add id|name|region|vless|free|vpn_server_id|config_uri</code>\n"
+            "(config_uri = vless:// သို့မဟုတ် https:// subscription)\n"
             "<code>ms add id|name|region|vless|paid|vpn_server_id|plan_id</code>\n"
             "<code>ms on id</code> / <code>ms off id</code> / <code>ms del id</code>"
         ),
@@ -182,6 +183,7 @@ STRINGS: dict[str, dict[str, str]] = {
             "<b>App Server List</b>\n\n"
             "Format:\n"
             "<code>ms add id|name|region|vless|free|vpn_server_id|config_uri</code>\n"
+            "(config_uri = vless:// or https:// subscription URL)\n"
             "<code>ms add id|name|region|vless|paid|vpn_server_id|plan_id</code>\n"
             "<code>ms on id</code> / <code>ms off id</code> / <code>ms del id</code>"
         ),

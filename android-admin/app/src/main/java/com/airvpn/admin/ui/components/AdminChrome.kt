@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -13,14 +14,19 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -30,20 +36,94 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.airvpn.admin.ui.theme.AccentWash
 import com.airvpn.admin.ui.theme.Cyan
 import com.airvpn.admin.ui.theme.Danger
 import com.airvpn.admin.ui.theme.Hairline
 import com.airvpn.admin.ui.theme.Ink
 import com.airvpn.admin.ui.theme.InkMuted
 import com.airvpn.admin.ui.theme.Navy
-import com.airvpn.admin.ui.theme.NightGradient
-import com.airvpn.admin.ui.theme.OnNight
-import com.airvpn.admin.ui.theme.OnNightMuted
+import com.airvpn.admin.ui.theme.OnPrimary
 import com.airvpn.admin.ui.theme.Panel
 import com.airvpn.admin.ui.theme.Success
 import com.airvpn.admin.ui.theme.SurfaceBg
 import com.airvpn.admin.ui.theme.Warning
+
+val AdminButtonShape = RoundedCornerShape(10.dp)
+val AdminButtonPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp)
+val AdminCompactButtonPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+
+@Composable
+fun adminPrimaryColors(container: Color = Navy) = ButtonDefaults.buttonColors(
+    containerColor = container,
+    contentColor = OnPrimary,
+    disabledContainerColor = container.copy(alpha = 0.38f),
+    disabledContentColor = OnPrimary.copy(alpha = 0.7f),
+)
+
+@Composable
+fun adminOutlinedColors(content: Color = Navy) = ButtonDefaults.outlinedButtonColors(
+    contentColor = content,
+    disabledContentColor = content.copy(alpha = 0.4f),
+)
+
+@Composable
+fun AdminPrimaryButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    containerColor: Color = Navy,
+    compact: Boolean = false,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = AdminButtonShape,
+        contentPadding = if (compact) AdminCompactButtonPadding else AdminButtonPadding,
+        colors = adminPrimaryColors(containerColor),
+    ) {
+        Text(text, fontWeight = FontWeight.SemiBold, color = OnPrimary)
+    }
+}
+
+@Composable
+fun AdminOutlinedButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    contentColor: Color = Navy,
+    compact: Boolean = false,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        shape = AdminButtonShape,
+        contentPadding = if (compact) AdminCompactButtonPadding else AdminButtonPadding,
+        colors = adminOutlinedColors(contentColor),
+    ) {
+        Text(text, fontWeight = FontWeight.Medium, color = contentColor)
+    }
+}
+
+@Composable
+fun AdminTextButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    contentColor: Color = Navy,
+) {
+    TextButton(
+        onClick = onClick,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp),
+        colors = ButtonDefaults.textButtonColors(contentColor = contentColor),
+    ) {
+        Text(text, fontWeight = FontWeight.Medium, color = contentColor)
+    }
+}
 
 @Composable
 fun AdminScreen(
@@ -58,13 +138,17 @@ fun AdminScreen(
         modifier = modifier
             .fillMaxWidth()
             .background(SurfaceBg)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(horizontal = 16.dp, vertical = 16.dp),
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Column(modifier = Modifier.weight(1f)) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
                 Text(
                     text = (eyebrow ?: title).uppercase(),
                     style = MaterialTheme.typography.labelSmall,
@@ -80,9 +164,13 @@ fun AdminScreen(
                     Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = InkMuted)
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), content = actions)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                content = actions,
+            )
         }
-        Spacer(Modifier.height(14.dp))
+        Spacer(Modifier.height(16.dp))
         content()
     }
 }
@@ -98,7 +186,7 @@ fun AdminPanel(
             .clip(RoundedCornerShape(16.dp))
             .background(Panel)
             .border(1.dp, Hairline, RoundedCornerShape(16.dp))
-            .padding(14.dp),
+            .padding(16.dp),
         content = content,
     )
 }
@@ -115,7 +203,7 @@ fun MetricTile(
             .clip(RoundedCornerShape(14.dp))
             .background(Panel)
             .border(1.dp, Hairline, RoundedCornerShape(14.dp))
-            .padding(14.dp),
+            .padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Box(
@@ -131,7 +219,7 @@ fun MetricTile(
                 color = InkMuted,
             )
         }
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(12.dp))
         Text(
             text = value,
             style = MaterialTheme.typography.titleLarge,
@@ -177,39 +265,46 @@ fun AdminTopChrome(
     refreshIcon: ImageVector,
     logoutIcon: ImageVector,
 ) {
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(NightGradient)
-            .padding(horizontal = 16.dp, vertical = 14.dp),
+            .background(Panel)
+            .statusBarsPadding(),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(
                 modifier = Modifier
-                    .size(40.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .background(AccentWash),
-                contentAlignment = Alignment.Center,
+                    .weight(1f)
+                    .padding(start = 8.dp, top = 10.dp, bottom = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 Text(
-                    text = "A",
-                    color = OnNight,
-                    fontWeight = FontWeight.Bold,
+                    text = title,
                     style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Ink,
                 )
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(title, color = OnNight, fontWeight = FontWeight.SemiBold)
-                Text(subtitle, color = OnNightMuted, style = MaterialTheme.typography.bodyMedium)
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = InkMuted,
+                    )
+                }
             }
             IconButton(onClick = onRefresh) {
-                Icon(refreshIcon, contentDescription = "Refresh", tint = OnNight)
+                Icon(refreshIcon, contentDescription = "Refresh", tint = InkMuted)
             }
             IconButton(onClick = onLogout) {
-                Icon(logoutIcon, contentDescription = "Logout", tint = OnNightMuted)
+                Icon(logoutIcon, contentDescription = "Logout", tint = InkMuted)
             }
         }
+        HorizontalDivider(color = Hairline, thickness = 1.dp)
     }
 }
 
@@ -224,7 +319,7 @@ fun ListRowCard(
             .clip(RoundedCornerShape(14.dp))
             .background(Panel)
             .border(1.dp, Hairline, RoundedCornerShape(14.dp))
-            .padding(14.dp),
+            .padding(16.dp),
         content = content,
     )
 }

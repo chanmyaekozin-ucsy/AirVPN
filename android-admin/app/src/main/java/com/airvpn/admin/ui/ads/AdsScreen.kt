@@ -16,20 +16,17 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,8 +42,13 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.airvpn.admin.data.api.ApiFactory
 import com.airvpn.admin.data.model.AdItem
+import com.airvpn.admin.ui.components.AdminOutlinedButton
+import com.airvpn.admin.ui.components.AdminPrimaryButton
 import com.airvpn.admin.ui.components.AdminScreen
+import com.airvpn.admin.ui.components.AdminTextButton
+import com.airvpn.admin.ui.components.InfiniteListHandler
 import com.airvpn.admin.ui.components.ListRowCard
+import com.airvpn.admin.ui.components.LoadMoreFooter
 import com.airvpn.admin.ui.components.StatusChip
 import com.airvpn.admin.ui.components.StatusTone
 import com.airvpn.admin.ui.theme.Cyan
@@ -60,6 +62,8 @@ import java.io.File
 @Composable
 fun AdsScreen(
     ads: List<AdItem>,
+    loadingMore: Boolean = false,
+    canLoadMore: Boolean = false,
     onSave: (
         id: String,
         placement: String,
@@ -74,12 +78,20 @@ fun AdsScreen(
     onToggle: (String, Boolean) -> Unit,
     onDelete: (String) -> Unit,
     onUpload: (File, (String) -> Unit) -> Unit,
+    onLoadMore: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<AdItem?>(null) }
     var creating by remember { mutableStateOf(false) }
     val shown = ads.filter { filter == null || it.placement == filter }
+    val listState = rememberLazyListState()
+
+    InfiniteListHandler(
+        listState = listState,
+        enabled = canLoadMore && !loadingMore,
+        onLoadMore = onLoadMore,
+    )
 
     AdminScreen(
         title = "Ads Manager",
@@ -87,11 +99,11 @@ fun AdsScreen(
         subtitle = "Banner and connect-dialog creatives",
         modifier = modifier.fillMaxSize(),
         actions = {
-            Button(
+            AdminPrimaryButton(
+                text = "Add ad",
                 onClick = { creating = true },
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = Navy),
-            ) { Text("Add ad") }
+                compact = true,
+            )
         },
     ) {
         Row(
@@ -113,8 +125,11 @@ fun AdsScreen(
                 )
             }
         }
-        Spacer(Modifier.height(12.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Spacer(Modifier.height(16.dp))
+        LazyColumn(
+            state = listState,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
             items(shown, key = { it.id }) { ad ->
                 ListRowCard {
                     Row(
@@ -139,13 +154,14 @@ fun AdsScreen(
                                 fontWeight = FontWeight.SemiBold,
                                 color = Ink,
                             )
+                            Spacer(Modifier.height(4.dp))
                             Text(
                                 ad.title.ifBlank { ad.clickUrl.ifBlank { "—" } },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = InkMuted,
                                 maxLines = 1,
                             )
-                            Spacer(Modifier.height(6.dp))
+                            Spacer(Modifier.height(8.dp))
                             StatusChip(
                                 if (ad.enabled) "Live" else "Off",
                                 if (ad.enabled) StatusTone.Success else StatusTone.Neutral,
@@ -156,13 +172,24 @@ fun AdsScreen(
                             onCheckedChange = { onToggle(ad.id, it) },
                             colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
                         )
-                        OutlinedButton(
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AdminOutlinedButton(
+                            text = "Edit",
                             onClick = { editing = ad },
-                            shape = RoundedCornerShape(10.dp),
-                        ) { Text("Edit") }
-                        TextButton(onClick = { onDelete(ad.id) }) { Text("Del", color = Danger) }
+                            compact = true,
+                        )
+                        AdminTextButton(
+                            text = "Delete",
+                            onClick = { onDelete(ad.id) },
+                            contentColor = Danger,
+                        )
                     }
                 }
+            }
+            item(key = "ads-footer") {
+                LoadMoreFooter(visible = loadingMore)
             }
         }
     }
@@ -212,7 +239,7 @@ private fun AdDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "Add ad" else "Edit ad") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
                     id, { id = it },
                     label = { Text("Public id") },
@@ -221,7 +248,11 @@ private fun AdDialog(
                 )
                 OutlinedTextField(placement, { placement = it }, label = { Text("Placement (banner/dialog)") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(imageUrl, { imageUrl = it }, label = { Text("Image URL") }, modifier = Modifier.fillMaxWidth())
-                OutlinedButton(onClick = { picker.launch("image/*") }) { Text("Upload image") }
+                AdminOutlinedButton(
+                    text = "Upload image",
+                    onClick = { picker.launch("image/*") },
+                    compact = true,
+                )
                 if (imageUrl.isNotBlank()) {
                     AsyncImage(
                         model = ApiFactory.absoluteUrl(imageUrl),
@@ -238,28 +269,34 @@ private fun AdDialog(
                     OutlinedTextField(sort, { sort = it }, label = { Text("Sort") }, modifier = Modifier.weight(1f))
                 }
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Enabled")
+                    Text("Enabled", color = Ink)
                     Spacer(Modifier.weight(1f))
                     Switch(checked = enabled, onCheckedChange = { enabled = it })
                 }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
-                if (id.isBlank() || imageUrl.isBlank()) return@TextButton
-                onSave(
-                    id.trim(),
-                    placement.trim().ifBlank { "banner" },
-                    imageUrl.trim(),
-                    clickUrl.trim(),
-                    title.trim(),
-                    width.toIntOrNull() ?: 0,
-                    height.toIntOrNull() ?: 0,
-                    enabled,
-                    sort.toIntOrNull() ?: 0,
-                )
-            }) { Text("Save") }
+            AdminTextButton(
+                text = "Save",
+                onClick = {
+                    if (id.isBlank() || imageUrl.isBlank()) return@AdminTextButton
+                    onSave(
+                        id.trim(),
+                        placement.trim().ifBlank { "banner" },
+                        imageUrl.trim(),
+                        clickUrl.trim(),
+                        title.trim(),
+                        width.toIntOrNull() ?: 0,
+                        height.toIntOrNull() ?: 0,
+                        enabled,
+                        sort.toIntOrNull() ?: 0,
+                    )
+                },
+                contentColor = Navy,
+            )
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = {
+            AdminTextButton(text = "Cancel", onClick = onDismiss, contentColor = InkMuted)
+        },
     )
 }

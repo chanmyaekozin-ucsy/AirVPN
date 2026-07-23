@@ -32,6 +32,18 @@ data class PaymentItem(
     val firstName: String?,
     val rejectReason: String?,
     val createdAt: String?,
+    val receiptTxId: String? = null,
+    val receiptNote: String? = null,
+    val hasReceipt: Boolean = false,
+    val receiptUrl: String? = null,
+    val dataGb: Double? = null,
+    val durationDays: Int? = null,
+    val subDataLimitGb: Double? = null,
+    val subDataUsedGb: Double? = null,
+    val subDataLeftGb: Double? = null,
+    val subExpiresAt: String? = null,
+    val subDaysLeft: Int? = null,
+    val subIsActive: Boolean? = null,
 )
 
 data class PaymentAccount(
@@ -93,4 +105,23 @@ data class AdItem(
     val imageHeight: Int,
     val enabled: Boolean,
     val sortOrder: Int,
+)
+
+data class SubscriptionItem(
+    val id: Int,
+    val telegramId: Long,
+    val username: String?,
+    val firstName: String?,
+    val planTitle: String?,
+    val serverId: String,
+    val isFree: Boolean,
+    val isActive: Boolean,
+    val dataLimitGb: Double,
+    val dataUsedGb: Double,
+    val dataLeftGb: Double,
+    val expiresAt: String?,
+    val daysLeft: Int?,
+    val vlessKey: String?,
+    val subscriptionUrl: String?,
+    val paymentId: Int?,
 )

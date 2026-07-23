@@ -285,6 +285,10 @@ def _endpoint_from_row(row: dict[str, Any]) -> tuple[str, int] | None:
     """Resolve TCP host:port used for up/down probe."""
     uri = (row.get("config_uri") or "").strip()
     if uri:
+        low = uri.lower()
+        # Subscription feeds are not VPN endpoints — skip probe here.
+        if low.startswith("http://") or low.startswith("https://"):
+            return None
         try:
             # vless://uuid@host:port?...
             parsed = urlparse(uri)
@@ -304,6 +308,137 @@ def _endpoint_from_row(row: dict[str, Any]) -> tuple[str, int] | None:
             logger.debug("vpn server lookup failed for %s: %s", vpn_sid, exc)
     return None
 
+
+async def _cached_free_sub_nodes(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """Expand a free catalog row whose config_uri is an http(s) subscription."""
+    from services.sub_link import (
+        fetch_subscription_nodes,
+        get_cached_subscription_nodes,
+        is_subscription_url,
+        put_cached_subscription_nodes,
+    )
+
+    parent_id = row["public_id"]
+    uri = (row.get("config_uri") or "").strip()
+    if not is_subscription_url(uri):
+        return []
+
+    cached = get_cached_subscription_nodes(parent_id)
+    if cached is not None:
+        return cached
+
+    try:
+        nodes = await fetch_subscription_nodes(
+            uri,
+            parent_id=parent_id,
+            parent_name=row.get("name") or parent_id,
+            parent_region=row.get("region") or "",
+        )
+        put_cached_subscription_nodes(parent_id, nodes)
+        return nodes
+    except Exception as exc:
+        logger.warning("free sub fetch failed for %s: %s", parent_id, exc)
+        stale = get_cached_subscription_nodes(parent_id, allow_stale=True)
+        return stale or []
+
+
+def _public_from_sub_node(node: dict[str, Any], *, online: bool) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "id": node["id"],
+        "name": node.get("name") or node["id"],
+        "region": node.get("region") or "",
+        "protocol": node.get("protocol") or "vless",
+        "tag": node.get("tag") or "Vless",
+        "tier": "free",
+        "online": online,
+    }
+    host = node.get("host")
+    port = int(node.get("port") or 0)
+    if host:
+        out["host"] = host
+    if port > 0:
+        out["port"] = port
+    return out
+
+
+async def _free_publics_for_row(row: dict[str, Any]) -> list[dict[str, Any]]:
+    """One share URI → one server; subscription URL → one server per node."""
+    from services.sub_link import is_subscription_url
+
+    uri = (row.get("config_uri") or "").strip()
+    if is_subscription_url(uri):
+        nodes = await _cached_free_sub_nodes(row)
+        if not nodes:
+            # Keep a placeholder so admins know the entry exists but is empty/down.
+            base = await _server_public(row, online=False)
+            base["name"] = f"{row.get('name') or row['public_id']} (sub empty)"
+            return [base]
+        # Probe a sample of nodes in parallel (capped)
+        sample = nodes[:12]
+
+        async def _online_node(n: dict[str, Any]) -> bool:
+            host = n.get("host")
+            port = int(n.get("port") or 0)
+            if not host or port <= 0:
+                return True
+            return await _probe_tcp(str(host), port)
+
+        flags = await asyncio.gather(*[_online_node(n) for n in sample])
+        online_map = {sample[i]["id"]: flags[i] for i in range(len(sample))}
+        return [
+            _public_from_sub_node(n, online=online_map.get(n["id"], True))
+            for n in nodes
+        ]
+    return [await _server_public(row)]
+
+
+async def _resolve_free_share_uri(server_id: str) -> tuple[str, str]:
+    """
+    Resolve free catalog connect target to (share_uri, protocol).
+    Supports parent ids (single vless/ss) and parent::node keys (subscription).
+    """
+    from services.sub_link import is_share_uri, is_subscription_url, split_node_public_id
+
+    parent_id, node_key = split_node_public_id(server_id)
+    row = await db.get_mobile_server(parent_id)
+    if not row or not row.get("enabled"):
+        raise HTTPException(404, "Server not found")
+    if (row.get("tier") or "free").lower() != "free":
+        raise HTTPException(404, "Server not found")
+
+    config_uri = (row.get("config_uri") or "").strip()
+    if not config_uri:
+        raise HTTPException(503, "Free server not configured")
+
+    if is_subscription_url(config_uri):
+        nodes = await _cached_free_sub_nodes(row)
+        if not nodes:
+            raise HTTPException(503, "Free subscription has no nodes")
+        if node_key:
+            full_id = f"{parent_id}::{node_key}"
+            match = next((n for n in nodes if n["id"] == full_id), None)
+            if not match:
+                # Cache may have rotated — refresh once
+                from services.sub_link import invalidate_subscription_cache
+
+                invalidate_subscription_cache(parent_id)
+                nodes = await _cached_free_sub_nodes(row)
+                match = next((n for n in nodes if n["id"] == full_id), None)
+            if not match:
+                raise HTTPException(404, "Subscription node not found — refresh servers")
+            return match["uri"], match.get("protocol") or "vless"
+        # Connecting to parent id: use first node
+        first = nodes[0]
+        return first["uri"], first.get("protocol") or "vless"
+
+    if not is_share_uri(config_uri) and node_key:
+        raise HTTPException(404, "Server not found")
+    if not is_share_uri(config_uri):
+        raise HTTPException(503, "Free server config must be vless://, ss://, or https:// sub")
+    protocol = (row.get("protocol") or "vless").lower()
+    if config_uri.lower().startswith("ss://"):
+        protocol = "ss"
+    return config_uri, protocol
 
 async def _probe_tcp(host: str, port: int) -> bool:
     key = f"{host}:{port}"
@@ -589,10 +724,13 @@ async def analytics_event(body: AnalyticsEventBody, request: Request) -> dict[st
 @app.get("/v1/servers")
 async def servers() -> dict[str, Any]:
     rows = await db.list_mobile_servers(enabled_only=True)
-    # Probe in parallel (cached) so list stays snappy
-    publics = await asyncio.gather(*[_server_public(r) for r in rows])
-    free = [p for p, r in zip(publics, rows) if (r.get("tier") or "") == "free"]
-    paid_db = [p for p, r in zip(publics, rows) if (r.get("tier") or "") == "paid"]
+    free_rows = [r for r in rows if (r.get("tier") or "") == "free"]
+    paid_rows = [r for r in rows if (r.get("tier") or "") == "paid"]
+
+    free_lists = await asyncio.gather(*[_free_publics_for_row(r) for r in free_rows])
+    free: list[dict[str, Any]] = [p for group in free_lists for p in group]
+
+    paid_db = await asyncio.gather(*[_server_public(r) for r in paid_rows])
     # Bot .env catalog is the source of truth for paid locations + price lists
     paid_bot = await _paid_from_bot_catalog()
     bot_ids = {p["id"] for p in paid_bot}
@@ -645,25 +783,27 @@ async def connect(
     ):
         raise HTTPException(429, "Too many attempts — wait a minute")
 
-    row = await db.get_mobile_server(body.server_id)
+    from services.sub_link import split_node_public_id
+
+    parent_id, _node_key = split_node_public_id(body.server_id)
+    row = await db.get_mobile_server(parent_id)
     if not row or not row.get("enabled"):
         raise HTTPException(404, "Server not found")
 
-    protocol = (row.get("protocol") or "vless").lower()
-    if protocol in ("ssh", "ss"):
-        raise HTTPException(501, "Protocol not available yet")
-
-    if not await _server_online(row):
-        raise HTTPException(503, "Server is currently down")
-
     tier = (row.get("tier") or "free").lower()
     config_uri: Optional[str] = None
+    protocol = (row.get("protocol") or "vless").lower()
 
     if tier == "free":
-        config_uri = row.get("config_uri")
-        if not config_uri:
-            raise HTTPException(503, "Free server not configured")
+        config_uri, protocol = await _resolve_free_share_uri(body.server_id)
     else:
+        # Paid rows use exact public_id (not subscription expansion)
+        if body.server_id != parent_id:
+            raise HTTPException(404, "Server not found")
+        if protocol in ("ssh",):
+            raise HTTPException(501, "Protocol not available yet")
+        if not await _server_online(row):
+            raise HTTPException(503, "Server is currently down")
         user = await _user_from_auth(authorization, x_restore_code)
         if not user:
             raise HTTPException(401, "Import restore code to use paid servers")
@@ -676,9 +816,14 @@ async def connect(
             )
         config_uri = sub["vless_key"]
 
+    if protocol in ("ssh", "vmess"):
+        raise HTTPException(501, "Protocol not available yet")
+    if not config_uri:
+        raise HTTPException(503, "Free server not configured")
+
     payload = encrypt_config_payload(config_uri, ttl_sec=120)
     return {
-        "server_id": row["public_id"],
+        "server_id": body.server_id,
         "protocol": protocol,
         "payload": payload,
     }
