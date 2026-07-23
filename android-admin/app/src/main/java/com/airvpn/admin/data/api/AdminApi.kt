@@ -11,8 +11,11 @@ import com.airvpn.admin.data.model.PlanItem
 import com.airvpn.admin.data.model.SubscriptionItem
 import com.airvpn.admin.data.model.UserItem
 import com.airvpn.admin.data.model.VpnServerInfo
+import com.squareup.moshi.FromJson
 import com.squareup.moshi.Json
+import com.squareup.moshi.JsonReader
 import com.squareup.moshi.Moshi
+import com.squareup.moshi.ToJson
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -734,7 +737,36 @@ data class NotificationsDto(
 )
 
 object ApiFactory {
-    private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
+    /** SQLite often returns 0/1 for booleans — accept both JSON forms. */
+    private class TolerantBooleanAdapter {
+        @FromJson
+        fun fromJson(reader: JsonReader): Boolean? {
+            return when (reader.peek()) {
+                JsonReader.Token.NULL -> {
+                    reader.nextNull()
+                    null
+                }
+                JsonReader.Token.BOOLEAN -> reader.nextBoolean()
+                JsonReader.Token.NUMBER -> reader.nextInt() != 0
+                JsonReader.Token.STRING -> {
+                    val s = reader.nextString().trim().lowercase()
+                    s == "1" || s == "true" || s == "yes"
+                }
+                else -> {
+                    reader.skipValue()
+                    false
+                }
+            }
+        }
+
+        @ToJson
+        fun toJson(value: Boolean?): Boolean? = value
+    }
+
+    private val moshi = Moshi.Builder()
+        .add(TolerantBooleanAdapter())
+        .add(KotlinJsonAdapterFactory())
+        .build()
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)

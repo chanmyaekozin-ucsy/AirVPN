@@ -239,6 +239,19 @@ def _serialize_payment(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _serialize_plan(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": int(row["id"]),
+        "title": row.get("title") or "",
+        "data_gb": float(row.get("data_gb") or 0),
+        "price_ks": int(row.get("price_ks") or 0),
+        "duration_days": int(row.get("duration_days") or 0),
+        "server_id": (row.get("server_id") or "sg"),
+        "sort_order": int(row.get("sort_order") or 0),
+        "is_active": bool(row.get("is_active")),
+    }
+
+
 def _serialize_ad(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": row.get("public_id"),
@@ -461,21 +474,7 @@ async def admin_list_plans(
     _admin_id: int = Depends(require_admin),
 ) -> dict[str, Any]:
     rows = await db.list_plans(server_id=server_id, include_inactive=True)
-    return {
-        "plans": [
-            {
-                "id": r["id"],
-                "title": r["title"],
-                "data_gb": r["data_gb"],
-                "price_ks": r["price_ks"],
-                "duration_days": r["duration_days"],
-                "server_id": r.get("server_id") or "sg",
-                "sort_order": r.get("sort_order") or 0,
-                "is_active": bool(r.get("is_active")),
-            }
-            for r in rows
-        ]
-    }
+    return {"plans": [_serialize_plan(r) for r in rows]}
 
 
 @router.post("/plans")
@@ -492,7 +491,7 @@ async def admin_create_plan(
         sort_order=body.sort_order,
         is_active=body.is_active,
     )
-    return {"plan": row}
+    return {"plan": _serialize_plan(row)}
 
 
 @router.patch("/plans/{plan_id}")
@@ -514,7 +513,7 @@ async def admin_update_plan(
         sort_order=body.sort_order,
         is_active=body.is_active,
     )
-    return {"plan": row}
+    return {"plan": _serialize_plan(row)}
 
 
 @router.post("/plans/{plan_id}/active")
