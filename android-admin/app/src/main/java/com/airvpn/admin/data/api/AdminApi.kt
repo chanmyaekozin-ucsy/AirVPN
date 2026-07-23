@@ -666,6 +666,13 @@ data class CatalogServerDto(
     @Json(name = "manual_used_gb") val manualUsedGb: Double? = null,
     @Json(name = "manual_expire_at") val manualExpireAt: Long? = null,
     @Json(name = "list_when_disabled") val listWhenDisabled: Boolean = false,
+    @Json(name = "ssh_host") val sshHost: String? = null,
+    @Json(name = "ssh_port") val sshPort: Int? = null,
+    @Json(name = "ssh_user") val sshUser: String? = null,
+    @Json(name = "ssh_sni") val sshSni: String? = null,
+    @Json(name = "ssh_tls") val sshTls: Boolean? = null,
+    @Json(name = "ssh_allow_insecure") val sshAllowInsecure: Boolean? = null,
+    @Json(name = "ssh_password_set") val sshPasswordSet: Boolean? = null,
 ) {
     fun toModel() = CatalogServer(
         id = id,
@@ -681,6 +688,13 @@ data class CatalogServerDto(
         manualUsedGb = manualUsedGb,
         manualExpireAt = manualExpireAt,
         listWhenDisabled = listWhenDisabled,
+        sshHost = sshHost.orEmpty(),
+        sshPort = sshPort ?: 443,
+        sshUser = sshUser.orEmpty(),
+        sshSni = sshSni.orEmpty(),
+        sshTls = sshTls ?: true,
+        sshAllowInsecure = sshAllowInsecure ?: false,
+        sshPasswordSet = sshPasswordSet ?: false,
     )
 }
 
@@ -722,6 +736,13 @@ data class CatalogBody(
     @Json(name = "list_when_disabled") val listWhenDisabled: Boolean = false,
     val enabled: Boolean = true,
     @Json(name = "sort_order") val sortOrder: Int = 0,
+    @Json(name = "ssh_host") val sshHost: String? = null,
+    @Json(name = "ssh_port") val sshPort: Int? = null,
+    @Json(name = "ssh_user") val sshUser: String? = null,
+    @Json(name = "ssh_password") val sshPassword: String? = null,
+    @Json(name = "ssh_sni") val sshSni: String? = null,
+    @Json(name = "ssh_tls") val sshTls: Boolean? = null,
+    @Json(name = "ssh_allow_insecure") val sshAllowInsecure: Boolean? = null,
 )
 
 data class AdDto(
@@ -833,6 +854,7 @@ data class DeviceExclusiveDto(
     val protocol: String = "vless",
     @Json(name = "config_uri") val configUri: String = "",
     val note: String = "",
+    val tier: String = "free",
     val enabled: Boolean = true,
     @Json(name = "created_at") val createdAt: String? = null,
     @Json(name = "updated_at") val updatedAt: String? = null,
@@ -846,6 +868,7 @@ data class DeviceExclusiveDto(
         protocol = protocol,
         configUri = configUri,
         note = note,
+        tier = tier.ifBlank { "free" },
         enabled = enabled,
         createdAt = createdAt,
         updatedAt = updatedAt,
@@ -859,6 +882,7 @@ data class DeviceExclusiveBody(
     val region: String = "",
     val protocol: String = "vless",
     val note: String = "",
+    val tier: String = "free",
     @Json(name = "public_id") val publicId: String? = null,
     val enabled: Boolean = true,
 )

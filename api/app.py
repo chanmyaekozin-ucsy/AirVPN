@@ -78,12 +78,40 @@ def _validate_free_share_uri(uri: str) -> str:
     if not (
         low.startswith("vless://")
         or low.startswith("ss://")
+        or low.startswith("ssh://")
     ):
         raise HTTPException(503, "Free config invalid")
     # Block obvious SSRF-style local schemes that should never appear
     if any(x in low for x in ("file:", "javascript:", "data:")):
         raise HTTPException(503, "Free config invalid")
     return clean
+
+
+def _ssh_connect_uri_from_row(row: dict[str, Any]) -> str:
+    """Decrypt at-rest SSH password and build full connect URI (never log)."""
+    from api.crypto import decrypt_at_rest
+    from utils.ssh_config import connect_uri_from_row
+
+    password = decrypt_at_rest(row.get("ssh_password_enc"))
+    if not password:
+        raise HTTPException(503, "SSH server not configured")
+    try:
+        return connect_uri_from_row(row, password)
+    except ValueError as exc:
+        raise HTTPException(503, "SSH server not configured") from exc
+
+
+async def _user_has_paid_entitlement(
+    user: dict[str, Any],
+    *,
+    vpn_server_id: str = "",
+) -> bool:
+    vpn_sid = (vpn_server_id or "").strip()
+    if vpn_sid:
+        sub = await db.get_active_sub_for_vpn_server(user["id"], vpn_sid)
+        return bool(sub)
+    subs = await db.get_all_active_subscriptions(user["id"])
+    return any(not bool(s.get("is_free")) for s in subs)
 
 
 @asynccontextmanager
@@ -357,6 +385,22 @@ async def _collect_ads(request: Request | None = None) -> list[dict[str, Any]]:
 
 def _endpoint_from_row(row: dict[str, Any]) -> tuple[str, int] | None:
     """Resolve TCP host:port used for up/down probe."""
+    protocol = (row.get("protocol") or "vless").lower()
+    if protocol == "ssh":
+        host = (row.get("ssh_host") or "").strip()
+        port = int(row.get("ssh_port") or 0)
+        if host and port > 0:
+            return host, port
+        uri = (row.get("config_uri") or "").strip()
+        if uri.lower().startswith("ssh://"):
+            try:
+                from utils.ssh_config import parse_ssh_uri
+
+                parsed = parse_ssh_uri(uri)
+                return str(parsed["host"]), int(parsed["port"])
+            except Exception:
+                pass
+        return None
     uri = (row.get("config_uri") or "").strip()
     if uri:
         low = uri.lower()
@@ -544,6 +588,12 @@ async def _free_nodes_and_userinfo(
     nodes_text = (row.get("nodes_text") or "").strip()
     uri = (row.get("config_uri") or "").strip()
     manual = _has_manual_userinfo(row)
+    protocol = (row.get("protocol") or "vless").lower()
+
+    # SSH is always a single catalog entry (never expanded as a sub feed)
+    if protocol == "ssh":
+        empty_info = {"upload": 0, "download": 0, "total": 0, "expire": 0}
+        return [], empty_info, False
 
     if nodes_text:
         nodes = parse_subscription_nodes(
@@ -1128,23 +1178,31 @@ async def servers(
         if meta is not None:
             free_subscriptions.append(meta)
 
-    # Admin-assigned exclusive share keys for this device UUID
+    # Admin-assigned exclusive share keys for this device UUID (free or paid list)
     did = (x_device_id or "").strip()[:128]
+    excl_free: list[dict[str, Any]] = []
+    excl_paid: list[dict[str, Any]] = []
     if len(did) >= 8:
         excl_rows = await db.list_enabled_exclusive_for_device(did)
         for er in excl_rows:
+            tier = (er.get("tier") or "free").strip().lower()
+            if tier not in ("free", "paid"):
+                tier = "free"
             pub = await _server_public(
                 {
                     "public_id": er["public_id"],
                     "name": er.get("name") or er["public_id"],
                     "region": er.get("region") or "",
                     "protocol": er.get("protocol") or "vless",
-                    "tier": "free",
+                    "tier": tier,
                     "config_uri": er.get("config_uri") or "",
                 }
             )
             pub["exclusive"] = True
-            free.insert(0, pub)
+            if tier == "paid":
+                excl_paid.append(pub)
+            else:
+                excl_free.append(pub)
 
     paid_db = await asyncio.gather(*[_server_public(r) for r in paid_rows])
     # Bot .env catalog is the source of truth for paid locations + price lists
@@ -1153,8 +1211,8 @@ async def servers(
     # Keep any admin ms-paid rows that aren't already covered by bot servers
     paid_extra = [p for p in paid_db if p["id"] not in bot_ids]
     return {
-        "free": free,
-        "paid": paid_bot + paid_extra,
+        "free": excl_free + free,
+        "paid": excl_paid + paid_bot + paid_extra,
         "free_subscriptions": free_subscriptions,
     }
 
@@ -1255,6 +1313,33 @@ async def connect(
             per_hour=int(getattr(config, "MOBILE_RATE_CONNECT_PER_HOUR", 200) or 200),
         )
 
+    # SSH catalog: shared tunnel credentials, encrypted at rest → short-TTL payload
+    if protocol == "ssh":
+        if body.server_id != parent_id:
+            raise HTTPException(404, "Server not found")
+        if not await _server_online(row):
+            raise HTTPException(503, "Server is currently down")
+        if tier == "paid":
+            user = await _user_from_auth(authorization, x_restore_code)
+            if not user:
+                raise HTTPException(401, "Import restore code to use paid servers")
+            ok = await _user_has_paid_entitlement(
+                user,
+                vpn_server_id=row.get("vpn_server_id") or "",
+            )
+            if not ok:
+                raise HTTPException(
+                    403,
+                    "No active paid subscription for this server — buy via Telegram",
+                )
+        config_uri = _ssh_connect_uri_from_row(row)
+        payload = encrypt_config_payload(config_uri, ttl_sec=120)
+        return {
+            "server_id": body.server_id,
+            "protocol": "ssh",
+            "payload": payload,
+        }
+
     if tier == "free":
         pooled = await _resolve_free_pool_device_uri(body.server_id, body.device_id)
         if pooled is not None:
@@ -1266,8 +1351,6 @@ async def connect(
         # Paid rows use exact public_id (not subscription expansion)
         if body.server_id != parent_id:
             raise HTTPException(404, "Server not found")
-        if protocol in ("ssh",):
-            raise HTTPException(501, "Protocol not available yet")
         if not await _server_online(row):
             raise HTTPException(503, "Server is currently down")
         user = await _user_from_auth(authorization, x_restore_code)
@@ -1282,7 +1365,7 @@ async def connect(
             )
         config_uri = sub["vless_key"]
 
-    if protocol in ("ssh", "vmess"):
+    if protocol in ("vmess",):
         raise HTTPException(501, "Protocol not available yet")
     if not config_uri:
         raise HTTPException(503, "Free server not configured")

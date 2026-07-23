@@ -162,6 +162,14 @@ class MobileServerBody(BaseModel):
     list_when_disabled: bool = False
     enabled: bool = True
     sort_order: int = 0
+    # SSH catalog (password write-only; blank keeps existing)
+    ssh_host: Optional[str] = Field(default=None, max_length=255)
+    ssh_port: Optional[int] = Field(default=None, ge=1, le=65535)
+    ssh_user: Optional[str] = Field(default=None, max_length=128)
+    ssh_password: Optional[str] = Field(default=None, max_length=512)
+    ssh_sni: Optional[str] = Field(default=None, max_length=255)
+    ssh_tls: Optional[bool] = None
+    ssh_allow_insecure: Optional[bool] = None
 
 
 def _gb_to_bytes(gb: float | None) -> int | None:
@@ -328,11 +336,12 @@ def _serialize_ad(row: dict[str, Any]) -> dict[str, Any]:
 
 def _serialize_mobile_server(row: dict[str, Any]) -> dict[str, Any]:
     used = int(row.get("manual_upload_bytes") or 0) + int(row.get("manual_download_bytes") or 0)
-    return {
+    protocol = (row.get("protocol") or "vless").lower()
+    out: dict[str, Any] = {
         "id": row.get("public_id"),
         "name": row.get("name"),
         "region": row.get("region") or "",
-        "protocol": row.get("protocol") or "vless",
+        "protocol": protocol,
         "tier": row.get("tier") or "free",
         "vpn_server_id": row.get("vpn_server_id"),
         "plan_id": row.get("plan_id"),
@@ -352,6 +361,22 @@ def _serialize_mobile_server(row: dict[str, Any]) -> dict[str, Any]:
         "plan_data_gb": row.get("plan_data_gb"),
         "plan_duration_days": row.get("plan_duration_days"),
     }
+    if protocol == "ssh":
+        from utils.ssh_config import redact_ssh_uri, ssh_fields_from_row
+
+        fields = ssh_fields_from_row(row)
+        # Never return password or encrypted blob to admin clients
+        out["config_uri"] = redact_ssh_uri(row.get("config_uri")) or None
+        out["ssh_host"] = fields["host"]
+        out["ssh_port"] = fields["port"]
+        out["ssh_user"] = fields["username"]
+        out["ssh_sni"] = fields["sni"]
+        out["ssh_tls"] = fields["tls"]
+        out["ssh_allow_insecure"] = fields["allow_insecure"]
+        out["ssh_password_set"] = fields["password_set"]
+        out.pop("nodes_text", None)
+        out["nodes_text"] = ""
+    return out
 
 
 # ─── Auth ────────────────────────────────────────────────────────────────────
@@ -976,10 +1001,60 @@ async def admin_upsert_catalog(
     body: MobileServerBody,
     _admin_id: int = Depends(require_admin),
 ) -> dict[str, Any]:
+    from api.crypto import encrypt_at_rest
+    from utils.ssh_config import build_passwordless_ssh_uri
+
     tier = (body.tier or "free").strip().lower()
+    protocol = (body.protocol or "vless").strip().lower()
     config_uri = (body.config_uri or "").strip() or None
     nodes_text = (body.nodes_text or "").strip() or None
-    if tier == "free":
+
+    ssh_host = (body.ssh_host or "").strip()
+    ssh_user = (body.ssh_user or "").strip()
+    ssh_sni = (body.ssh_sni or "").strip()
+    ssh_port = int(body.ssh_port or 443)
+    ssh_tls = True if body.ssh_tls is None else bool(body.ssh_tls)
+    ssh_allow_insecure = bool(body.ssh_allow_insecure) if body.ssh_allow_insecure is not None else False
+    ssh_password = body.ssh_password  # None vs "" — None/blank means keep on update
+    keep_ssh_password = False
+    ssh_password_enc: str | None = None
+
+    if protocol == "ssh":
+        nodes_text = None
+        if tier == "free" and ssh_allow_insecure:
+            raise HTTPException(
+                status_code=400,
+                detail="allowInsecure is not allowed on free SSH servers",
+            )
+        if not ssh_host or not ssh_user:
+            raise HTTPException(
+                status_code=400,
+                detail="SSH servers need ssh_host and ssh_user",
+            )
+        existing = await db.get_mobile_server(body.public_id)
+        pwd = (ssh_password or "").strip() if ssh_password is not None else ""
+        if pwd:
+            ssh_password_enc = encrypt_at_rest(pwd)
+        elif existing and (existing.get("ssh_password_enc") or "").strip():
+            keep_ssh_password = True
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="SSH password required (leave blank only when updating to keep existing)",
+            )
+        try:
+            config_uri = build_passwordless_ssh_uri(
+                host=ssh_host,
+                port=ssh_port,
+                username=ssh_user,
+                sni=ssh_sni or ssh_host,
+                tls=ssh_tls,
+                allow_insecure=ssh_allow_insecure,
+                name=body.name,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    elif tier == "free":
         # Prefer Available nodes as the free sub body. Fold a lone share URI into nodes.
         share = config_uri or ""
         share_low = share.lower()
@@ -1029,7 +1104,7 @@ async def admin_upsert_catalog(
         public_id=body.public_id,
         name=body.name,
         region=body.region,
-        protocol=body.protocol,
+        protocol=protocol,
         tier=tier,
         vpn_server_id=body.vpn_server_id,
         plan_id=body.plan_id,
@@ -1042,6 +1117,14 @@ async def admin_upsert_catalog(
         list_when_disabled=body.list_when_disabled,
         enabled=body.enabled,
         sort_order=body.sort_order,
+        ssh_host=ssh_host if protocol == "ssh" else "",
+        ssh_port=ssh_port if protocol == "ssh" else 443,
+        ssh_user=ssh_user if protocol == "ssh" else "",
+        ssh_password_enc=ssh_password_enc if protocol == "ssh" else None,
+        ssh_sni=ssh_sni if protocol == "ssh" else "",
+        ssh_tls=ssh_tls if protocol == "ssh" else True,
+        ssh_allow_insecure=ssh_allow_insecure if protocol == "ssh" else False,
+        keep_ssh_password=keep_ssh_password if protocol == "ssh" else False,
     )
     try:
         from services.sub_link import invalidate_subscription_cache
@@ -1333,11 +1416,15 @@ class DeviceExclusiveBody(BaseModel):
     region: str = Field(default="", max_length=16)
     protocol: str = Field(default="vless", max_length=32)
     note: str = Field(default="", max_length=256)
+    tier: str = Field(default="free", max_length=16)  # free | paid
     public_id: Optional[str] = Field(default=None, max_length=64)
     enabled: bool = True
 
 
 def _serialize_device_exclusive(row: dict[str, Any]) -> dict[str, Any]:
+    tier = (row.get("tier") or "free").strip().lower()
+    if tier not in ("free", "paid"):
+        tier = "free"
     return {
         "id": row.get("id"),
         "device_id": row.get("device_id") or "",
@@ -1347,6 +1434,7 @@ def _serialize_device_exclusive(row: dict[str, Any]) -> dict[str, Any]:
         "protocol": row.get("protocol") or "vless",
         "config_uri": row.get("config_uri") or "",
         "note": row.get("note") or "",
+        "tier": tier,
         "enabled": bool(row.get("enabled")),
         "created_at": row.get("created_at"),
         "updated_at": row.get("updated_at"),
@@ -1410,6 +1498,7 @@ async def admin_upsert_device_key(
             region=body.region,
             protocol=body.protocol,
             note=body.note,
+            tier=body.tier,
             public_id=body.public_id,
             enabled=body.enabled,
         )

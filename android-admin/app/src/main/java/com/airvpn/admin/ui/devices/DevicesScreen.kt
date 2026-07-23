@@ -14,6 +14,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -46,6 +48,7 @@ import com.airvpn.admin.ui.theme.Cyan
 import com.airvpn.admin.ui.theme.Ink
 import com.airvpn.admin.ui.theme.InkMuted
 import com.airvpn.admin.ui.theme.Navy
+import com.airvpn.admin.ui.theme.Success
 
 @Composable
 fun DevicesScreen(
@@ -152,7 +155,7 @@ fun DevicesScreen(
             if (keys.isEmpty()) {
                 item {
                     Text(
-                        "Paste a vless:// / ss:// key bound to a device UUID from Info → Device ID.",
+                        "Paste a vless:// / ss:// for a device UUID (Info → Device ID). Mark Free or Paid for the client list.",
                         color = InkMuted,
                     )
                 }
@@ -173,7 +176,7 @@ fun DevicesScreen(
                                 fontWeight = FontWeight.SemiBold,
                             )
                             Text(
-                                "${key.deviceId.take(22)}… · ${key.protocol.uppercase()}",
+                                "${key.tier.uppercase()} · ${key.deviceId.take(18)}… · ${key.protocol.uppercase()}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = InkMuted,
                                 maxLines = 1,
@@ -183,6 +186,10 @@ fun DevicesScreen(
                                 Text(key.note, style = MaterialTheme.typography.bodySmall, color = InkMuted)
                             }
                         }
+                        StatusChip(
+                            key.tier.uppercase(),
+                            if (key.tier.equals("paid", true)) StatusTone.Warning else StatusTone.Info,
+                        )
                         StatusChip(
                             if (key.enabled) "On" else "Off",
                             if (key.enabled) StatusTone.Success else StatusTone.Neutral,
@@ -253,12 +260,16 @@ private fun ExclusiveKeyDialog(
     var region by remember { mutableStateOf(initial.region) }
     var uri by remember { mutableStateOf(initial.configUri) }
     var note by remember { mutableStateOf(initial.note) }
+    var tier by remember {
+        mutableStateOf(if (initial.tier.equals("paid", true)) "paid" else "free")
+    }
     var enabled by remember { mutableStateOf(initial.enabled) }
 
     AdminDialog(
         onDismissRequest = onDismiss,
         title = title,
         eyebrow = "Device key",
+        subtitle = "Bought outside bot? Usually mark Free.",
         confirmLabel = "Save",
         onConfirm = {
             onSave(
@@ -268,14 +279,36 @@ private fun ExclusiveKeyDialog(
                     region = region.trim(),
                     configUri = uri.trim(),
                     note = note.trim(),
+                    tier = tier,
                     enabled = enabled,
                 ),
             )
         },
         dismissLabel = "Cancel",
         showDismiss = true,
-        maxContentHeight = 520,
+        maxContentHeight = 560,
     ) {
+        Text("Show in client as", style = MaterialTheme.typography.labelMedium, color = InkMuted)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = tier == "free",
+                onClick = { tier = "free" },
+                label = { Text("Free") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Cyan.copy(alpha = 0.2f),
+                    selectedLabelColor = Navy,
+                ),
+            )
+            FilterChip(
+                selected = tier == "paid",
+                onClick = { tier = "paid" },
+                label = { Text("Paid") },
+                colors = FilterChipDefaults.filterChipColors(
+                    selectedContainerColor = Success.copy(alpha = 0.2f),
+                    selectedLabelColor = Navy,
+                ),
+            )
+        }
         OutlinedTextField(
             value = deviceId,
             onValueChange = { deviceId = it.take(128) },

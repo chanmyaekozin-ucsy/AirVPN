@@ -264,6 +264,16 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
             "list_when_disabled",
             "ALTER TABLE mobile_servers ADD COLUMN list_when_disabled INTEGER NOT NULL DEFAULT 0",
         ),
+        ("ssh_host", "ALTER TABLE mobile_servers ADD COLUMN ssh_host TEXT NOT NULL DEFAULT ''"),
+        ("ssh_port", "ALTER TABLE mobile_servers ADD COLUMN ssh_port INTEGER NOT NULL DEFAULT 443"),
+        ("ssh_user", "ALTER TABLE mobile_servers ADD COLUMN ssh_user TEXT NOT NULL DEFAULT ''"),
+        ("ssh_password_enc", "ALTER TABLE mobile_servers ADD COLUMN ssh_password_enc TEXT"),
+        ("ssh_sni", "ALTER TABLE mobile_servers ADD COLUMN ssh_sni TEXT NOT NULL DEFAULT ''"),
+        ("ssh_tls", "ALTER TABLE mobile_servers ADD COLUMN ssh_tls INTEGER NOT NULL DEFAULT 1"),
+        (
+            "ssh_allow_insecure",
+            "ALTER TABLE mobile_servers ADD COLUMN ssh_allow_insecure INTEGER NOT NULL DEFAULT 0",
+        ),
     ):
         if col not in ms_cols:
             await db.execute(ddl)
@@ -378,6 +388,7 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
             protocol TEXT NOT NULL DEFAULT 'vless',
             config_uri TEXT NOT NULL,
             note TEXT NOT NULL DEFAULT '',
+            tier TEXT NOT NULL DEFAULT 'free',
             enabled INTEGER NOT NULL DEFAULT 1,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -406,6 +417,14 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
             ON admin_sessions(telegram_id);
         """
     )
+
+    # Exclusive keys: free/paid display tier (bought outside bot → often Free)
+    async with db.execute("PRAGMA table_info(device_exclusive_servers)") as cur:
+        excl_cols = {r[1] for r in await cur.fetchall()}
+    if "tier" not in excl_cols:
+        await db.execute(
+            "ALTER TABLE device_exclusive_servers ADD COLUMN tier TEXT NOT NULL DEFAULT 'free'"
+        )
 
 
 # ─── Users ───────────────────────────────────────────────────────────────────
@@ -1722,6 +1741,7 @@ async def upsert_device_exclusive_server(
     region: str = "",
     protocol: str = "vless",
     note: str = "",
+    tier: str = "free",
     public_id: str | None = None,
     enabled: bool = True,
 ) -> dict[str, Any]:
@@ -1746,14 +1766,17 @@ async def upsert_device_exclusive_server(
         proto = "ss"
     elif low.startswith("vmess://"):
         proto = "vmess"
+    tier_norm = (tier or "free").strip().lower()
+    if tier_norm not in ("free", "paid"):
+        raise ValueError("tier must be free or paid")
     pid = (public_id or "").strip() or _new_excl_public_id()
     now = mmt_now().isoformat()
     async with _db() as db:
         await db.execute(
             """INSERT INTO device_exclusive_servers
                (device_id, public_id, name, region, protocol, config_uri, note,
-                enabled, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                tier, enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(public_id) DO UPDATE SET
                  device_id = excluded.device_id,
                  name = excluded.name,
@@ -1761,6 +1784,7 @@ async def upsert_device_exclusive_server(
                  protocol = excluded.protocol,
                  config_uri = excluded.config_uri,
                  note = excluded.note,
+                 tier = excluded.tier,
                  enabled = excluded.enabled,
                  updated_at = excluded.updated_at
             """,
@@ -1772,6 +1796,7 @@ async def upsert_device_exclusive_server(
                 proto,
                 uri,
                 (note or "").strip()[:256],
+                tier_norm,
                 1 if enabled else 0,
                 now,
                 now,
@@ -2016,15 +2041,30 @@ async def upsert_mobile_server(
     list_when_disabled: bool = False,
     enabled: bool = True,
     sort_order: int = 0,
+    ssh_host: str = "",
+    ssh_port: int = 443,
+    ssh_user: str = "",
+    ssh_password_enc: str | None = None,
+    ssh_sni: str = "",
+    ssh_tls: bool = True,
+    ssh_allow_insecure: bool = False,
+    keep_ssh_password: bool = False,
 ) -> dict[str, Any]:
+    existing = await get_mobile_server(public_id)
+    password_enc = ssh_password_enc
+    if keep_ssh_password and existing:
+        password_enc = existing.get("ssh_password_enc")
     async with _db() as db:
         await db.execute(
             """INSERT INTO mobile_servers
                (public_id, name, region, protocol, tier, vpn_server_id, plan_id,
                 config_uri, nodes_text, manual_total_bytes, manual_upload_bytes,
                 manual_download_bytes, manual_expire_at, list_when_disabled,
-                enabled, sort_order)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                enabled, sort_order,
+                ssh_host, ssh_port, ssh_user, ssh_password_enc, ssh_sni,
+                ssh_tls, ssh_allow_insecure)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                       ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(public_id) DO UPDATE SET
                  name = excluded.name,
                  region = excluded.region,
@@ -2040,7 +2080,14 @@ async def upsert_mobile_server(
                  manual_expire_at = excluded.manual_expire_at,
                  list_when_disabled = excluded.list_when_disabled,
                  enabled = excluded.enabled,
-                 sort_order = excluded.sort_order
+                 sort_order = excluded.sort_order,
+                 ssh_host = excluded.ssh_host,
+                 ssh_port = excluded.ssh_port,
+                 ssh_user = excluded.ssh_user,
+                 ssh_password_enc = excluded.ssh_password_enc,
+                 ssh_sni = excluded.ssh_sni,
+                 ssh_tls = excluded.ssh_tls,
+                 ssh_allow_insecure = excluded.ssh_allow_insecure
             """,
             (
                 public_id,
@@ -2059,6 +2106,13 @@ async def upsert_mobile_server(
                 1 if list_when_disabled else 0,
                 1 if enabled else 0,
                 sort_order,
+                (ssh_host or "").strip(),
+                int(ssh_port or 443),
+                (ssh_user or "").strip(),
+                password_enc,
+                (ssh_sni or "").strip(),
+                1 if ssh_tls else 0,
+                1 if ssh_allow_insecure else 0,
             ),
         )
         await db.commit()

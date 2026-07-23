@@ -113,6 +113,13 @@ data class CatalogServer(
     val manualUsedGb: Double? = null,
     val manualExpireAt: Long? = null,
     val listWhenDisabled: Boolean = false,
+    val sshHost: String = "",
+    val sshPort: Int = 443,
+    val sshUser: String = "",
+    val sshSni: String = "",
+    val sshTls: Boolean = true,
+    val sshAllowInsecure: Boolean = false,
+    val sshPasswordSet: Boolean = false,
 )
 
 data class AdItem(
@@ -179,7 +186,7 @@ data class AppConfigSettings(
     val updatedAt: String? = null,
 )
 
-/** Exclusive share key bound to one device UUID. */
+/** Exclusive share key bound to one device UUID (shown as free or paid). */
 data class DeviceExclusiveKey(
     val id: Int = 0,
     val deviceId: String = "",
@@ -189,6 +196,8 @@ data class DeviceExclusiveKey(
     val protocol: String = "vless",
     val configUri: String = "",
     val note: String = "",
+    /** free | paid — list section on the client. */
+    val tier: String = "free",
     val enabled: Boolean = true,
     val createdAt: String? = null,
     val updatedAt: String? = null,
