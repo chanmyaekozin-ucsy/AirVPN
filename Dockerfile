@@ -31,13 +31,13 @@ ENV ENV=production \
     KBZ_SESSION_PATH=/data/kbz/kbz_session.json \
     SUB_SERVER_PORT=9090 \
     MOBILE_API_PORT=9090 \
-    MOBILE_API_PUBLIC_BASE=https://airvpn.flash-myanmar.com
+    MOBILE_API_PUBLIC_BASE=https://airnetwork.flash-myanmar.com
 
 # Mount:
 #   - private volume at /data for SQLite (airvpn.sqlite3) + ad images (/data/ads)
 #   - shared host path /data/kbz → /data/kbz for merchant kbz_session.json
 #     (same file as Cloud Game Shop + Donimate Payment Manager)
-# Expose port 9090 (nginx: airvpn.flash-myanmar.com → 127.0.0.1:9090)
+# Expose port 9090 (nginx: airnetwork.flash-myanmar.com → 127.0.0.1:9090)
 # for mobile API (/v1/*, /admin/login) + subscription (/sub/...).
 # Set SUB_PUBLIC_BASE_URL for subscription links.
 CMD ["/app/entrypoint.sh"]

@@ -18,7 +18,7 @@ android {
             // Match libv2ray.aar ABIs
             abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
-        buildConfigField("String", "API_BASE_URL", "\"https://airvpn.flash-myanmar.com/\"")
+        buildConfigField("String", "API_BASE_URL", "\"https://airnetwork.flash-myanmar.com/\"")
         // Must match server MOBILE_CONFIG_KEY (sha256 of secret is used for AES)
         buildConfigField(
             "String",

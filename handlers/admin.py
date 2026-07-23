@@ -164,7 +164,7 @@ async def admin_login_otp(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     tid = int(update.effective_user.id)
     await db.store_admin_login_otp(tid, code, ttl_sec=300)
 
-    base = (config.MOBILE_API_PUBLIC_BASE or "https://airvpn.flash-myanmar.com").rstrip(
+    base = (config.MOBILE_API_PUBLIC_BASE or "https://airnetwork.flash-myanmar.com").rstrip(
         "/"
     )
     qs = urlencode({"tid": tid, "code": code})

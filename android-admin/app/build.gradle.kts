@@ -14,7 +14,7 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0.0"
-        buildConfigField("String", "API_BASE_URL", "\"https://airvpn.flash-myanmar.com/\"")
+        buildConfigField("String", "API_BASE_URL", "\"https://airnetwork.flash-myanmar.com/\"")
         buildConfigField("String", "TELEGRAM_BOT_URL", "\"https://t.me/airvpn_myanmar_bot\"")
     }
 

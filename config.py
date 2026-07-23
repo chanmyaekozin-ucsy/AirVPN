@@ -89,7 +89,13 @@ UNLIMITED_PLAN_DAYS: int = int(os.getenv("UNLIMITED_PLAN_DAYS", "36500"))
 MMT_OFFSET_HOURS: float = 6.5
 
 # Per-user VPN subscription URL (v2rayNG / Hiddify auto-update + usage display)
-SUB_PUBLIC_BASE_URL: str = os.getenv("SUB_PUBLIC_BASE_URL", "").rstrip("/")
+# Falls back to MOBILE_API_PUBLIC_BASE / airnetwork host when unset.
+SUB_PUBLIC_BASE_URL: str = (
+    os.getenv("SUB_PUBLIC_BASE_URL", "").rstrip("/")
+    or os.getenv(
+        "MOBILE_API_PUBLIC_BASE", "https://airnetwork.flash-myanmar.com"
+    ).rstrip("/")
+)
 SUB_SERVER_HOST: str = os.getenv("SUB_SERVER_HOST", "0.0.0.0")
 SUB_SERVER_PORT: int = int(os.getenv("SUB_SERVER_PORT", "9090"))
 SUB_ENABLED: bool = bool(SUB_PUBLIC_BASE_URL)
@@ -110,7 +116,7 @@ AIRVPN_BUY_DEEP_LINK: str = os.getenv(
 ).strip()
 # Public HTTPS base for Admin deep-link buttons (Telegram requires http/https URLs)
 MOBILE_API_PUBLIC_BASE: str = os.getenv(
-    "MOBILE_API_PUBLIC_BASE", "https://airvpn.flash-myanmar.com"
+    "MOBILE_API_PUBLIC_BASE", "https://airnetwork.flash-myanmar.com"
 ).rstrip("/")
 MOBILE_CONFIG_KEY: str = os.getenv("MOBILE_CONFIG_KEY", "").strip()
 MOBILE_API_HOST: str = os.getenv("MOBILE_API_HOST", "0.0.0.0")

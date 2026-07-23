@@ -16,7 +16,7 @@ python -m api.main
 
 Default: `http://0.0.0.0:8081`
 
-Production host: `https://airvpn.flash-myanmar.com/` (Android `API_BASE_URL`).
+Production host: `https://airnetwork.flash-myanmar.com/` (Android `API_BASE_URL`).
 
 ### Admin app
 
@@ -92,7 +92,7 @@ ad del summer
 
 Open `android/` in Android Studio. Set:
 
-- `API_BASE_URL` in `app/build.gradle.kts` (production: `https://airvpn.flash-myanmar.com/`; emulator local: `http://10.0.2.2:8081/`)
+- `API_BASE_URL` in `app/build.gradle.kts` (production: `https://airnetwork.flash-myanmar.com/`; emulator local: `http://10.0.2.2:8081/`)
 - `CONFIG_KEY_MATERIAL` to match `MOBILE_CONFIG_KEY`
 
 Screens: **Main** / **Servers** (Import + Refresh) / **Info**.
