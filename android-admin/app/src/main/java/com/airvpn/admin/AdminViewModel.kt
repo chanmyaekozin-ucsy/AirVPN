@@ -719,29 +719,52 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         days: Int,
         remark: String = "",
     ) {
+        issueCatalogKeys(listOf(serverId), dataGb, days, remark)
+    }
+
+    fun issueCatalogKeys(
+        serverIds: List<String>,
+        dataGb: Double,
+        days: Int,
+        remark: String = "",
+    ) {
+        val ids = serverIds.map { it.trim().lowercase() }.filter { it.isNotBlank() }.distinct()
+        if (ids.isEmpty()) return
         viewModelScope.launch {
             _state.update { it.copy(issuingCatalogKey = true, error = null) }
+            val created = mutableListOf<String>()
+            val labels = mutableListOf<String>()
             try {
-                val res = api.issueCatalogKey(
-                    auth(),
-                    CatalogIssueKeyBody(
-                        serverId = serverId,
-                        dataGb = dataGb,
-                        days = days,
-                        remark = remark,
-                    ),
-                )
+                for (sid in ids) {
+                    val res = api.issueCatalogKey(
+                        auth(),
+                        CatalogIssueKeyBody(
+                            serverId = sid,
+                            dataGb = dataGb,
+                            days = days,
+                            remark = if (remark.isBlank()) "catalog-$sid" else "$remark-$sid",
+                        ),
+                    )
+                    val key = res.vlessKey.trim()
+                    if (key.isNotBlank()) {
+                        created += key
+                        labels += sid + if (res.enabled) "" else "(off)"
+                    }
+                }
                 _state.update {
                     it.copy(
                         issuingCatalogKey = false,
-                        issuedCatalogKey = res.vlessKey,
-                        message = "VLESS created on ${res.serverId}" +
-                            if (res.enabled) "" else " (disabled node)",
+                        issuedCatalogKey = created.joinToString("\n"),
+                        message = "Created ${created.size} VLESS key(s): ${labels.joinToString(", ")}",
                     )
                 }
             } catch (e: Exception) {
                 _state.update {
-                    it.copy(issuingCatalogKey = false, error = "issue key: ${errMsg(e)}")
+                    it.copy(
+                        issuingCatalogKey = false,
+                        issuedCatalogKey = created.joinToString("\n").ifBlank { null },
+                        error = "issue key: ${errMsg(e)}",
+                    )
                 }
             }
         }

@@ -71,7 +71,7 @@ fun CatalogScreen(
         enabled: Boolean,
         sortOrder: Int,
     ) -> Unit,
-    onIssueKey: (serverId: String, dataGb: Double, days: Int, remark: String) -> Unit,
+    onIssueKey: (serverIds: List<String>, dataGb: Double, days: Int, remark: String) -> Unit,
     onConsumeIssuedKey: () -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onDelete: (String) -> Unit,
@@ -230,7 +230,7 @@ private fun CatalogDialog(
     issuedKey: String?,
     issuingKey: Boolean,
     onDismiss: () -> Unit,
-    onIssueKey: (serverId: String, dataGb: Double, days: Int, remark: String) -> Unit,
+    onIssueKey: (serverIds: List<String>, dataGb: Double, days: Int, remark: String) -> Unit,
     onConsumeIssuedKey: () -> Unit,
     onSave: (
         String,
@@ -266,19 +266,32 @@ private fun CatalogDialog(
     var listWhenDisabled by remember { mutableStateOf(initial?.listWhenDisabled ?: false) }
     var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
     var sort by remember { mutableStateOf(initial?.sortOrder?.toString() ?: "0") }
-    var selectedNode by remember {
-        mutableStateOf(vpnNodes.firstOrNull { it.panelConfigured }?.id ?: vpnNodes.firstOrNull()?.id.orEmpty())
+    var selectedNodes by remember {
+        mutableStateOf(
+            vpnNodes.filter { it.panelConfigured }.map { it.id }.take(2).toSet()
+                .ifEmpty { vpnNodes.firstOrNull()?.id?.let { setOf(it) }.orEmpty() },
+        )
     }
-    var placeAs by remember { mutableStateOf("nodes") } // "nodes" | "config"
 
     LaunchedEffect(issuedKey) {
-        val key = issuedKey?.trim().orEmpty()
-        if (key.isBlank()) return@LaunchedEffect
-        if (placeAs == "config" || (uri.isBlank() && nodes.isBlank())) {
-            uri = key
-        } else {
-            nodes = if (nodes.isBlank()) key else nodes.trimEnd() + "\n" + key
+        val chunk = issuedKey?.trim().orEmpty()
+        if (chunk.isBlank()) return@LaunchedEffect
+        // Multi-node free sub: always append into Available nodes (one catalog sub link)
+        val existingShare = uri.trim().takeIf {
+            it.startsWith("vless://", ignoreCase = true) || it.startsWith("ss://", ignoreCase = true)
         }
+        var merged = nodes.trim()
+        if (!existingShare.isNullOrBlank() && !merged.contains(existingShare)) {
+            merged = if (merged.isBlank()) existingShare else "$existingShare\n$merged"
+            uri = ""
+        }
+        for (line in chunk.split('\n')) {
+            val key = line.trim()
+            if (key.isBlank()) continue
+            if (merged.contains(key)) continue
+            merged = if (merged.isBlank()) key else "$merged\n$key"
+        }
+        nodes = merged
         if (dataGb.isBlank()) dataGb = "50"
         if (expireDays.isBlank() && expireDate.isBlank()) expireDays = "30"
         onConsumeIssuedKey()
@@ -288,7 +301,7 @@ private fun CatalogDialog(
         onDismissRequest = onDismiss,
         title = if (initial == null) "Add server" else "Edit server",
         eyebrow = "App catalog",
-        subtitle = "Free: create VLESS from VPN nodes, or paste https:// / vless://",
+        subtitle = "Pick SG + US (etc), create keys → one free sub with all nodes",
         confirmLabel = "Save",
         maxContentHeight = 560,
         onConfirm = confirm@{
@@ -341,7 +354,7 @@ private fun CatalogDialog(
         )
 
         Text(
-            "Create VLESS from VPN node (includes disabled)",
+            "Create VLESS keys from VPN nodes → Available nodes (one free sub)",
             style = MaterialTheme.typography.labelMedium,
             color = InkMuted,
         )
@@ -352,8 +365,13 @@ private fun CatalogDialog(
                 color = InkMuted,
             )
         } else {
+            Text(
+                "Tap to multi-select (e.g. SG1 + US1). Disabled nodes allowed.",
+                style = MaterialTheme.typography.labelSmall,
+                color = InkMuted,
+            )
             vpnNodes.forEach { node ->
-                val selected = selectedNode == node.id
+                val selected = node.id in selectedNodes
                 val label = buildString {
                     append(node.id.uppercase())
                     append(" · ")
@@ -363,8 +381,15 @@ private fun CatalogDialog(
                 }
                 AdminOutlinedButton(
                     text = if (selected) "✓ $label" else label,
-                    onClick = { selectedNode = node.id },
+                    onClick = {
+                        selectedNodes = if (selected) {
+                            selectedNodes - node.id
+                        } else {
+                            selectedNodes + node.id
+                        }
+                    },
                     compact = true,
+                    enabled = node.panelConfigured,
                     contentColor = when {
                         selected -> Cyan
                         !node.enabled -> InkMuted
@@ -372,31 +397,21 @@ private fun CatalogDialog(
                     },
                 )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AdminOutlinedButton(
-                    text = if (placeAs == "nodes") "→ Nodes list" else "Place in nodes",
-                    onClick = { placeAs = "nodes" },
-                    compact = true,
-                    contentColor = if (placeAs == "nodes") Cyan else Ink,
-                )
-                AdminOutlinedButton(
-                    text = if (placeAs == "config") "→ Config URI" else "Place as config",
-                    onClick = { placeAs = "config" },
-                    compact = true,
-                    contentColor = if (placeAs == "config") Cyan else Ink,
-                )
-            }
             AdminPrimaryButton(
-                text = if (issuingKey) "Creating…" else "Create VLESS on node",
+                text = when {
+                    issuingKey -> "Creating…"
+                    selectedNodes.isEmpty() -> "Select nodes first"
+                    else -> "Create ${selectedNodes.size} VLESS key(s)"
+                },
                 onClick = {
-                    val sid = selectedNode.ifBlank { return@AdminPrimaryButton }
+                    if (selectedNodes.isEmpty() || issuingKey) return@AdminPrimaryButton
                     val gb = dataGb.toDoubleOrNull() ?: 50.0
                     val days = expireDays.toIntOrNull()
                         ?: ((initial?.manualExpireAt?.let {
                             ((it - System.currentTimeMillis() / 1000L) / 86400L).toInt().coerceAtLeast(1)
                         }) ?: 30)
-                    val remark = name.ifBlank { id }.ifBlank { "catalog-$sid" }
-                    onIssueKey(sid, gb, days.coerceAtLeast(1), remark)
+                    val remark = name.ifBlank { id }.ifBlank { "catalog" }
+                    onIssueKey(selectedNodes.toList(), gb, days.coerceAtLeast(1), remark)
                 },
                 compact = true,
             )
@@ -404,8 +419,8 @@ private fun CatalogDialog(
 
         OutlinedTextField(
             uri, { uri = it },
-            label = { Text("Config: vless:// or https:// sub (optional)") },
-            placeholder = { Text("Leave blank if using nodes below") },
+            label = { Text("Config: https:// sub only (optional)") },
+            placeholder = { Text("Leave blank when using Available nodes") },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
             colors = adminFieldColors(),
@@ -413,8 +428,8 @@ private fun CatalogDialog(
         )
         OutlinedTextField(
             nodes, { nodes = it },
-            label = { Text("Available nodes (one vless:// or ss:// per line)") },
-            placeholder = { Text("vless://…\nss://…") },
+            label = { Text("Available nodes (one vless:// per line = free sub)") },
+            placeholder = { Text("vless://…sg…\nvless://…us…") },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
             colors = adminFieldColors(),
@@ -427,7 +442,7 @@ private fun CatalogDialog(
         )
         OutlinedTextField(
             dataGb, { dataGb = it },
-            label = { Text("Data limit GB") },
+            label = { Text("Data limit GB (panel + app display)") },
             placeholder = { Text("e.g. 50") },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),

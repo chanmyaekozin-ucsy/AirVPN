@@ -964,6 +964,17 @@ async def admin_upsert_catalog(
     config_uri = (body.config_uri or "").strip() or None
     nodes_text = (body.nodes_text or "").strip() or None
     if tier == "free":
+        # Prefer Available nodes as the free sub body. Fold a lone share URI into nodes.
+        share = config_uri or ""
+        share_low = share.lower()
+        if share_low.startswith("vless://") or share_low.startswith("ss://"):
+            if nodes_text:
+                if share not in nodes_text:
+                    nodes_text = f"{share}\n{nodes_text}"
+                config_uri = None
+            elif "\n" in share or share.count("vless://") + share.count("ss://") > 1:
+                nodes_text = share
+                config_uri = None
         has_share = False
         if config_uri:
             low = config_uri.lower()

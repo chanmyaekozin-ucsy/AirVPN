@@ -358,8 +358,8 @@ private fun AdminRoot(vm: AdminViewModel) {
                                     loadingMore = state.catalogLoadingMore,
                                     canLoadMore = state.catalogCanLoadMore,
                                     onSave = vm::saveCatalog,
-                                    onIssueKey = { sid, gb, days, remark ->
-                                        vm.issueCatalogKey(sid, gb, days, remark)
+                                    onIssueKey = { ids, gb, days, remark ->
+                                        vm.issueCatalogKeys(ids, gb, days, remark)
                                     },
                                     onConsumeIssuedKey = vm::consumeIssuedCatalogKey,
                                     onToggle = vm::setCatalogEnabled,
