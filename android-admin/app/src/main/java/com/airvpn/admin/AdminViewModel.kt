@@ -7,6 +7,7 @@ import com.airvpn.admin.data.api.AccountBody
 import com.airvpn.admin.data.api.AdBody
 import com.airvpn.admin.data.api.AdPatchBody
 import com.airvpn.admin.data.api.ApiFactory
+import com.airvpn.admin.data.api.AppConfigBody
 import com.airvpn.admin.data.api.BanBody
 import com.airvpn.admin.data.api.BroadcastBody
 import com.airvpn.admin.data.api.CatalogBody
@@ -21,6 +22,7 @@ import com.airvpn.admin.data.api.VpnNodeBody
 import com.airvpn.admin.data.local.SessionStore
 import com.airvpn.admin.data.model.AdItem
 import com.airvpn.admin.data.model.AdminStats
+import com.airvpn.admin.data.model.AppConfigSettings
 import com.airvpn.admin.data.model.AudienceCounts
 import com.airvpn.admin.data.model.CatalogServer
 import com.airvpn.admin.data.model.NotificationItem
@@ -73,6 +75,8 @@ data class AdminUiState(
     val adsPage: Int = 0,
     val adsTotalPages: Int = 1,
     val adsLoadingMore: Boolean = false,
+    val appConfig: AppConfigSettings? = null,
+    val appConfigSaving: Boolean = false,
     val notifyAudience: String = "all",
     val notifyMessage: String = "",
     val notifySending: Boolean = false,
@@ -321,6 +325,14 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
                                 }
                             }.onFailure { e ->
                                 _state.update { it.copy(error = "ads: ${errMsg(e)}") }
+                            }
+                        },
+                        async {
+                            runCatching {
+                                val wrap = api.appConfig(auth())
+                                _state.update { it.copy(appConfig = wrap.config.toModel()) }
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "app-config: ${errMsg(e)}") }
                             }
                         },
                         async {
@@ -914,6 +926,47 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         )
         _state.update { it.copy(message = "Ad saved") }
         refreshAds()
+    }
+
+    fun refreshAppConfig() = launch("appConfig") {
+        val wrap = api.appConfig(auth())
+        _state.update { it.copy(appConfig = wrap.config.toModel()) }
+    }
+
+    fun saveAppConfig(cfg: AppConfigSettings) {
+        viewModelScope.launch {
+            _state.update { it.copy(appConfigSaving = true, error = null) }
+            try {
+                val wrap = api.putAppConfig(
+                    auth(),
+                    AppConfigBody(
+                        minVersionCode = cfg.minVersionCode,
+                        latestVersionCode = cfg.latestVersionCode,
+                        latestVersionName = cfg.latestVersionName,
+                        forceUpdate = cfg.forceUpdate,
+                        changelog = cfg.changelog,
+                        maintenance = cfg.maintenance,
+                        maintenanceMessage = cfg.maintenanceMessage,
+                        telegramUrl = cfg.telegramUrl,
+                        playUrl = cfg.playUrl,
+                        updateUrl = cfg.updateUrl,
+                        buyUrl = cfg.buyUrl,
+                        privacyUrl = cfg.privacyUrl,
+                    ),
+                )
+                _state.update {
+                    it.copy(
+                        appConfigSaving = false,
+                        appConfig = wrap.config.toModel(),
+                        message = "App config saved",
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(appConfigSaving = false, error = "app-config: ${errMsg(e)}")
+                }
+            }
+        }
     }
 
     fun setAdEnabled(id: String, enabled: Boolean) = launch("adEnabled") {

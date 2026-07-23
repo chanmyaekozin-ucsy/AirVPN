@@ -97,6 +97,34 @@ async def lifespan(_app: FastAPI):
         await ensure_vpn_nodes_seeded()
     except Exception:
         logger.exception("VPN node seed on API startup failed")
+    try:
+        file_cfg = _load_mobile_app_file()
+        await db.ensure_mobile_app_settings_seeded(
+            defaults={
+                "min_version_code": int(file_cfg.get("min_version_code") or 1),
+                "latest_version_code": int(
+                    file_cfg.get("latest_version_code")
+                    or file_cfg.get("min_version_code")
+                    or 1
+                ),
+                "latest_version_name": str(
+                    file_cfg.get("latest_version_name") or "1.0.0"
+                ),
+                "force_update": bool(file_cfg.get("force_update")),
+                "changelog": str(file_cfg.get("changelog") or ""),
+                "maintenance": os.getenv("AIRVPN_MAINTENANCE", "false").lower()
+                in ("1", "true", "yes"),
+                "telegram_url": _telegram_url(),
+                "play_url": _play_url(),
+                "update_url": os.getenv("AIRVPN_UPDATE_URL", "").strip() or _telegram_url(),
+                "buy_url": _buy_bot_url(),
+                "privacy_url": os.getenv(
+                    "AIRVPN_PRIVACY_URL", "https://airvpn.app/privacy"
+                ).strip(),
+            }
+        )
+    except Exception:
+        logger.exception("mobile_app_settings seed failed")
     yield
 
 
@@ -899,31 +927,97 @@ async def subscription(token: str) -> Response:
 
 @app.get("/v1/app/config")
 async def app_config(request: Request) -> dict[str, Any]:
+    """
+    Client bootstrap config. Admin-editable DB settings win; file/env fill blanks.
+    """
     file_cfg = _load_mobile_app_file()
-    min_code = int(
-        os.getenv(
-            "AIRVPN_MIN_VERSION_CODE",
-            str(file_cfg.get("min_version_code", 1)),
+    try:
+        settings = await db.get_mobile_app_settings()
+    except Exception:
+        logger.exception("get_mobile_app_settings failed")
+        settings = {}
+
+    def _int_setting(key: str, default: int) -> int:
+        if settings.get(key) is not None:
+            try:
+                return int(settings[key])
+            except (TypeError, ValueError):
+                pass
+        env_key = {
+            "min_version_code": "AIRVPN_MIN_VERSION_CODE",
+            "latest_version_code": "AIRVPN_LATEST_VERSION_CODE",
+        }.get(key)
+        if env_key and os.getenv(env_key):
+            try:
+                return int(os.getenv(env_key) or default)
+            except (TypeError, ValueError):
+                pass
+        try:
+            return int(file_cfg.get(key, default) or default)
+        except (TypeError, ValueError):
+            return default
+
+    def _str_setting(key: str, *fallbacks: str) -> str:
+        raw = settings.get(key)
+        if isinstance(raw, str) and raw.strip():
+            return raw.strip()
+        env_map = {
+            "latest_version_name": "AIRVPN_LATEST_VERSION_NAME",
+            "changelog": "AIRVPN_CHANGELOG",
+            "telegram_url": "AIRVPN_TELEGRAM_URL",
+            "play_url": "AIRVPN_PLAY_URL",
+            "update_url": "AIRVPN_UPDATE_URL",
+            "buy_url": "AIRVPN_BUY_DEEP_LINK",
+            "privacy_url": "AIRVPN_PRIVACY_URL",
+            "maintenance_message": "AIRVPN_MAINTENANCE_MESSAGE",
+        }
+        env_name = env_map.get(key)
+        if env_name:
+            env_val = os.getenv(env_name, "").strip()
+            if env_val:
+                return env_val
+        file_val = str(file_cfg.get(key) or "").strip()
+        if file_val:
+            return file_val
+        for fb in fallbacks:
+            if fb:
+                return fb
+        return ""
+
+    min_code = _int_setting("min_version_code", 1)
+    latest_code = max(_int_setting("latest_version_code", min_code), min_code)
+    latest_name = _str_setting("latest_version_name", "1.0.0") or "1.0.0"
+    changelog = _str_setting("changelog")
+
+    if "force_update" in settings and settings.get("force_update") is not None:
+        force = bool(settings.get("force_update"))
+    else:
+        force = os.getenv(
+            "AIRVPN_FORCE_UPDATE",
+            "true" if file_cfg.get("force_update") else "false",
+        ).lower() in ("1", "true", "yes")
+
+    if "maintenance" in settings and settings.get("maintenance") is not None:
+        maintenance = bool(settings.get("maintenance"))
+    else:
+        maintenance = os.getenv("AIRVPN_MAINTENANCE", "false").lower() in (
+            "1",
+            "true",
+            "yes",
         )
+
+    telegram_url = _str_setting("telegram_url", _telegram_url()) or _telegram_url()
+    play_url = _str_setting("play_url", _play_url()) or _play_url()
+    update_url = _str_setting("update_url", telegram_url) or telegram_url
+    buy_url = _str_setting("buy_url", _buy_bot_url()) or _buy_bot_url()
+    privacy_url = _str_setting(
+        "privacy_url", "https://airvpn.app/privacy"
+    ) or "https://airvpn.app/privacy"
+    maintenance_message = _str_setting(
+        "maintenance_message",
+        "AirVPN is under maintenance. Please try again later.",
     )
-    latest_code = int(
-        os.getenv(
-            "AIRVPN_LATEST_VERSION_CODE",
-            str(file_cfg.get("latest_version_code", min_code)),
-        )
-    )
-    latest_name = os.getenv(
-        "AIRVPN_LATEST_VERSION_NAME",
-        str(file_cfg.get("latest_version_name", "1.0.0")),
-    ).strip()
-    force = os.getenv(
-        "AIRVPN_FORCE_UPDATE",
-        "true" if file_cfg.get("force_update") else "false",
-    ).lower() in ("1", "true", "yes")
-    changelog = os.getenv(
-        "AIRVPN_CHANGELOG",
-        str(file_cfg.get("changelog") or ""),
-    ).strip()
+
     announcements = file_cfg.get("announcements") or []
     if not isinstance(announcements, list):
         announcements = []
@@ -935,14 +1029,13 @@ async def app_config(request: Request) -> dict[str, Any]:
         "latest_version_name": latest_name,
         "force_update": force,
         "changelog": changelog,
-        "telegram_url": _telegram_url(),
-        "play_url": _play_url(),
-        "buy_url": _buy_bot_url(),
-        "privacy_url": os.getenv(
-            "AIRVPN_PRIVACY_URL", "https://airvpn.app/privacy"
-        ).strip(),
-        "maintenance": os.getenv("AIRVPN_MAINTENANCE", "false").lower()
-        in ("1", "true", "yes"),
+        "telegram_url": telegram_url,
+        "play_url": play_url,
+        "update_url": update_url,
+        "buy_url": buy_url,
+        "privacy_url": privacy_url,
+        "maintenance": maintenance,
+        "maintenance_message": maintenance_message,
         "config_key_fp": key_fingerprint(),
         "deep_link_scheme": "airvpn",
         "announcements": [

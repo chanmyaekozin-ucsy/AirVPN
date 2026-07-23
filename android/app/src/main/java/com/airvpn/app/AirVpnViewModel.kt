@@ -56,6 +56,8 @@ data class AirUiState(
     val pendingAnnouncement: Announcement? = null,
     val updateAvailable: Boolean = false,
     val forceUpdate: Boolean = false,
+    /** Server-side maintenance — blocks connect like force update. */
+    val maintenanceMode: Boolean = false,
 ) {
     val subscription: SubscriptionInfo? get() = subscriptions.firstOrNull()
 
@@ -166,7 +168,8 @@ class AirVpnViewModel : ViewModel() {
         val hasNewer = current < latest
         val force = belowMin || (cfg.forceUpdate && hasNewer)
         val skipped = session?.updatePromptDismissedCode == latest
-        val showUpdate = hasNewer && (force || !skipped)
+        val showUpdate = !cfg.maintenance && hasNewer && (force || !skipped)
+        val maintenance = cfg.maintenance
 
         val pending = cfg.announcements
             .firstOrNull { a -> session?.isAnnouncementDismissed(a.id) != true }
@@ -175,8 +178,9 @@ class AirVpnViewModel : ViewModel() {
             it.copy(
                 appConfig = cfg,
                 updateAvailable = showUpdate,
-                forceUpdate = force,
-                pendingAnnouncement = if (showUpdate && force) null else pending,
+                forceUpdate = force && !maintenance,
+                maintenanceMode = maintenance,
+                pendingAnnouncement = if (maintenance || (showUpdate && force)) null else pending,
             )
         }
         // Prefetch banner + dialog creatives so connect doesn't wait on download
@@ -522,7 +526,7 @@ class AirVpnViewModel : ViewModel() {
     }
 
     fun skipUpdate() {
-        if (_ui.value.forceUpdate) return
+        if (_ui.value.forceUpdate || _ui.value.maintenanceMode) return
         val code = _ui.value.appConfig.latestVersionCode
         session?.updatePromptDismissedCode = code
         _ui.update {
@@ -534,10 +538,10 @@ class AirVpnViewModel : ViewModel() {
         }
     }
 
-    /** Open Play / Telegram listing for a store-style update (no APK sideload). */
+    /** Open update download (Telegram preferred) / Play listing. */
     fun openUpdatePage(context: Context) {
         val cfg = _ui.value.appConfig
-        val url = cfg.playUrl.ifBlank { cfg.telegramUrl }
+        val url = cfg.updateUrl.ifBlank { cfg.playUrl.ifBlank { cfg.telegramUrl } }
         openUrl(context, url)
     }
 

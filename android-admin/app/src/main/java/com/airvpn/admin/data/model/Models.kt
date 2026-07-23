@@ -161,3 +161,20 @@ data class AudienceCounts(
     val paid: Int = 0,
     val active: Int = 0,
 )
+
+/** Admin-editable consumer app settings (updates / maintenance / links). */
+data class AppConfigSettings(
+    val minVersionCode: Int = 1,
+    val latestVersionCode: Int = 1,
+    val latestVersionName: String = "1.0.0",
+    val forceUpdate: Boolean = false,
+    val changelog: String = "",
+    val maintenance: Boolean = false,
+    val maintenanceMessage: String = "",
+    val telegramUrl: String = "",
+    val playUrl: String = "",
+    val updateUrl: String = "",
+    val buyUrl: String = "",
+    val privacyUrl: String = "",
+    val updatedAt: String? = null,
+)

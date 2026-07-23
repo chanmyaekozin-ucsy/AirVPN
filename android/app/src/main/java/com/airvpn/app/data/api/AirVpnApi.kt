@@ -29,9 +29,11 @@ data class AppConfigDto(
     val changelog: String = "",
     @Json(name = "telegram_url") val telegramUrl: String = "",
     @Json(name = "play_url") val playUrl: String = "",
+    @Json(name = "update_url") val updateUrl: String = "",
     @Json(name = "buy_url") val buyUrl: String = "",
     @Json(name = "privacy_url") val privacyUrl: String = "",
     val maintenance: Boolean = false,
+    @Json(name = "maintenance_message") val maintenanceMessage: String = "",
     val announcements: List<AnnouncementDto> = emptyList(),
     val ads: List<AdDto> = emptyList(),
 )
@@ -189,9 +191,11 @@ fun AppConfigDto.toModel() = AppConfig(
     changelog = changelog,
     telegramUrl = telegramUrl,
     playUrl = playUrl,
+    updateUrl = updateUrl,
     buyUrl = buyUrl,
     privacyUrl = privacyUrl,
     maintenance = maintenance,
+    maintenanceMessage = maintenanceMessage,
     announcements = announcements.map { it.toModel() }.filter { it.id.isNotBlank() },
     ads = ads.map { it.toModel() }.filter { it.id.isNotBlank() && it.imageUrl.isNotBlank() },
 )

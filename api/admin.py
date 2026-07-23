@@ -199,6 +199,22 @@ class BroadcastBody(BaseModel):
     message: str = Field(min_length=1, max_length=3500)
 
 
+class AppConfigBody(BaseModel):
+    """Admin-editable mobile client config (updates + maintenance + download links)."""
+    min_version_code: int = Field(default=1, ge=1)
+    latest_version_code: int = Field(default=1, ge=1)
+    latest_version_name: str = Field(default="1.0.0", max_length=32)
+    force_update: bool = False
+    changelog: str = Field(default="", max_length=4000)
+    maintenance: bool = False
+    maintenance_message: str = Field(default="", max_length=1000)
+    telegram_url: str = Field(default="", max_length=512)
+    play_url: str = Field(default="", max_length=512)
+    update_url: str = Field(default="", max_length=512)
+    buy_url: str = Field(default="", max_length=512)
+    privacy_url: str = Field(default="", max_length=512)
+
+
 class AdPatchBody(BaseModel):
     placement: Optional[str] = Field(default=None, max_length=16)
     image_url: Optional[str] = Field(default=None, max_length=1024)
@@ -1254,6 +1270,57 @@ async def admin_broadcast_notification(
         "failed": failed,
         "targets": sent + failed,
     }
+
+
+# ─── Mobile app config (updates / maintenance / download links) ───────────────
+
+
+def _serialize_app_config(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "min_version_code": int(row.get("min_version_code") or 1),
+        "latest_version_code": int(row.get("latest_version_code") or 1),
+        "latest_version_name": str(row.get("latest_version_name") or "1.0.0"),
+        "force_update": bool(row.get("force_update")),
+        "changelog": str(row.get("changelog") or ""),
+        "maintenance": bool(row.get("maintenance")),
+        "maintenance_message": str(row.get("maintenance_message") or ""),
+        "telegram_url": str(row.get("telegram_url") or ""),
+        "play_url": str(row.get("play_url") or ""),
+        "update_url": str(row.get("update_url") or ""),
+        "buy_url": str(row.get("buy_url") or ""),
+        "privacy_url": str(row.get("privacy_url") or ""),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+@router.get("/app-config")
+async def admin_get_app_config(
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    row = await db.get_mobile_app_settings()
+    return {"config": _serialize_app_config(row)}
+
+
+@router.put("/app-config")
+async def admin_put_app_config(
+    body: AppConfigBody,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    row = await db.upsert_mobile_app_settings(
+        min_version_code=body.min_version_code,
+        latest_version_code=body.latest_version_code,
+        latest_version_name=body.latest_version_name,
+        force_update=body.force_update,
+        changelog=body.changelog,
+        maintenance=body.maintenance,
+        maintenance_message=body.maintenance_message,
+        telegram_url=body.telegram_url,
+        play_url=body.play_url,
+        update_url=body.update_url,
+        buy_url=body.buy_url,
+        privacy_url=body.privacy_url,
+    )
+    return {"status": "ok", "config": _serialize_app_config(row)}
 
 
 async def ensure_admin_seed() -> None:

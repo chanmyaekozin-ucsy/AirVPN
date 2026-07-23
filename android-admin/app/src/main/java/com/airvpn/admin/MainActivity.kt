@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
@@ -56,6 +57,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.airvpn.admin.ui.accounts.AccountsScreen
 import com.airvpn.admin.ui.ads.AdsScreen
+import com.airvpn.admin.ui.appconfig.AppConfigScreen
 import com.airvpn.admin.ui.catalog.CatalogScreen
 import com.airvpn.admin.ui.components.AdminBottomNav
 import com.airvpn.admin.ui.components.AdminNavItem
@@ -136,6 +138,7 @@ private enum class AdminTab(val label: String, val icon: ImageVector) {
     Servers("Plans", Icons.Outlined.Dns),
     Catalog("Catalog", Icons.AutoMirrored.Outlined.ListAlt),
     Ads("Ads", Icons.Outlined.Campaign),
+    App("App", Icons.Outlined.PhoneAndroid),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -245,6 +248,7 @@ private fun AdminRoot(vm: AdminViewModel) {
                         AdminTab.Notify -> false
                         AdminTab.Catalog -> state.catalog.isEmpty()
                         AdminTab.Ads -> state.ads.isEmpty()
+                        AdminTab.App -> state.appConfig == null
                     }
                     if (showShimmer) {
                         ShimmerList(count = 5, modifier = Modifier.fillMaxSize())
@@ -376,6 +380,12 @@ private fun AdminRoot(vm: AdminViewModel) {
                                     onDelete = vm::deleteAd,
                                     onUpload = vm::uploadAdImage,
                                     onLoadMore = vm::loadMoreAds,
+                                    modifier = mod,
+                                )
+                                AdminTab.App -> AppConfigScreen(
+                                    config = state.appConfig,
+                                    saving = state.appConfigSaving,
+                                    onSave = vm::saveAppConfig,
                                     modifier = mod,
                                 )
                             }

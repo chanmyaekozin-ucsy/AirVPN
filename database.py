@@ -350,6 +350,24 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_free_device_keys_device
             ON free_device_keys(device_id, parent_id);
 
+        -- Single-row mobile client config (updates, maintenance, download links).
+        CREATE TABLE IF NOT EXISTS mobile_app_settings (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            min_version_code INTEGER NOT NULL DEFAULT 1,
+            latest_version_code INTEGER NOT NULL DEFAULT 1,
+            latest_version_name TEXT NOT NULL DEFAULT '1.0.0',
+            force_update INTEGER NOT NULL DEFAULT 0,
+            changelog TEXT NOT NULL DEFAULT '',
+            maintenance INTEGER NOT NULL DEFAULT 0,
+            maintenance_message TEXT NOT NULL DEFAULT '',
+            telegram_url TEXT NOT NULL DEFAULT '',
+            play_url TEXT NOT NULL DEFAULT '',
+            update_url TEXT NOT NULL DEFAULT '',
+            buy_url TEXT NOT NULL DEFAULT '',
+            privacy_url TEXT NOT NULL DEFAULT '',
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE TABLE IF NOT EXISTS admin_login_otps (
             telegram_id INTEGER PRIMARY KEY,
             code_hash TEXT NOT NULL,
@@ -2037,6 +2055,151 @@ async def delete_mobile_ad(public_id: str) -> bool:
         )
         await db.commit()
         return cur.rowcount > 0
+
+
+_DEFAULT_APP_SETTINGS: dict[str, Any] = {
+    "min_version_code": 1,
+    "latest_version_code": 1,
+    "latest_version_name": "1.0.0",
+    "force_update": 0,
+    "changelog": "",
+    "maintenance": 0,
+    "maintenance_message": "",
+    "telegram_url": "",
+    "play_url": "",
+    "update_url": "",
+    "buy_url": "",
+    "privacy_url": "",
+}
+
+
+def _normalize_app_settings_row(row: dict[str, Any] | None) -> dict[str, Any]:
+    base = dict(_DEFAULT_APP_SETTINGS)
+    if row:
+        base.update(dict(row))
+    return {
+        "min_version_code": int(base.get("min_version_code") or 1),
+        "latest_version_code": int(base.get("latest_version_code") or 1),
+        "latest_version_name": str(base.get("latest_version_name") or "1.0.0").strip(),
+        "force_update": bool(int(base.get("force_update") or 0)),
+        "changelog": str(base.get("changelog") or ""),
+        "maintenance": bool(int(base.get("maintenance") or 0)),
+        "maintenance_message": str(base.get("maintenance_message") or ""),
+        "telegram_url": str(base.get("telegram_url") or "").strip(),
+        "play_url": str(base.get("play_url") or "").strip(),
+        "update_url": str(base.get("update_url") or "").strip(),
+        "buy_url": str(base.get("buy_url") or "").strip(),
+        "privacy_url": str(base.get("privacy_url") or "").strip(),
+        "updated_at": base.get("updated_at"),
+    }
+
+
+async def get_mobile_app_settings() -> dict[str, Any]:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT * FROM mobile_app_settings WHERE id = 1"
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                return _normalize_app_settings_row(dict(row))
+    return _normalize_app_settings_row(None)
+
+
+async def upsert_mobile_app_settings(**fields: Any) -> dict[str, Any]:
+    """Create or update the single mobile_app_settings row (id=1)."""
+    current = await get_mobile_app_settings()
+    merged = {
+        "min_version_code": int(
+            fields.get("min_version_code", current["min_version_code"]) or 1
+        ),
+        "latest_version_code": int(
+            fields.get("latest_version_code", current["latest_version_code"]) or 1
+        ),
+        "latest_version_name": str(
+            fields.get("latest_version_name", current["latest_version_name"]) or "1.0.0"
+        ).strip()[:32],
+        "force_update": 1 if fields.get(
+            "force_update", current["force_update"]
+        ) else 0,
+        "changelog": str(fields.get("changelog", current["changelog"]) or "")[:4000],
+        "maintenance": 1 if fields.get(
+            "maintenance", current["maintenance"]
+        ) else 0,
+        "maintenance_message": str(
+            fields.get("maintenance_message", current["maintenance_message"]) or ""
+        )[:1000],
+        "telegram_url": str(
+            fields.get("telegram_url", current["telegram_url"]) or ""
+        ).strip()[:512],
+        "play_url": str(fields.get("play_url", current["play_url"]) or "").strip()[:512],
+        "update_url": str(
+            fields.get("update_url", current["update_url"]) or ""
+        ).strip()[:512],
+        "buy_url": str(fields.get("buy_url", current["buy_url"]) or "").strip()[:512],
+        "privacy_url": str(
+            fields.get("privacy_url", current["privacy_url"]) or ""
+        ).strip()[:512],
+    }
+    if merged["latest_version_code"] < merged["min_version_code"]:
+        merged["latest_version_code"] = merged["min_version_code"]
+    now = mmt_now().isoformat()
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO mobile_app_settings (
+                 id, min_version_code, latest_version_code, latest_version_name,
+                 force_update, changelog, maintenance, maintenance_message,
+                 telegram_url, play_url, update_url, buy_url, privacy_url, updated_at
+               ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                 min_version_code = excluded.min_version_code,
+                 latest_version_code = excluded.latest_version_code,
+                 latest_version_name = excluded.latest_version_name,
+                 force_update = excluded.force_update,
+                 changelog = excluded.changelog,
+                 maintenance = excluded.maintenance,
+                 maintenance_message = excluded.maintenance_message,
+                 telegram_url = excluded.telegram_url,
+                 play_url = excluded.play_url,
+                 update_url = excluded.update_url,
+                 buy_url = excluded.buy_url,
+                 privacy_url = excluded.privacy_url,
+                 updated_at = excluded.updated_at
+            """,
+            (
+                merged["min_version_code"],
+                merged["latest_version_code"],
+                merged["latest_version_name"],
+                merged["force_update"],
+                merged["changelog"],
+                merged["maintenance"],
+                merged["maintenance_message"],
+                merged["telegram_url"],
+                merged["play_url"],
+                merged["update_url"],
+                merged["buy_url"],
+                merged["privacy_url"],
+                now,
+            ),
+        )
+        await db.commit()
+    return await get_mobile_app_settings()
+
+
+async def ensure_mobile_app_settings_seeded(
+    *,
+    defaults: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Insert defaults once if the settings row is missing."""
+    async with _db() as db:
+        async with db.execute(
+            "SELECT id FROM mobile_app_settings WHERE id = 1"
+        ) as cur:
+            if await cur.fetchone():
+                return await get_mobile_app_settings()
+    seed = dict(_DEFAULT_APP_SETTINGS)
+    if defaults:
+        seed.update({k: v for k, v in defaults.items() if v is not None})
+    return await upsert_mobile_app_settings(**seed)
 
 
 async def get_active_sub_for_vpn_server(

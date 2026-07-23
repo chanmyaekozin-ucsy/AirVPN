@@ -8,9 +8,11 @@ data class AppConfig(
     val changelog: String = "",
     val telegramUrl: String = "",
     val playUrl: String = "",
+    val updateUrl: String = "",
     val buyUrl: String = "",
     val privacyUrl: String = "",
     val maintenance: Boolean = false,
+    val maintenanceMessage: String = "",
     val announcements: List<Announcement> = emptyList(),
     val ads: List<AdCreative> = emptyList(),
 )

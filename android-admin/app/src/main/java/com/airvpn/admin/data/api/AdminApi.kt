@@ -30,6 +30,7 @@ import retrofit2.http.Header
 import retrofit2.http.Multipart
 import retrofit2.http.PATCH
 import retrofit2.http.POST
+import retrofit2.http.PUT
 import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
@@ -258,6 +259,15 @@ interface AdminApi {
         @Header("Authorization") auth: String,
         @Part file: MultipartBody.Part,
     ): UploadDto
+
+    @GET("v1/admin/app-config")
+    suspend fun appConfig(@Header("Authorization") auth: String): AppConfigWrapDto
+
+    @PUT("v1/admin/app-config")
+    suspend fun putAppConfig(
+        @Header("Authorization") auth: String,
+        @Body body: AppConfigBody,
+    ): AppConfigWrapDto
 
     @GET("v1/admin/notifications")
     suspend fun notifications(
@@ -709,6 +719,58 @@ data class AdsDto(
     val page: Int = 1,
     @Json(name = "per_page") val perPage: Int = 20,
     @Json(name = "total_pages") val totalPages: Int = 1,
+)
+
+data class AppConfigDto(
+    @Json(name = "min_version_code") val minVersionCode: Int = 1,
+    @Json(name = "latest_version_code") val latestVersionCode: Int = 1,
+    @Json(name = "latest_version_name") val latestVersionName: String = "1.0.0",
+    @Json(name = "force_update") val forceUpdate: Boolean = false,
+    val changelog: String = "",
+    val maintenance: Boolean = false,
+    @Json(name = "maintenance_message") val maintenanceMessage: String = "",
+    @Json(name = "telegram_url") val telegramUrl: String = "",
+    @Json(name = "play_url") val playUrl: String = "",
+    @Json(name = "update_url") val updateUrl: String = "",
+    @Json(name = "buy_url") val buyUrl: String = "",
+    @Json(name = "privacy_url") val privacyUrl: String = "",
+    @Json(name = "updated_at") val updatedAt: String? = null,
+) {
+    fun toModel() = com.airvpn.admin.data.model.AppConfigSettings(
+        minVersionCode = minVersionCode,
+        latestVersionCode = latestVersionCode,
+        latestVersionName = latestVersionName,
+        forceUpdate = forceUpdate,
+        changelog = changelog,
+        maintenance = maintenance,
+        maintenanceMessage = maintenanceMessage,
+        telegramUrl = telegramUrl,
+        playUrl = playUrl,
+        updateUrl = updateUrl,
+        buyUrl = buyUrl,
+        privacyUrl = privacyUrl,
+        updatedAt = updatedAt,
+    )
+}
+
+data class AppConfigBody(
+    @Json(name = "min_version_code") val minVersionCode: Int,
+    @Json(name = "latest_version_code") val latestVersionCode: Int,
+    @Json(name = "latest_version_name") val latestVersionName: String,
+    @Json(name = "force_update") val forceUpdate: Boolean,
+    val changelog: String,
+    val maintenance: Boolean,
+    @Json(name = "maintenance_message") val maintenanceMessage: String,
+    @Json(name = "telegram_url") val telegramUrl: String,
+    @Json(name = "play_url") val playUrl: String,
+    @Json(name = "update_url") val updateUrl: String,
+    @Json(name = "buy_url") val buyUrl: String,
+    @Json(name = "privacy_url") val privacyUrl: String,
+)
+
+data class AppConfigWrapDto(
+    val status: String? = null,
+    val config: AppConfigDto = AppConfigDto(),
 )
 data class AdWrapDto(val ad: AdDto)
 data class AdBody(
