@@ -248,6 +248,7 @@ def apply_servers(servers: dict[str, VpnServer]) -> None:
 
 
 _SERVERS: dict[str, VpnServer] = _load_servers_from_env()
+_last_db_reload_at: float = 0.0
 
 
 def reload_servers() -> None:
@@ -258,11 +259,15 @@ def reload_servers() -> None:
 
 async def reload_servers_from_db() -> None:
     """Prefer admin DB nodes; fall back to .env when the table is empty."""
+    global _last_db_reload_at
+    import time
+
     import database as db
 
     rows = await db.list_vpn_nodes(enabled_only=False)
     if not rows:
         reload_servers()
+        _last_db_reload_at = time.monotonic()
         return
 
     servers: dict[str, VpnServer] = {}
@@ -281,7 +286,29 @@ async def reload_servers_from_db() -> None:
         )
         servers[sid] = node_row_to_server(row, plans)
     apply_servers(servers)
+    _last_db_reload_at = time.monotonic()
     logger.info("Loaded %s VPN node(s) from database", len(servers))
+
+
+async def ensure_servers_fresh(*, max_age_sec: float = 5.0) -> None:
+    """
+    Reload VPN nodes from DB when the in-memory cache is stale.
+    Needed because Admin API and Telegram bot are separate processes;
+    disabling a node in Admin must hide it from the bot price list.
+    """
+    import time
+
+    age = time.monotonic() - _last_db_reload_at
+    if _last_db_reload_at > 0 and age < max_age_sec:
+        return
+    await reload_servers_from_db()
+
+
+def list_servers(*, include_disabled: bool = False) -> list[VpnServer]:
+    servers = sorted(_SERVERS.values(), key=lambda s: (s.sort_order, s.id))
+    if include_disabled:
+        return servers
+    return [s for s in servers if s.enabled]
 
 
 async def ensure_vpn_nodes_seeded() -> None:
@@ -346,13 +373,6 @@ async def ensure_vpn_nodes_seeded() -> None:
     await reload_servers_from_db()
 
 
-def list_servers(*, include_disabled: bool = False) -> list[VpnServer]:
-    servers = sorted(_SERVERS.values(), key=lambda s: (s.sort_order, s.id))
-    if include_disabled:
-        return servers
-    return [s for s in servers if s.enabled]
-
-
 def find_unlisted_server_ids() -> list[str]:
     """Env-defined server IDs that are missing from the active catalog."""
     listed = set(_SERVERS.keys())
@@ -398,13 +418,8 @@ def match_server_label(text: str) -> VpnServer | None:
     raw = normalize_server_label(text)
     if not raw:
         return None
+    # Only enabled nodes appear in the bot price list / buy flow.
     for server in list_servers():
-        if _labels_match(raw, server.name_en) or _labels_match(raw, server.name_my):
-            return server
-    for sid in find_unlisted_server_ids():
-        server = _load_server(sid)
-        if not server or not server.plans:
-            continue
         if _labels_match(raw, server.name_en) or _labels_match(raw, server.name_my):
             return server
     return None

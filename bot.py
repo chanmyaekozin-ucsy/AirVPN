@@ -30,7 +30,12 @@ logger = logging.getLogger("airvpn")
 
 async def post_init(application: Application) -> None:
     await db.init_db()
-    from vpn_servers import ensure_vpn_nodes_seeded, find_unlisted_server_ids, list_servers
+    from vpn_servers import (
+        ensure_vpn_nodes_seeded,
+        find_unlisted_server_ids,
+        list_servers,
+        reload_servers_from_db,
+    )
 
     await ensure_vpn_nodes_seeded()
     await db.sync_plans_from_env()
@@ -44,6 +49,17 @@ async def post_init(application: Application) -> None:
             ", ".join(unlisted),
         )
     logger.info("Database ready: %s", config.SQLITE_PATH)
+
+    async def _vpn_nodes_reload_loop() -> None:
+        # Keep bot price-list in sync when Admin toggles node enabled.
+        while True:
+            await asyncio.sleep(15)
+            try:
+                await reload_servers_from_db()
+            except Exception:
+                logger.exception("Periodic VPN node reload failed")
+
+    asyncio.create_task(_vpn_nodes_reload_loop())
 
     if config.ADMIN_TELEGRAM_IDS:
         from services.server_status_monitor import server_status_monitor_loop

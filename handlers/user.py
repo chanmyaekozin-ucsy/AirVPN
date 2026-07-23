@@ -481,6 +481,30 @@ async def _show_plans_for_server(
     server_id: str,
     context: ContextTypes.DEFAULT_TYPE | None = None,
 ) -> None:
+    from vpn_servers import ensure_servers_fresh, get_server, list_servers
+
+    await ensure_servers_fresh(max_age_sec=0)
+    server = get_server(server_id)
+    if not server or not server.enabled:
+        if context is not None:
+            context.user_data.pop("buy_server_id", None)
+        servers = list_servers()
+        if not servers:
+            await message.reply_text(
+                t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
+            )
+            return
+        if len(servers) == 1:
+            server_id = servers[0].id
+            server = servers[0]
+        else:
+            await message.reply_text(
+                t(lang, "server_not_in_list"),
+                parse_mode=PARSE_MODE,
+                reply_markup=servers_reply_keyboard(lang, servers),
+            )
+            return
+
     if context is not None:
         context.user_data["buy_flow"] = True
         context.user_data["buy_server_id"] = server_id
@@ -490,9 +514,6 @@ async def _show_plans_for_server(
             t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
         )
         return
-    from vpn_servers import get_server
-
-    server = get_server(server_id)
     server_name = md2(server.name(lang)) if server else md2(server_id.upper())
     await message.reply_text(
         t(lang, "plans_title_server", server=server_name),
@@ -533,12 +554,14 @@ async def server_label_select(
     )
     from handlers.keyboards import replace_adjust_keyboard, replace_server_keyboard
     from vpn_servers import (
+        ensure_servers_fresh,
         is_active_server,
         list_replace_target_servers,
         list_servers,
         match_server_label,
     )
 
+    await ensure_servers_fresh(max_age_sec=0)
     text = (update.message.text or "").strip()
     server = match_server_label(text)
     if not server:
@@ -617,8 +640,9 @@ async def buy_plan_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
     _start_buy_flow(context)
     lang = await _lang(update, context)
-    from vpn_servers import list_servers
+    from vpn_servers import ensure_servers_fresh, list_servers
 
+    await ensure_servers_fresh(max_age_sec=0)
     servers = list_servers()
     if not servers:
         await update.message.reply_text(
@@ -730,8 +754,9 @@ async def _handle_plan_callback(
     """Return True if this callback was a plan/payment action."""
     if data == "buy_plan":
         _start_buy_flow(context)
-        from vpn_servers import list_servers
+        from vpn_servers import ensure_servers_fresh, list_servers
 
+        await ensure_servers_fresh(max_age_sec=0)
         servers = list_servers()
         if not servers:
             await query.message.reply_text(
