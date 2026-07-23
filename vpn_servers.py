@@ -285,19 +285,33 @@ async def reload_servers_from_db() -> None:
 
 
 async def ensure_vpn_nodes_seeded() -> None:
-    """Copy .env servers into vpn_nodes once so Admin can manage them."""
+    """
+    Ensure every .env VPN server exists in vpn_nodes.
+
+    First boot: seed all VPN_SERVERS entries.
+    Later boots: only insert missing IDs (never overwrite Admin edits).
+    Also picks up servers that have VPN_SERVER_*_PLANS but were omitted from VPN_SERVERS.
+    """
     import database as db
 
-    if await db.count_vpn_nodes() > 0:
-        await reload_servers_from_db()
-        return
+    existing_rows = await db.list_vpn_nodes(enabled_only=False)
+    existing_ids = {str(r["id"]).strip().lower() for r in existing_rows}
 
+    # Build candidates from .env (VPN_SERVERS + any configured-but-unlisted IDs)
     reload_servers()
-    env_servers = list(_SERVERS.values())
-    if not env_servers:
+    candidates: dict[str, VpnServer] = dict(_SERVERS)
+    for sid in find_unlisted_server_ids():
+        server = _load_server(sid)
+        if server:
+            candidates[sid] = server
+
+    if not candidates and not existing_ids:
         return
 
-    for i, s in enumerate(env_servers):
+    added = 0
+    for i, s in enumerate(sorted(candidates.values(), key=lambda x: (x.sort_order, x.id))):
+        if s.id in existing_ids:
+            continue
         await db.upsert_vpn_node(
             node_id=s.id,
             name_en=s.name_en,
@@ -317,9 +331,18 @@ async def ensure_vpn_nodes_seeded() -> None:
             vless_sid=s.vless_sid,
             vless_spx=s.vless_spx,
             enabled=True,
-            sort_order=i,
+            sort_order=s.sort_order if s.sort_order else i,
         )
-    logger.info("Seeded %s VPN node(s) from .env into database", len(env_servers))
+        added += 1
+
+    if added:
+        logger.info("Seeded %s missing VPN node(s) from .env into database", added)
+        # Attach/refresh paid plans for env servers (including newly added)
+        try:
+            await db.sync_plans_from_env()
+        except Exception:
+            logger.exception("Plan sync after node seed failed")
+
     await reload_servers_from_db()
 
 

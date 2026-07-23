@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -73,6 +74,7 @@ fun ServersPlansScreen(
     onDeleteServer: (String) -> Unit,
     onSavePlan: (id: Int?, title: String, dataGb: Double, priceKs: Int, days: Int, serverId: String, sortOrder: Int, active: Boolean) -> Unit,
     onTogglePlan: (Int, Boolean) -> Unit,
+    onDeletePlan: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var editingPlan by remember { mutableStateOf<PlanItem?>(null) }
@@ -80,15 +82,63 @@ fun ServersPlansScreen(
     var editingNode by remember { mutableStateOf<VpnServerInfo?>(null) }
     var creatingNode by remember { mutableStateOf(false) }
     val fmt = NumberFormat.getIntegerInstance(Locale.US)
-    val enabledPlans = remember(plans) { plans.filter { it.isActive } }
-    val disabledPlans = remember(plans) { plans.filter { !it.isActive } }
-    val enabledNodes = remember(servers) { servers.filter { it.enabled } }
-    val disabledNodes = remember(servers) { servers.filter { !it.enabled } }
+
+    val enabledNodes = remember(servers) {
+        servers.filter { it.enabled }.sortedWith(
+            compareBy({ it.sortOrder }, { it.nameEn.ifBlank { it.id }.lowercase() }),
+        )
+    }
+    val disabledNodes = remember(servers) {
+        servers.filter { !it.enabled }.sortedWith(
+            compareBy({ it.sortOrder }, { it.nameEn.ifBlank { it.id }.lowercase() }),
+        )
+    }
+    val plansByServer = remember(plans) { plans.groupBy { it.serverId } }
+    val knownServerIds = remember(servers) { servers.map { it.id }.toSet() }
+
+    fun sortedPlans(serverId: String): List<PlanItem> =
+        (plansByServer[serverId].orEmpty()).sortedWith(
+            compareBy({ !it.isActive }, { it.sortOrder }, { it.title.lowercase() }),
+        )
+
+    val rows = remember(servers, plans) {
+        buildList {
+            fun appendSection(label: String, nodes: List<VpnServerInfo>, prefix: String) {
+                add(ServersRow.Header(label))
+                if (nodes.isEmpty()) {
+                    add(ServersRow.Message("empty-$prefix", if (prefix == "en") "No enabled nodes yet." else "None disabled."))
+                    return
+                }
+                nodes.forEach { s ->
+                    add(ServersRow.Node(s))
+                    val nodePlans = sortedPlans(s.id)
+                    if (nodePlans.isEmpty()) {
+                        add(
+                            ServersRow.Message(
+                                "empty-plans-$prefix-${s.id}",
+                                "No plans for ${s.nameEn.ifBlank { s.id }}",
+                            ),
+                        )
+                    } else {
+                        nodePlans.forEach { p -> add(ServersRow.Plan(p, indented = true)) }
+                    }
+                }
+            }
+            appendSection("Enabled", enabledNodes, "en")
+            appendSection("Disabled", disabledNodes, "dis")
+            val orphans = plans.filter { it.serverId !in knownServerIds }
+                .sortedWith(compareBy({ !it.isActive }, { it.sortOrder }, { it.title.lowercase() }))
+            if (orphans.isNotEmpty()) {
+                add(ServersRow.Header("Plans without a node"))
+                orphans.forEach { p -> add(ServersRow.Plan(p, indented = false)) }
+            }
+        }
+    }
 
     AdminScreen(
         title = "Servers & plans",
         eyebrow = "Catalog",
-        subtitle = "Nodes and prices managed in Admin (DB)",
+        subtitle = "Nodes with their plans — enabled and disabled",
         modifier = modifier.fillMaxSize(),
         actions = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -106,69 +156,35 @@ fun ServersPlansScreen(
         },
     ) {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item { SectionLabel("Enabled nodes") }
-            if (enabledNodes.isEmpty()) {
-                item {
-                    Text("No enabled nodes yet.", color = InkMuted)
+            items(rows, key = { it.key }) { row ->
+                when (row) {
+                    is ServersRow.Header -> {
+                        if (row.title != "Enabled") {
+                            Spacer(Modifier.height(8.dp))
+                        }
+                        SectionLabel(row.title)
+                    }
+                    is ServersRow.Message -> {
+                        Text(row.text, color = InkMuted, style = MaterialTheme.typography.bodySmall)
+                    }
+                    is ServersRow.Node -> {
+                        NodeCard(
+                            server = row.server,
+                            onEdit = { editingNode = row.server },
+                            onToggle = onToggleServer,
+                            onDelete = onDeleteServer,
+                        )
+                    }
+                    is ServersRow.Plan -> {
+                        PlanCard(
+                            plan = row.plan,
+                            fmt = fmt,
+                            onEdit = { editingPlan = row.plan },
+                            onToggle = onTogglePlan,
+                            indented = row.indented,
+                        )
+                    }
                 }
-            }
-            items(enabledNodes, key = { "en-${it.id}" }) { s ->
-                NodeCard(
-                    server = s,
-                    onEdit = { editingNode = s },
-                    onToggle = onToggleServer,
-                    onDelete = onDeleteServer,
-                )
-            }
-
-            item {
-                Spacer(Modifier.height(4.dp))
-                SectionLabel("Disabled nodes")
-            }
-            if (disabledNodes.isEmpty()) {
-                item {
-                    Text("None disabled.", color = InkMuted)
-                }
-            }
-            items(disabledNodes, key = { "dis-${it.id}" }) { s ->
-                NodeCard(
-                    server = s,
-                    onEdit = { editingNode = s },
-                    onToggle = onToggleServer,
-                    onDelete = onDeleteServer,
-                )
-            }
-
-            item {
-                Spacer(Modifier.height(8.dp))
-                SectionLabel("Enabled plans")
-            }
-            if (enabledPlans.isEmpty()) {
-                item { Text("No enabled plans.", color = InkMuted) }
-            }
-            items(enabledPlans, key = { "ep-${it.id}" }) { p ->
-                PlanCard(
-                    plan = p,
-                    fmt = fmt,
-                    onEdit = { editingPlan = p },
-                    onToggle = onTogglePlan,
-                )
-            }
-
-            item {
-                Spacer(Modifier.height(4.dp))
-                SectionLabel("Disabled plans")
-            }
-            if (disabledPlans.isEmpty()) {
-                item { Text("None disabled.", color = InkMuted) }
-            }
-            items(disabledPlans, key = { "dp-${it.id}" }) { p ->
-                PlanCard(
-                    plan = p,
-                    fmt = fmt,
-                    onEdit = { editingPlan = p },
-                    onToggle = onTogglePlan,
-                )
             }
             item { Spacer(Modifier.height(12.dp)) }
         }
@@ -178,6 +194,13 @@ fun ServersPlansScreen(
         NodeDialog(
             initial = editingNode,
             onDismiss = { creatingNode = false; editingNode = null },
+            onDelete = editingNode?.let { node ->
+                {
+                    onDeleteServer(node.id)
+                    creatingNode = false
+                    editingNode = null
+                }
+            },
             onSave = { args ->
                 onSaveServer(
                     args.id, args.nameEn, args.nameMy, args.panelUrl, args.panelUsername,
@@ -199,12 +222,39 @@ fun ServersPlansScreen(
                 ?: servers.firstOrNull()?.id
                 ?: "sg",
             onDismiss = { creatingPlan = false; editingPlan = null },
+            onDelete = editingPlan?.let { plan ->
+                {
+                    onDeletePlan(plan.id)
+                    creatingPlan = false
+                    editingPlan = null
+                }
+            },
             onSave = { id, title, data, price, days, server, sort, active ->
                 onSavePlan(id, title, data, price, days, server, sort, active)
                 creatingPlan = false
                 editingPlan = null
             },
         )
+    }
+}
+
+private sealed class ServersRow {
+    abstract val key: String
+
+    data class Header(val title: String) : ServersRow() {
+        override val key: String get() = "header-$title"
+    }
+
+    data class Message(val id: String, val text: String) : ServersRow() {
+        override val key: String get() = "msg-$id"
+    }
+
+    data class Node(val server: VpnServerInfo) : ServersRow() {
+        override val key: String get() = "node-${server.id}"
+    }
+
+    data class Plan(val plan: PlanItem, val indented: Boolean) : ServersRow() {
+        override val key: String get() = "plan-${plan.id}-$indented"
     }
 }
 
@@ -269,8 +319,11 @@ private fun PlanCard(
     fmt: NumberFormat,
     onEdit: () -> Unit,
     onToggle: (Int, Boolean) -> Unit,
+    indented: Boolean = false,
 ) {
-    ListRowCard {
+    ListRowCard(
+        modifier = if (indented) Modifier.padding(start = 16.dp) else Modifier,
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -278,7 +331,7 @@ private fun PlanCard(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "${plan.title} · ${plan.serverId.uppercase()}",
+                    plan.title,
                     fontWeight = FontWeight.SemiBold,
                     color = Ink,
                 )
@@ -287,6 +340,11 @@ private fun PlanCard(
                     "${plan.dataGb} GB · ${fmt.format(plan.priceKs)} Ks · ${plan.durationDays}d",
                     style = MaterialTheme.typography.bodyMedium,
                     color = InkMuted,
+                )
+                Spacer(Modifier.height(6.dp))
+                StatusChip(
+                    if (plan.isActive) "Plan on" else "Plan off",
+                    if (plan.isActive) StatusTone.Success else StatusTone.Neutral,
                 )
             }
             Switch(
@@ -330,6 +388,7 @@ private fun NodeDialog(
     initial: VpnServerInfo?,
     onDismiss: () -> Unit,
     onSave: (NodeForm) -> Unit,
+    onDelete: (() -> Unit)? = null,
 ) {
     var id by remember { mutableStateOf(initial?.id ?: "") }
     var nameEn by remember { mutableStateOf(initial?.nameEn ?: "") }
@@ -537,6 +596,13 @@ private fun NodeDialog(
                 colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
             )
         }
+        if (onDelete != null) {
+            AdminTextButton(
+                text = "Delete node",
+                onClick = onDelete,
+                contentColor = Danger,
+            )
+        }
     }
 }
 
@@ -546,6 +612,7 @@ private fun PlanDialog(
     defaultServer: String,
     onDismiss: () -> Unit,
     onSave: (Int?, String, Double, Int, Int, String, Int, Boolean) -> Unit,
+    onDelete: (() -> Unit)? = null,
 ) {
     var title by remember { mutableStateOf(initial?.title ?: "") }
     var data by remember { mutableStateOf(initial?.dataGb?.toString() ?: "30") }
@@ -622,6 +689,13 @@ private fun PlanDialog(
                 checked = active,
                 onCheckedChange = { active = it },
                 colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+            )
+        }
+        if (onDelete != null) {
+            AdminTextButton(
+                text = "Delete plan",
+                onClick = onDelete,
+                contentColor = Danger,
             )
         }
     }

@@ -631,11 +631,26 @@ async def get_active_plans(server_id: str) -> list[dict[str, Any]]:
 
 async def sync_plans_from_env() -> None:
     """Upsert paid plans from .env into SQLite (per server)."""
-    from vpn_servers import list_servers, reload_servers
+    from vpn_servers import (
+        _load_server,
+        find_unlisted_server_ids,
+        list_servers,
+        reload_servers,
+    )
 
     reload_servers()
+    servers = list(list_servers(include_disabled=True))
+    seen = {s.id for s in servers}
+    for sid in find_unlisted_server_ids():
+        if sid in seen:
+            continue
+        extra = _load_server(sid)
+        if extra and extra.plans:
+            servers.append(extra)
+            seen.add(sid)
+
     async with _db() as db:
-        for server in list_servers():
+        for server in servers:
             await db.execute(
                 "UPDATE plans SET is_active = 0 WHERE is_free = 0 AND server_id = ?",
                 (server.id,),
@@ -2231,6 +2246,17 @@ async def set_plan_active(plan_id: int, active: bool) -> bool:
         cur = await db.execute(
             "UPDATE plans SET is_active = ? WHERE id = ? AND is_free = 0",
             (1 if active else 0, int(plan_id)),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_plan(plan_id: int) -> bool:
+    """Delete a paid catalog plan (never deletes free gift plan)."""
+    async with _db() as db:
+        cur = await db.execute(
+            "DELETE FROM plans WHERE id = ? AND is_free = 0",
+            (int(plan_id),),
         )
         await db.commit()
         return cur.rowcount > 0

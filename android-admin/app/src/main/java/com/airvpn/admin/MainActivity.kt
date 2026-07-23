@@ -295,6 +295,7 @@ private fun AdminRoot(vm: AdminViewModel) {
                                     onDeleteServer = vm::deleteServer,
                                     onSavePlan = vm::savePlan,
                                     onTogglePlan = vm::setPlanActive,
+                                    onDeletePlan = vm::deletePlan,
                                     modifier = mod,
                                 )
                                 AdminTab.Users -> UsersScreen(

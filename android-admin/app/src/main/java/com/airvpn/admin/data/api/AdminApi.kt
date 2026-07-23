@@ -138,6 +138,12 @@ interface AdminApi {
         @Query("active") active: Boolean,
     ): StatusResponse
 
+    @DELETE("v1/admin/plans/{id}")
+    suspend fun deletePlan(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Int,
+    ): StatusResponse
+
     @GET("v1/admin/users")
     suspend fun users(
         @Header("Authorization") auth: String,

@@ -529,6 +529,17 @@ async def admin_set_plan_active(
     return {"status": "ok"}
 
 
+@router.delete("/plans/{plan_id}")
+async def admin_delete_plan(
+    plan_id: int,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, str]:
+    ok = await db.delete_plan(plan_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Plan not found")
+    return {"status": "ok"}
+
+
 # ─── Payment accounts ────────────────────────────────────────────────────────
 
 
@@ -1087,14 +1098,13 @@ async def admin_broadcast_notification(
 
 
 async def ensure_admin_seed() -> None:
-    """Seed VPN nodes + paid plans from .env once when DB tables are empty."""
+    """Seed missing VPN nodes from .env; seed plans when the catalog is empty."""
     try:
         await ensure_vpn_nodes_seeded()
     except Exception:
         logger.exception("Failed to seed VPN nodes from env")
     try:
-        if await db.count_paid_plans() == 0:
-            await db.sync_plans_from_env()
-            logger.info("Seeded paid plans from .env for admin API")
+        # Always safe: upserts by server_id + sort_order; activates env tiers
+        await db.sync_plans_from_env()
     except Exception:
-        logger.exception("Failed to seed plans from env")
+        logger.exception("Failed to sync plans from env")

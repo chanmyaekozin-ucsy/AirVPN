@@ -514,6 +514,12 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         refreshServersPlans()
     }
 
+    fun deletePlan(id: Int) = launch("deletePlan") {
+        api.deletePlan(auth(), id)
+        _state.update { it.copy(message = "Plan deleted") }
+        refreshServersPlans()
+    }
+
     fun setUserQuery(q: String) {
         _state.update { it.copy(userQuery = q) }
     }
