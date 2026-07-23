@@ -131,8 +131,14 @@ class AirVpnViewModel : ViewModel() {
         }
     }
 
+    private var lastDauAtMs: Long = 0L
+
     fun trackAppOpen() {
         val store = session ?: return
+        val now = System.currentTimeMillis()
+        // Avoid double-count spam on bootstrap + ON_START within same minute
+        if (now - lastDauAtMs < 60_000L) return
+        lastDauAtMs = now
         viewModelScope.launch {
             runCatching {
                 ApiFactory.api.trackEvent(
@@ -196,7 +202,7 @@ class AirVpnViewModel : ViewModel() {
         viewModelScope.launch {
             _ui.update { it.copy(loadingServers = true, importError = null) }
             val imported = session?.getImportedServers().orEmpty()
-            runCatching { ApiFactory.api.servers().toModel() }
+            runCatching { ApiFactory.api.servers(session?.deviceId).toModel() }
                 .onSuccess { remote ->
                     val free = mergeFree(remote.free, imported)
                     applyCatalog(
@@ -450,7 +456,9 @@ class AirVpnViewModel : ViewModel() {
                 )
             }
             // Refresh free catalog sub usage/expiry from API
-            val remoteCatalog = runCatching { ApiFactory.api.servers().toModel() }.getOrNull()
+            val remoteCatalog = runCatching {
+                ApiFactory.api.servers(session?.deviceId).toModel()
+            }.getOrNull()
             var added = 0
             var failed = 0
             for (url in urls) {

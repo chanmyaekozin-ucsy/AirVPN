@@ -269,6 +269,41 @@ interface AdminApi {
         @Body body: AppConfigBody,
     ): AppConfigWrapDto
 
+    @GET("v1/admin/dau")
+    suspend fun dau(
+        @Header("Authorization") auth: String,
+        @Query("day") day: String? = null,
+        @Query("limit") limit: Int = 100,
+    ): DauDto
+
+    @GET("v1/admin/device-keys")
+    suspend fun deviceKeys(
+        @Header("Authorization") auth: String,
+        @Query("q") q: String = "",
+        @Query("device_id") deviceId: String = "",
+        @Query("page") page: Int = 1,
+        @Query("per_page") perPage: Int = 50,
+    ): DeviceKeysDto
+
+    @POST("v1/admin/device-keys")
+    suspend fun upsertDeviceKey(
+        @Header("Authorization") auth: String,
+        @Body body: DeviceExclusiveBody,
+    ): DeviceKeyWrapDto
+
+    @POST("v1/admin/device-keys/{id}/enabled")
+    suspend fun setDeviceKeyEnabled(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+        @Query("enabled") enabled: Boolean,
+    ): StatusResponse
+
+    @DELETE("v1/admin/device-keys/{id}")
+    suspend fun deleteDeviceKey(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+    ): StatusResponse
+
     @GET("v1/admin/notifications")
     suspend fun notifications(
         @Header("Authorization") auth: String,
@@ -771,6 +806,74 @@ data class AppConfigBody(
 data class AppConfigWrapDto(
     val status: String? = null,
     val config: AppConfigDto = AppConfigDto(),
+)
+
+data class DauDeviceDto(
+    @Json(name = "device_id") val deviceId: String = "",
+    @Json(name = "first_seen_at") val firstSeenAt: String? = null,
+) {
+    fun toModel() = com.airvpn.admin.data.model.DauDevice(
+        deviceId = deviceId,
+        firstSeenAt = firstSeenAt,
+    )
+}
+
+data class DauDto(
+    val day: String = "",
+    val count: Int = 0,
+    val devices: List<DauDeviceDto> = emptyList(),
+)
+
+data class DeviceExclusiveDto(
+    val id: Int = 0,
+    @Json(name = "device_id") val deviceId: String = "",
+    @Json(name = "public_id") val publicId: String = "",
+    val name: String = "",
+    val region: String = "",
+    val protocol: String = "vless",
+    @Json(name = "config_uri") val configUri: String = "",
+    val note: String = "",
+    val enabled: Boolean = true,
+    @Json(name = "created_at") val createdAt: String? = null,
+    @Json(name = "updated_at") val updatedAt: String? = null,
+) {
+    fun toModel() = com.airvpn.admin.data.model.DeviceExclusiveKey(
+        id = id,
+        deviceId = deviceId,
+        publicId = publicId,
+        name = name,
+        region = region,
+        protocol = protocol,
+        configUri = configUri,
+        note = note,
+        enabled = enabled,
+        createdAt = createdAt,
+        updatedAt = updatedAt,
+    )
+}
+
+data class DeviceExclusiveBody(
+    @Json(name = "device_id") val deviceId: String,
+    val name: String,
+    @Json(name = "config_uri") val configUri: String,
+    val region: String = "",
+    val protocol: String = "vless",
+    val note: String = "",
+    @Json(name = "public_id") val publicId: String? = null,
+    val enabled: Boolean = true,
+)
+
+data class DeviceKeysDto(
+    val keys: List<DeviceExclusiveDto> = emptyList(),
+    val total: Int = 0,
+    val page: Int = 1,
+    @Json(name = "per_page") val perPage: Int = 20,
+    @Json(name = "total_pages") val totalPages: Int = 1,
+)
+
+data class DeviceKeyWrapDto(
+    val status: String? = null,
+    val key: DeviceExclusiveDto = DeviceExclusiveDto(),
 )
 data class AdWrapDto(val ad: AdDto)
 data class AdBody(

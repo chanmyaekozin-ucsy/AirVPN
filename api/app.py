@@ -1103,7 +1103,10 @@ async def analytics_event(body: AnalyticsEventBody, request: Request) -> dict[st
 
 
 @app.get("/v1/servers")
-async def servers(request: Request) -> dict[str, Any]:
+async def servers(
+    request: Request,
+    x_device_id: Optional[str] = Header(default=None, alias="X-Device-Id"),
+) -> dict[str, Any]:
     _require_rate(
         request,
         kind="servers",
@@ -1124,6 +1127,24 @@ async def servers(request: Request) -> dict[str, Any]:
         free.extend(publics)
         if meta is not None:
             free_subscriptions.append(meta)
+
+    # Admin-assigned exclusive share keys for this device UUID
+    did = (x_device_id or "").strip()[:128]
+    if len(did) >= 8:
+        excl_rows = await db.list_enabled_exclusive_for_device(did)
+        for er in excl_rows:
+            pub = await _server_public(
+                {
+                    "public_id": er["public_id"],
+                    "name": er.get("name") or er["public_id"],
+                    "region": er.get("region") or "",
+                    "protocol": er.get("protocol") or "vless",
+                    "tier": "free",
+                    "config_uri": er.get("config_uri") or "",
+                }
+            )
+            pub["exclusive"] = True
+            free.insert(0, pub)
 
     paid_db = await asyncio.gather(*[_server_public(r) for r in paid_rows])
     # Bot .env catalog is the source of truth for paid locations + price lists
@@ -1175,6 +1196,33 @@ async def connect(
     x_restore_code: Optional[str] = Header(default=None, alias="X-Restore-Code"),
 ) -> dict[str, Any]:
     from services.sub_link import split_node_public_id
+
+    # Exclusive per-device share key (admin-assigned)
+    if (body.server_id or "").startswith("excl_"):
+        _require_rate(
+            request,
+            kind="connect:free",
+            per_min=int(getattr(config, "MOBILE_RATE_CONNECT_FREE_PER_MIN", 10) or 10),
+            per_hour=int(
+                getattr(config, "MOBILE_RATE_CONNECT_FREE_PER_HOUR", 60) or 60
+            ),
+        )
+        excl = await db.get_device_exclusive_server(body.server_id)
+        if not excl or not excl.get("enabled"):
+            raise HTTPException(404, "Server not found")
+        did = (body.device_id or "").strip()[:128]
+        if did != (excl.get("device_id") or "").strip():
+            raise HTTPException(403, "This server is not assigned to this device")
+        config_uri = _validate_free_share_uri(str(excl.get("config_uri") or ""))
+        protocol = (excl.get("protocol") or "vless").lower()
+        if protocol in ("ssh", "vmess"):
+            raise HTTPException(501, "Protocol not available yet")
+        payload = encrypt_config_payload(config_uri, ttl_sec=120)
+        return {
+            "server_id": body.server_id,
+            "protocol": protocol,
+            "payload": payload,
+        }
 
     parent_id, _node_key = split_node_public_id(body.server_id)
     row = await db.get_mobile_server(parent_id)

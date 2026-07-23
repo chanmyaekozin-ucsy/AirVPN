@@ -2,6 +2,9 @@ package com.airvpn.app
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.pm.PackageManager
 import android.net.VpnService
 import android.os.Build
@@ -30,6 +33,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,6 +47,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.airvpn.app.data.model.AdCreative
 import com.airvpn.app.ui.components.AirDialog
@@ -138,6 +145,18 @@ fun AirVpnRoot(initialImportCode: String?, vm: AirVpnViewModel = viewModel()) {
                 vm.importPaste(initialImportCode)
             }
         }
+    }
+
+    // Count unique device UUID opens (DAU) when app returns to foreground
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                vm.trackAppOpen()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // Prefetch banner + dialog images on home so connect does not wait on download
@@ -415,6 +434,15 @@ fun AirVpnRoot(initialImportCode: String?, vm: AirVpnViewModel = viewModel()) {
                     latestVersionName = ui.appConfig.latestVersionName,
                     updateAvailable = ui.updateAvailable ||
                         BuildConfig.VERSION_CODE < ui.appConfig.latestVersionCode,
+                    deviceId = app.session.deviceId,
+                    onCopyDeviceId = {
+                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                            as ClipboardManager
+                        cm.setPrimaryClip(
+                            ClipData.newPlainText("AirVPN Device ID", app.session.deviceId),
+                        )
+                        toastMessage = "Device ID copied"
+                    },
                     onOpenUrl = { vm.openUrl(context, it) },
                     onCheckUpdate = { vm.openUpdatePage(context) },
                     onClear = { vm.clearSession() },

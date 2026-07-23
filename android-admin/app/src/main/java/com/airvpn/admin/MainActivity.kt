@@ -36,6 +36,7 @@ import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Payments
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.PhoneAndroid
+import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
@@ -65,6 +66,7 @@ import com.airvpn.admin.ui.components.AdminTopChrome
 import com.airvpn.admin.ui.components.LoadingTopBar
 import com.airvpn.admin.ui.components.ShimmerList
 import com.airvpn.admin.ui.dashboard.DashboardScreen
+import com.airvpn.admin.ui.devices.DevicesScreen
 import com.airvpn.admin.ui.login.LoginScreen
 import com.airvpn.admin.ui.notify.NotifyScreen
 import com.airvpn.admin.ui.payments.PaymentsScreen
@@ -139,6 +141,7 @@ private enum class AdminTab(val label: String, val icon: ImageVector) {
     Catalog("Catalog", Icons.AutoMirrored.Outlined.ListAlt),
     Ads("Ads", Icons.Outlined.Campaign),
     App("App", Icons.Outlined.PhoneAndroid),
+    Devices("Devices", Icons.Outlined.Devices),
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -249,6 +252,7 @@ private fun AdminRoot(vm: AdminViewModel) {
                         AdminTab.Catalog -> state.catalog.isEmpty()
                         AdminTab.Ads -> state.ads.isEmpty()
                         AdminTab.App -> state.appConfig == null
+                        AdminTab.Devices -> state.deviceKeys.isEmpty() && state.dauDevices.isEmpty()
                     }
                     if (showShimmer) {
                         ShimmerList(count = 5, modifier = Modifier.fillMaxSize())
@@ -386,6 +390,17 @@ private fun AdminRoot(vm: AdminViewModel) {
                                     config = state.appConfig,
                                     saving = state.appConfigSaving,
                                     onSave = vm::saveAppConfig,
+                                    modifier = mod,
+                                )
+                                AdminTab.Devices -> DevicesScreen(
+                                    keys = state.deviceKeys,
+                                    dauDevices = state.dauDevices,
+                                    dauDay = state.dauDay,
+                                    dauCount = state.dauCount,
+                                    onSaveKey = vm::saveDeviceKey,
+                                    onToggleKey = vm::setDeviceKeyEnabled,
+                                    onDeleteKey = vm::deleteDeviceKey,
+                                    onRefreshDau = vm::refreshDau,
                                     modifier = mod,
                                 )
                             }

@@ -368,6 +368,23 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- Admin-assigned exclusive share keys bound to a device UUID.
+        CREATE TABLE IF NOT EXISTS device_exclusive_servers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT NOT NULL,
+            public_id TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            region TEXT NOT NULL DEFAULT '',
+            protocol TEXT NOT NULL DEFAULT 'vless',
+            config_uri TEXT NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_device_excl_device
+            ON device_exclusive_servers(device_id, enabled);
+
         CREATE TABLE IF NOT EXISTS admin_login_otps (
             telegram_id INTEGER PRIMARY KEY,
             code_hash TEXT NOT NULL,
@@ -1590,6 +1607,204 @@ async def get_mobile_analytics_stats() -> dict[str, Any]:
         "ad_clicks_total": ad_clicks_total,
         "ad_clicks_top": top_ads,
     }
+
+
+async def list_mobile_dau_devices(
+    *,
+    day: str | None = None,
+    limit: int = 100,
+) -> list[dict[str, Any]]:
+    """Unique device UUIDs that opened the app on a given Myanmar calendar day."""
+    d = (day or mmt_now().date().isoformat()).strip()
+    lim = max(1, min(500, int(limit)))
+    async with _db() as db:
+        async with db.execute(
+            """SELECT device_id, first_seen_at FROM mobile_dau
+               WHERE day = ?
+               ORDER BY first_seen_at DESC
+               LIMIT ?""",
+            (d, lim),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def count_device_exclusive_servers() -> int:
+    async with _db() as db:
+        async with db.execute(
+            "SELECT COUNT(*) AS c FROM device_exclusive_servers WHERE enabled = 1"
+        ) as cur:
+            return int((await cur.fetchone())["c"])
+
+
+def _new_excl_public_id() -> str:
+    return f"excl_{secrets.token_hex(6)}"
+
+
+async def list_device_exclusive_servers(
+    *,
+    device_id: str | None = None,
+    q: str = "",
+    enabled_only: bool = False,
+    page: int = 1,
+    per_page: int = 20,
+) -> dict[str, Any]:
+    did = (device_id or "").strip()[:128]
+    query = (q or "").strip()
+    page = max(1, int(page))
+    per_page = max(1, min(100, int(per_page)))
+    clauses: list[str] = []
+    params: list[Any] = []
+    if did:
+        clauses.append("device_id = ?")
+        params.append(did)
+    if enabled_only:
+        clauses.append("enabled = 1")
+    if query:
+        like = f"%{query}%"
+        clauses.append("(device_id LIKE ? OR name LIKE ? OR public_id LIKE ? OR note LIKE ?)")
+        params.extend([like, like, like, like])
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+    async with _db() as db:
+        async with db.execute(
+            f"SELECT COUNT(*) AS c FROM device_exclusive_servers {where}",
+            params,
+        ) as cur:
+            total = int((await cur.fetchone())["c"])
+        offset = (page - 1) * per_page
+        async with db.execute(
+            f"""SELECT * FROM device_exclusive_servers {where}
+                ORDER BY id DESC LIMIT ? OFFSET ?""",
+            [*params, per_page, offset],
+        ) as cur:
+            items = [dict(r) for r in await cur.fetchall()]
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": total_pages,
+    }
+
+
+async def get_device_exclusive_server(public_id: str) -> dict[str, Any] | None:
+    pid = (public_id or "").strip()
+    if not pid:
+        return None
+    async with _db() as db:
+        async with db.execute(
+            "SELECT * FROM device_exclusive_servers WHERE public_id = ?",
+            (pid,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def list_enabled_exclusive_for_device(device_id: str) -> list[dict[str, Any]]:
+    did = (device_id or "").strip()[:128]
+    if len(did) < 8:
+        return []
+    async with _db() as db:
+        async with db.execute(
+            """SELECT * FROM device_exclusive_servers
+               WHERE device_id = ? AND enabled = 1
+               ORDER BY id DESC""",
+            (did,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def upsert_device_exclusive_server(
+    *,
+    device_id: str,
+    name: str,
+    config_uri: str,
+    region: str = "",
+    protocol: str = "vless",
+    note: str = "",
+    public_id: str | None = None,
+    enabled: bool = True,
+) -> dict[str, Any]:
+    did = (device_id or "").strip()[:128]
+    nm = (name or "").strip()[:128]
+    uri = (config_uri or "").strip()
+    if len(did) < 8:
+        raise ValueError("device_id required (min 8 chars)")
+    if not nm:
+        raise ValueError("name required")
+    if not uri:
+        raise ValueError("config_uri required")
+    low = uri.lower()
+    if not (
+        low.startswith("vless://")
+        or low.startswith("ss://")
+        or low.startswith("vmess://")
+    ):
+        raise ValueError("config_uri must be vless://, ss://, or vmess://")
+    proto = (protocol or "vless").strip().lower()[:32]
+    if low.startswith("ss://"):
+        proto = "ss"
+    elif low.startswith("vmess://"):
+        proto = "vmess"
+    pid = (public_id or "").strip() or _new_excl_public_id()
+    now = mmt_now().isoformat()
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO device_exclusive_servers
+               (device_id, public_id, name, region, protocol, config_uri, note,
+                enabled, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(public_id) DO UPDATE SET
+                 device_id = excluded.device_id,
+                 name = excluded.name,
+                 region = excluded.region,
+                 protocol = excluded.protocol,
+                 config_uri = excluded.config_uri,
+                 note = excluded.note,
+                 enabled = excluded.enabled,
+                 updated_at = excluded.updated_at
+            """,
+            (
+                did,
+                pid,
+                nm,
+                (region or "").strip()[:16],
+                proto,
+                uri,
+                (note or "").strip()[:256],
+                1 if enabled else 0,
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+    row = await get_device_exclusive_server(pid)
+    assert row is not None
+    return row
+
+
+async def delete_device_exclusive_server(public_id: str) -> bool:
+    pid = (public_id or "").strip()
+    async with _db() as db:
+        cur = await db.execute(
+            "DELETE FROM device_exclusive_servers WHERE public_id = ?",
+            (pid,),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def set_device_exclusive_enabled(public_id: str, enabled: bool) -> bool:
+    pid = (public_id or "").strip()
+    async with _db() as db:
+        cur = await db.execute(
+            """UPDATE device_exclusive_servers
+               SET enabled = ?, updated_at = ?
+               WHERE public_id = ?""",
+            (1 if enabled else 0, mmt_now().isoformat(), pid),
+        )
+        await db.commit()
+        return cur.rowcount > 0
 
 
 # ─── Notifications (admin broadcast) ─────────────────────────────────────────

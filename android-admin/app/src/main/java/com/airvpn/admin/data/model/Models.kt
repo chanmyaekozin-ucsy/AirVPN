@@ -178,3 +178,23 @@ data class AppConfigSettings(
     val privacyUrl: String = "",
     val updatedAt: String? = null,
 )
+
+/** Exclusive share key bound to one device UUID. */
+data class DeviceExclusiveKey(
+    val id: Int = 0,
+    val deviceId: String = "",
+    val publicId: String = "",
+    val name: String = "",
+    val region: String = "",
+    val protocol: String = "vless",
+    val configUri: String = "",
+    val note: String = "",
+    val enabled: Boolean = true,
+    val createdAt: String? = null,
+    val updatedAt: String? = null,
+)
+
+data class DauDevice(
+    val deviceId: String = "",
+    val firstSeenAt: String? = null,
+)

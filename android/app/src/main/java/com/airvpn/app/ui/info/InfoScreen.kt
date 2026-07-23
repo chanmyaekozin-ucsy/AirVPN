@@ -1,6 +1,7 @@
 package com.airvpn.app.ui.info
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,6 +28,7 @@ import com.airvpn.app.ui.components.AirTextAction
 import com.airvpn.app.ui.components.AirTopBar
 import com.airvpn.app.ui.theme.Danger
 import com.airvpn.app.ui.theme.Hairline
+import com.airvpn.app.ui.theme.InkMuted
 import com.airvpn.app.ui.theme.Navy
 import com.airvpn.app.ui.theme.SurfaceBg
 import com.airvpn.app.ui.theme.contentColorFor
@@ -46,6 +48,8 @@ fun InfoScreen(
     versionCode: Int,
     latestVersionName: String,
     updateAvailable: Boolean,
+    deviceId: String,
+    onCopyDeviceId: () -> Unit,
     onOpenUrl: (String) -> Unit,
     onCheckUpdate: () -> Unit,
     onClear: () -> Unit,
@@ -176,6 +180,33 @@ fun InfoScreen(
 
             SettingsGroup(title = "App") {
                 InfoLine("Version", "$versionName ($versionCode)")
+                if (deviceId.isNotBlank()) {
+                    HorizontalDivider(color = Hairline)
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onCopyDeviceId)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                    ) {
+                        Text(
+                            "Device ID",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkMuted,
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            deviceId,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Navy,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Tap to copy",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = InkMuted,
+                        )
+                    }
+                }
                 if (latestVersionName.isNotBlank() && updateAvailable) {
                     HorizontalDivider(color = Hairline)
                     InfoLine("Latest", latestVersionName)

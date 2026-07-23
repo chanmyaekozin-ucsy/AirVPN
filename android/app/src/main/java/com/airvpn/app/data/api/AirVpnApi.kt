@@ -137,7 +137,9 @@ interface AirVpnApi {
     suspend fun appConfig(): AppConfigDto
 
     @GET("v1/servers")
-    suspend fun servers(): ServersDto
+    suspend fun servers(
+        @Header("X-Device-Id") deviceId: String? = null,
+    ): ServersDto
 
     @POST("v1/import")
     suspend fun importCode(@Body body: ImportBody): ImportDto

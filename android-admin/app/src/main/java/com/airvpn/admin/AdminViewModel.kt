@@ -12,6 +12,7 @@ import com.airvpn.admin.data.api.BanBody
 import com.airvpn.admin.data.api.BroadcastBody
 import com.airvpn.admin.data.api.CatalogBody
 import com.airvpn.admin.data.api.CatalogIssueKeyBody
+import com.airvpn.admin.data.api.DeviceExclusiveBody
 import com.airvpn.admin.data.api.LoginBody
 import com.airvpn.admin.data.api.ManualSubBody
 import com.airvpn.admin.data.api.PlanBody
@@ -25,6 +26,8 @@ import com.airvpn.admin.data.model.AdminStats
 import com.airvpn.admin.data.model.AppConfigSettings
 import com.airvpn.admin.data.model.AudienceCounts
 import com.airvpn.admin.data.model.CatalogServer
+import com.airvpn.admin.data.model.DauDevice
+import com.airvpn.admin.data.model.DeviceExclusiveKey
 import com.airvpn.admin.data.model.NotificationItem
 import com.airvpn.admin.data.model.PaymentAccount
 import com.airvpn.admin.data.model.PaymentItem
@@ -77,6 +80,10 @@ data class AdminUiState(
     val adsLoadingMore: Boolean = false,
     val appConfig: AppConfigSettings? = null,
     val appConfigSaving: Boolean = false,
+    val deviceKeys: List<DeviceExclusiveKey> = emptyList(),
+    val dauDevices: List<DauDevice> = emptyList(),
+    val dauDay: String = "",
+    val dauCount: Int = 0,
     val notifyAudience: String = "all",
     val notifyMessage: String = "",
     val notifySending: Boolean = false,
@@ -337,6 +344,13 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
                         },
                         async {
                             runCatching {
+                                loadDeviceKeysAndDau()
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "devices: ${errMsg(e)}") }
+                            }
+                        },
+                        async {
+                            runCatching {
                                 loadNotificationsIntoState()
                             }.onFailure { e ->
                                 _state.update { it.copy(error = "notify: ${errMsg(e)}") }
@@ -348,6 +362,19 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 _state.update { it.copy(refreshing = false) }
             }
+        }
+    }
+
+    private suspend fun loadDeviceKeysAndDau() {
+        val keys = api.deviceKeys(auth(), perPage = 50)
+        val dau = api.dau(auth(), limit = 100)
+        _state.update {
+            it.copy(
+                deviceKeys = keys.keys.map { k -> k.toModel() },
+                dauDevices = dau.devices.map { d -> d.toModel() },
+                dauDay = dau.day,
+                dauCount = dau.count,
+            )
         }
     }
 
@@ -967,6 +994,50 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
                 }
             }
         }
+    }
+
+    fun refreshDau() = launch("dau") {
+        val dau = api.dau(auth(), limit = 100)
+        _state.update {
+            it.copy(
+                dauDevices = dau.devices.map { d -> d.toModel() },
+                dauDay = dau.day,
+                dauCount = dau.count,
+            )
+        }
+    }
+
+    fun refreshDeviceKeys() = launch("deviceKeys") {
+        loadDeviceKeysAndDau()
+    }
+
+    fun saveDeviceKey(key: DeviceExclusiveKey) = launch("saveDeviceKey") {
+        api.upsertDeviceKey(
+            auth(),
+            DeviceExclusiveBody(
+                deviceId = key.deviceId,
+                name = key.name,
+                configUri = key.configUri,
+                region = key.region,
+                protocol = key.protocol.ifBlank { "vless" },
+                note = key.note,
+                publicId = key.publicId.ifBlank { null },
+                enabled = key.enabled,
+            ),
+        )
+        _state.update { it.copy(message = "Exclusive key saved") }
+        loadDeviceKeysAndDau()
+    }
+
+    fun setDeviceKeyEnabled(publicId: String, enabled: Boolean) = launch("deviceKeyEnabled") {
+        api.setDeviceKeyEnabled(auth(), publicId, enabled)
+        loadDeviceKeysAndDau()
+    }
+
+    fun deleteDeviceKey(publicId: String) = launch("deleteDeviceKey") {
+        api.deleteDeviceKey(auth(), publicId)
+        _state.update { it.copy(message = "Exclusive key deleted") }
+        loadDeviceKeysAndDau()
     }
 
     fun setAdEnabled(id: String, enabled: Boolean) = launch("adEnabled") {

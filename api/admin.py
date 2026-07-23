@@ -1323,6 +1323,124 @@ async def admin_put_app_config(
     return {"status": "ok", "config": _serialize_app_config(row)}
 
 
+# ─── Device exclusive keys + DAU devices ──────────────────────────────────────
+
+
+class DeviceExclusiveBody(BaseModel):
+    device_id: str = Field(min_length=8, max_length=128)
+    name: str = Field(min_length=1, max_length=128)
+    config_uri: str = Field(min_length=8, max_length=8192)
+    region: str = Field(default="", max_length=16)
+    protocol: str = Field(default="vless", max_length=32)
+    note: str = Field(default="", max_length=256)
+    public_id: Optional[str] = Field(default=None, max_length=64)
+    enabled: bool = True
+
+
+def _serialize_device_exclusive(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "device_id": row.get("device_id") or "",
+        "public_id": row.get("public_id") or "",
+        "name": row.get("name") or "",
+        "region": row.get("region") or "",
+        "protocol": row.get("protocol") or "vless",
+        "config_uri": row.get("config_uri") or "",
+        "note": row.get("note") or "",
+        "enabled": bool(row.get("enabled")),
+        "created_at": row.get("created_at"),
+        "updated_at": row.get("updated_at"),
+    }
+
+
+@router.get("/dau")
+async def admin_list_dau(
+    day: Optional[str] = None,
+    limit: int = 100,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    """Unique device UUIDs for a calendar day (Myanmar time)."""
+    devices = await db.list_mobile_dau_devices(day=day, limit=limit)
+    return {
+        "day": (day or db.mmt_now().date().isoformat()),
+        "count": len(devices),
+        "devices": [
+            {
+                "device_id": r.get("device_id") or "",
+                "first_seen_at": r.get("first_seen_at"),
+            }
+            for r in devices
+        ],
+    }
+
+
+@router.get("/device-keys")
+async def admin_list_device_keys(
+    q: str = "",
+    device_id: str = "",
+    page: int = 1,
+    per_page: int = 20,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    result = await db.list_device_exclusive_servers(
+        device_id=device_id or None,
+        q=q,
+        page=page,
+        per_page=per_page,
+    )
+    return {
+        "keys": [_serialize_device_exclusive(r) for r in result["items"]],
+        "total": result["total"],
+        "page": result["page"],
+        "per_page": result["per_page"],
+        "total_pages": result["total_pages"],
+    }
+
+
+@router.post("/device-keys")
+async def admin_upsert_device_key(
+    body: DeviceExclusiveBody,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    try:
+        row = await db.upsert_device_exclusive_server(
+            device_id=body.device_id,
+            name=body.name,
+            config_uri=body.config_uri,
+            region=body.region,
+            protocol=body.protocol,
+            note=body.note,
+            public_id=body.public_id,
+            enabled=body.enabled,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"status": "ok", "key": _serialize_device_exclusive(row)}
+
+
+@router.post("/device-keys/{public_id}/enabled")
+async def admin_set_device_key_enabled(
+    public_id: str,
+    enabled: bool = True,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    ok = await db.set_device_exclusive_enabled(public_id, enabled)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"status": "ok", "public_id": public_id, "enabled": enabled}
+
+
+@router.delete("/device-keys/{public_id}")
+async def admin_delete_device_key(
+    public_id: str,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    ok = await db.delete_device_exclusive_server(public_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Key not found")
+    return {"status": "ok"}
+
+
 async def ensure_admin_seed() -> None:
     """Seed missing VPN nodes from .env; seed plans when the catalog is empty."""
     try:
