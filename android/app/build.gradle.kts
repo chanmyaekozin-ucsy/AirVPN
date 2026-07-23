@@ -81,5 +81,7 @@ dependencies {
     implementation("com.squareup.moshi:moshi-kotlin:1.15.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
+    // Real SSH client (password auth over TLS-wrapped socket)
+    implementation("com.hierynomus:sshj:0.38.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

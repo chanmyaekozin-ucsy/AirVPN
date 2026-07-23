@@ -103,7 +103,12 @@ def is_subscription_url(uri: str | None) -> bool:
 
 def is_share_uri(uri: str | None) -> bool:
     t = (uri or "").strip().lower()
-    return t.startswith("vless://") or t.startswith("ss://") or t.startswith("vmess://")
+    return (
+        t.startswith("vless://")
+        or t.startswith("ss://")
+        or t.startswith("vmess://")
+        or t.startswith("ssh://")
+    )
 
 
 def node_public_id(parent_id: str, share_uri: str) -> str:

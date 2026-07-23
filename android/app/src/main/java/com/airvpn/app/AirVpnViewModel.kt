@@ -27,6 +27,7 @@ import com.airvpn.app.util.SubscriptionFetcher
 import com.airvpn.app.util.TelegramLinks
 import com.airvpn.app.util.VpnKeyImport
 import com.airvpn.app.vpn.AirVpnService
+import com.airvpn.app.vpn.VpnConfigHandoff
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -618,13 +619,37 @@ class AirVpnViewModel : ViewModel() {
             return
         }
         if (server.protocol.equals("ssh", true)) {
-            _ui.update { it.copy(statusMessage = "${server.tag} coming soon") }
+            // Always fetch a fresh short-TTL payload — never reuse local SSH secrets.
+            viewModelScope.launch {
+                _ui.update { it.copy(statusMessage = "Connecting…") }
+                val token = _ui.value.token
+                val auth = token?.let { "Bearer $it" }
+                val deviceId = session?.deviceId.orEmpty()
+                AirVpnService.clearError()
+                runCatching {
+                    ApiFactory.api.connect(
+                        auth,
+                        ConnectBody(serverId = server.id, deviceId = deviceId),
+                    ).toModel()
+                }.onSuccess { resp ->
+                    val uri = ConfigCrypto.decrypt(resp.payload)
+                    if (uri.isNullOrBlank() || !uri.startsWith("ssh://", ignoreCase = true)) {
+                        _ui.update {
+                            it.copy(statusMessage = "Could not decrypt SSH config")
+                        }
+                        return@onSuccess
+                    }
+                    startVpn(context, uri, server, useHandoff = true)
+                }.onFailure { e ->
+                    _ui.update { it.copy(statusMessage = connectErrorMessage(e)) }
+                }
+            }
             return
         }
 
         val localUri = server.configUri
         if (!localUri.isNullOrBlank()) {
-            startVpn(context, localUri, server)
+            startVpn(context, localUri, server, useHandoff = false)
             return
         }
 
@@ -647,19 +672,33 @@ class AirVpnViewModel : ViewModel() {
                     }
                     return@onSuccess
                 }
-                startVpn(context, uri, server)
+                val handoff = uri.startsWith("ssh://", ignoreCase = true)
+                startVpn(context, uri, server, useHandoff = handoff)
             }.onFailure { e ->
                 _ui.update { it.copy(statusMessage = connectErrorMessage(e)) }
             }
         }
     }
 
-    private fun startVpn(context: Context, configUri: String, server: VpnServerItem) {
+    private fun startVpn(
+        context: Context,
+        configUri: String,
+        server: VpnServerItem,
+        useHandoff: Boolean,
+    ) {
         _ui.update { it.copy(statusMessage = "Connecting…") }
         AirVpnService.clearError()
+        if (useHandoff) {
+            VpnConfigHandoff.put(configUri)
+        } else {
+            VpnConfigHandoff.clear()
+        }
         val i = Intent(context, AirVpnService::class.java).apply {
             action = AirVpnService.ACTION_CONNECT
-            putExtra(AirVpnService.EXTRA_CONFIG_URI, configUri)
+            // SSH: URI only in memory handoff. VLESS/SS may still use the extra.
+            if (!useHandoff) {
+                putExtra(AirVpnService.EXTRA_CONFIG_URI, configUri)
+            }
             putExtra(AirVpnService.EXTRA_SERVER_NAME, server.name)
         }
         try {
@@ -672,6 +711,7 @@ class AirVpnViewModel : ViewModel() {
             _ui.update { it.copy(statusMessage = "Connected") }
             startConnectedPing(server)
         } catch (e: Exception) {
+            VpnConfigHandoff.clear()
             _ui.update {
                 it.copy(statusMessage = "Could not start VPN: ${e.message ?: "error"}")
             }

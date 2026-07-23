@@ -32,18 +32,21 @@ enum class VpnState {
 }
 
 /**
- * Real VLESS tunnel via AndroidLibXrayLite + system VpnService TUN.
+ * VPN service: VLESS/SS via Xray, or SSH-over-TLS (+ local SOCKS → Xray TUN).
  */
 class AirVpnService : VpnService() {
 
     private var tun: ParcelFileDescriptor? = null
+    private var sshTunnel: SshTunnel? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var connectJob: Job? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CONNECT -> {
-                val uri = intent.getStringExtra(EXTRA_CONFIG_URI)
+                // Prefer memory handoff (SSH secrets); fall back to Intent for VLESS/SS.
+                val uri = VpnConfigHandoff.take()
+                    ?: intent.getStringExtra(EXTRA_CONFIG_URI)
                 val name = intent.getStringExtra(EXTRA_SERVER_NAME) ?: "AirVPN"
                 if (uri.isNullOrBlank()) {
                     fail("Missing VPN config")
@@ -65,8 +68,17 @@ class AirVpnService : VpnService() {
             try {
                 startVpnForeground(buildNotification(serverName, connecting = true))
 
-                // Build Xray JSON before establishing TUN so we fail early on bad URI
-                val configJson = VlessConfigBuilder.build(configUri)
+                val isSsh = configUri.trim().startsWith("ssh://", ignoreCase = true)
+                val configJson: String
+                if (isSsh) {
+                    // Establish SSH (+ TLS/SNI) before TUN so dialing is outside the VPN.
+                    cleanupSshOnly()
+                    val tunnel = SshTunnel.start(configUri)
+                    sshTunnel = tunnel
+                    configJson = SshTunnel.buildXraySocksConfig(tunnel.localSocksPort)
+                } else {
+                    configJson = VlessConfigBuilder.build(configUri)
+                }
 
                 val builder = Builder()
                     .setSession("AirVPN · $serverName")
@@ -75,7 +87,7 @@ class AirVpnService : VpnService() {
                     .addDnsServer("1.1.1.1")
                     .addDnsServer("8.8.8.8")
                     .addRoute("0.0.0.0", 0)
-                // Keep our process off the VPN so Xray can dial the VPS without a routing loop
+                // Keep our process off the VPN so Xray/SSH can dial without a routing loop
                 try {
                     builder.addDisallowedApplication(packageName)
                 } catch (e: Exception) {
@@ -84,7 +96,6 @@ class AirVpnService : VpnService() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     builder.setMetered(false)
                 }
-                // Allow family link / IPv6 if present
                 try {
                     builder.addRoute("::", 0)
                     builder.addAddress("fd00:8:8:8::2", 64)
@@ -96,6 +107,7 @@ class AirVpnService : VpnService() {
                 val established = builder.establish()
                 if (established == null) {
                     fail("VPN permission denied or another VPN is active")
+                    cleanupAll()
                     stopForegroundSafe()
                     stopSelf()
                     return@launch
@@ -128,7 +140,12 @@ class AirVpnService : VpnService() {
 
                 lastTunFd = fd
                 lastConfigLen = configUri.length
-                activeConfigUri = configUri
+                // Never retain SSH passwords in the companion snapshot
+                activeConfigUri = if (isSsh) {
+                    runCatching { SshTunnel.parse(configUri).redactedUri() }.getOrNull()
+                } else {
+                    configUri
+                }
                 _state.value = VpnState.Connected
                 _errorMessage.value = null
                 startVpnForeground(buildNotification(serverName, connecting = false))
@@ -146,6 +163,8 @@ class AirVpnService : VpnService() {
     private fun humanError(e: Exception): String {
         val msg = e.message.orEmpty()
         return when {
+            msg.contains("SSH", ignoreCase = true) -> msg.take(120)
+            msg.contains("TLS", ignoreCase = true) -> msg.take(120)
             msg.contains("config error", ignoreCase = true) -> "Invalid Xray config"
             msg.contains("core init", ignoreCase = true) -> "Xray failed to start"
             msg.contains("Unsupported", ignoreCase = true) -> msg
@@ -176,18 +195,29 @@ class AirVpnService : VpnService() {
         stopSelf()
     }
 
+    private fun cleanupSshOnly() {
+        try {
+            sshTunnel?.stop()
+        } catch (e: Exception) {
+            Log.w(TAG, "ssh stop", e)
+        }
+        sshTunnel = null
+    }
+
     private fun cleanupAll() {
         try {
             XrayCore.stop()
         } catch (e: Exception) {
             Log.w(TAG, "xray stop", e)
         }
+        cleanupSshOnly()
         try {
             tun?.close()
         } catch (_: Exception) {
         }
         tun = null
         activeConfigUri = null
+        VpnConfigHandoff.clear()
     }
 
     private fun stopForegroundSafe() {

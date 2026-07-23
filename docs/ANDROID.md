@@ -97,7 +97,7 @@ Open `android/` in Android Studio. Set:
 
 Screens: **Main** / **Servers** (Import + Refresh) / **Info**.
 
-VPN: `AirVpnService` establishes TUN + Play-required notification. Wire **AndroidLibXray / libv2ray** into `startCore()` for full VLESS traffic.
+VPN: `AirVpnService` establishes TUN + Xray (VLESS/SS) or SSH-over-TLS (+ local SOCKS → Xray). See [`docs/SSH_STUNNEL.md`](SSH_STUNNEL.md) for admin SSH catalog setup.
 
 ## Play Store notes
 

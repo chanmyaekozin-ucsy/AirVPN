@@ -23,6 +23,27 @@ object VlessConfigBuilder {
         }
     }
 
+    /** TUN → local SOCKS5 (used for SSH dynamic tunnel). */
+    fun buildLocalSocks(localPort: Int): String {
+        require(localPort in 1..65535) { "Invalid local SOCKS port" }
+        val outbound = JSONObject()
+            .put("tag", "proxy")
+            .put("protocol", "socks")
+            .put(
+                "settings",
+                JSONObject()
+                    .put(
+                        "servers",
+                        JSONArray().put(
+                            JSONObject()
+                                .put("address", "127.0.0.1")
+                                .put("port", localPort),
+                        ),
+                    ),
+            )
+        return rootConfig(outbound)
+    }
+
     private fun buildShadowsocks(raw: String): String {
         val withoutScheme = raw.trim().removePrefix("ss://").removePrefix("SS://")
         val hashIdx = withoutScheme.indexOf('#')

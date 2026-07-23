@@ -61,6 +61,7 @@ fun CatalogScreen(
         id: String,
         name: String,
         region: String,
+        protocol: String,
         tier: String,
         configUri: String?,
         nodesText: String?,
@@ -70,6 +71,13 @@ fun CatalogScreen(
         listWhenDisabled: Boolean,
         enabled: Boolean,
         sortOrder: Int,
+        sshHost: String?,
+        sshPort: Int?,
+        sshUser: String?,
+        sshPassword: String?,
+        sshSni: String?,
+        sshTls: Boolean?,
+        sshAllowInsecure: Boolean?,
     ) -> Unit,
     onIssueKey: (serverIds: List<String>, dataGb: Double, days: Int, remark: String) -> Unit,
     onConsumeIssuedKey: () -> Unit,
@@ -137,7 +145,7 @@ fun CatalogScreen(
                             Spacer(Modifier.height(4.dp))
                             Text(
                                 buildString {
-                                    append("${s.id} · ${s.region.ifBlank { "—" }}")
+                                    append("${s.id} · ${s.protocol.uppercase()} · ${s.region.ifBlank { "—" }}")
                                     if (s.listWhenDisabled) append(" · list if off")
                                 },
                                 style = MaterialTheme.typography.bodyMedium,
@@ -145,6 +153,8 @@ fun CatalogScreen(
                             )
                             val cfg = s.configUri.orEmpty()
                             val source = when {
+                                s.protocol.equals("ssh", true) ->
+                                    if (s.sshPasswordSet) "Source: SSH (password set)" else "Source: SSH (no password)"
                                 s.nodesText.isNotBlank() -> "Source: manual nodes"
                                 cfg.startsWith("http", ignoreCase = true) -> "Source: subscription link"
                                 cfg.isNotBlank() -> "Source: share key"
@@ -213,8 +223,13 @@ fun CatalogScreen(
             },
             onIssueKey = onIssueKey,
             onConsumeIssuedKey = onConsumeIssuedKey,
-            onSave = { id, name, region, tier, uri, nodes, dataGb, usedGb, expireAt, listOff, enabled, sort ->
-                onSave(id, name, region, tier, uri, nodes, dataGb, usedGb, expireAt, listOff, enabled, sort)
+            onSave = { id, name, region, protocol, tier, uri, nodes, dataGb, usedGb, expireAt, listOff, enabled, sort,
+                sshHost, sshPort, sshUser, sshPassword, sshSni, sshTls, sshAllowInsecure ->
+                onSave(
+                    id, name, region, protocol, tier, uri, nodes, dataGb, usedGb, expireAt,
+                    listOff, enabled, sort,
+                    sshHost, sshPort, sshUser, sshPassword, sshSni, sshTls, sshAllowInsecure,
+                )
                 creating = false
                 editing = null
                 onConsumeIssuedKey()
@@ -237,6 +252,7 @@ private fun CatalogDialog(
         String,
         String,
         String,
+        String,
         String?,
         String?,
         Double?,
@@ -245,14 +261,29 @@ private fun CatalogDialog(
         Boolean,
         Boolean,
         Int,
+        String?,
+        Int?,
+        String?,
+        String?,
+        String?,
+        Boolean?,
+        Boolean?,
     ) -> Unit,
 ) {
     var id by remember { mutableStateOf(initial?.id ?: "") }
     var name by remember { mutableStateOf(initial?.name ?: "") }
     var region by remember { mutableStateOf(initial?.region ?: "") }
+    var protocol by remember { mutableStateOf(initial?.protocol ?: "vless") }
     var tier by remember { mutableStateOf(initial?.tier ?: "free") }
     var uri by remember { mutableStateOf(initial?.configUri ?: "") }
     var nodes by remember { mutableStateOf(initial?.nodesText ?: "") }
+    var sshHost by remember { mutableStateOf(initial?.sshHost ?: "") }
+    var sshPort by remember { mutableStateOf((initial?.sshPort ?: 443).toString()) }
+    var sshUser by remember { mutableStateOf(initial?.sshUser ?: "") }
+    var sshPassword by remember { mutableStateOf("") }
+    var sshSni by remember { mutableStateOf(initial?.sshSni ?: "") }
+    var sshTls by remember { mutableStateOf(initial?.sshTls ?: true) }
+    var sshAllowInsecure by remember { mutableStateOf(initial?.sshAllowInsecure ?: false) }
     var dataGb by remember {
         mutableStateOf(initial?.manualDataGb?.let { trimGb(it) } ?: "50")
     }
@@ -272,8 +303,10 @@ private fun CatalogDialog(
                 .ifEmpty { vpnNodes.firstOrNull()?.id?.let { setOf(it) }.orEmpty() },
         )
     }
+    val isSsh = protocol.equals("ssh", ignoreCase = true)
 
     LaunchedEffect(issuedKey) {
+        if (isSsh) return@LaunchedEffect
         val chunk = issuedKey?.trim().orEmpty()
         if (chunk.isBlank()) return@LaunchedEffect
         // Multi-node free sub: always append into Available nodes (one catalog sub link)
@@ -301,25 +334,41 @@ private fun CatalogDialog(
         onDismissRequest = onDismiss,
         title = if (initial == null) "Add server" else "Edit server",
         eyebrow = "App catalog",
-        subtitle = "Pick SG + US (etc), create keys → one free sub with all nodes",
+        subtitle = if (isSsh) {
+            "SSH over TLS (custom SNI). Password is write-only and never shown again."
+        } else {
+            "Pick SG + US (etc), create keys → one free sub with all nodes"
+        },
         confirmLabel = "Save",
         maxContentHeight = 560,
         onConfirm = confirm@{
             if (id.isBlank() || name.isBlank()) return@confirm
+            if (isSsh) {
+                if (sshHost.isBlank() || sshUser.isBlank()) return@confirm
+                if (sshPassword.isBlank() && initial?.sshPasswordSet != true) return@confirm
+            }
             val expireAt = resolveExpireAt(expireDate, expireDays)
             onSave(
                 id,
                 name,
                 region,
+                protocol.trim().ifBlank { "vless" },
                 tier,
-                uri.ifBlank { null },
-                nodes.ifBlank { null },
+                if (isSsh) null else uri.ifBlank { null },
+                if (isSsh) null else nodes.ifBlank { null },
                 dataGb.toDoubleOrNull(),
                 usedGb.toDoubleOrNull(),
                 expireAt,
                 listWhenDisabled,
                 enabled,
                 sort.toIntOrNull() ?: 0,
+                if (isSsh) sshHost.trim() else null,
+                if (isSsh) sshPort.toIntOrNull() ?: 443 else null,
+                if (isSsh) sshUser.trim() else null,
+                if (isSsh) sshPassword.ifBlank { null } else null,
+                if (isSsh) sshSni.trim() else null,
+                if (isSsh) sshTls else null,
+                if (isSsh) sshAllowInsecure else null,
             )
         },
     ) {
@@ -346,6 +395,13 @@ private fun CatalogDialog(
             colors = adminFieldColors(),
         )
         OutlinedTextField(
+            protocol, { protocol = it },
+            label = { Text("Protocol (vless/ss/ssh)") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
             tier, { tier = it },
             label = { Text("Tier (free/paid)") },
             modifier = Modifier.fillMaxWidth(),
@@ -353,6 +409,82 @@ private fun CatalogDialog(
             colors = adminFieldColors(),
         )
 
+        if (isSsh) {
+            OutlinedTextField(
+                sshHost, { sshHost = it },
+                label = { Text("SSH host") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = adminFieldColors(),
+            )
+            OutlinedTextField(
+                sshPort, { sshPort = it },
+                label = { Text("SSH / TLS port") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = adminFieldColors(),
+            )
+            OutlinedTextField(
+                sshUser, { sshUser = it },
+                label = { Text("SSH username") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = adminFieldColors(),
+            )
+            OutlinedTextField(
+                sshPassword, { sshPassword = it },
+                label = {
+                    Text(
+                        if (initial?.sshPasswordSet == true) {
+                            "SSH password (blank = keep)"
+                        } else {
+                            "SSH password"
+                        },
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = adminFieldColors(),
+            )
+            OutlinedTextField(
+                sshSni, { sshSni = it },
+                label = { Text("TLS SNI (e.g. www.microsoft.com)") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = adminFieldColors(),
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("TLS wrap (stunnel)", color = Ink)
+                Switch(
+                    checked = sshTls,
+                    onCheckedChange = { sshTls = it },
+                    colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+                )
+            }
+            if (!tier.equals("free", ignoreCase = true)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Text("Allow insecure TLS", color = InkMuted)
+                    Switch(
+                        checked = sshAllowInsecure,
+                        onCheckedChange = { sshAllowInsecure = it },
+                        colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+                    )
+                }
+            }
+            Text(
+                "Use a tunnel-only SSH user (no shell/root). See docs/SSH_STUNNEL.md.",
+                style = MaterialTheme.typography.labelSmall,
+                color = InkMuted,
+            )
+        } else {
         Text(
             "Create VLESS keys from VPN nodes → Available nodes (one free sub)",
             style = MaterialTheme.typography.labelMedium,
@@ -472,6 +604,8 @@ private fun CatalogDialog(
             shape = RoundedCornerShape(12.dp),
             colors = adminFieldColors(),
         )
+        } // end non-SSH fields
+
         OutlinedTextField(
             sort, { sort = it },
             label = { Text("Sort") },
