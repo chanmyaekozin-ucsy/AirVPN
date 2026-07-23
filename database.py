@@ -248,7 +248,28 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_mobile_servers_tier
             ON mobile_servers(tier, enabled, sort_order);
+        """
+    )
 
+    # Free catalog sub overrides (manual quota / expiry / nodes)
+    async with db.execute("PRAGMA table_info(mobile_servers)") as cur:
+        ms_cols = {r[1] for r in await cur.fetchall()}
+    for col, ddl in (
+        ("nodes_text", "ALTER TABLE mobile_servers ADD COLUMN nodes_text TEXT"),
+        ("manual_total_bytes", "ALTER TABLE mobile_servers ADD COLUMN manual_total_bytes INTEGER"),
+        ("manual_upload_bytes", "ALTER TABLE mobile_servers ADD COLUMN manual_upload_bytes INTEGER"),
+        ("manual_download_bytes", "ALTER TABLE mobile_servers ADD COLUMN manual_download_bytes INTEGER"),
+        ("manual_expire_at", "ALTER TABLE mobile_servers ADD COLUMN manual_expire_at INTEGER"),
+        (
+            "list_when_disabled",
+            "ALTER TABLE mobile_servers ADD COLUMN list_when_disabled INTEGER NOT NULL DEFAULT 0",
+        ),
+    ):
+        if col not in ms_cols:
+            await db.execute(ddl)
+
+    await db.executescript(
+        """
         CREATE TABLE IF NOT EXISTS vpn_nodes (
             id TEXT PRIMARY KEY,
             name_en TEXT NOT NULL,
@@ -1663,6 +1684,7 @@ async def list_restore_hints(user_id: int) -> list[dict[str, Any]]:
 async def list_mobile_servers(
     *,
     enabled_only: bool = True,
+    include_list_when_disabled: bool = False,
     page: int | None = None,
     per_page: int = 20,
 ) -> list[dict[str, Any]] | dict[str, Any]:
@@ -1674,7 +1696,12 @@ async def list_mobile_servers(
             LEFT JOIN plans p ON p.id = m.plan_id
         """
         args: list[Any] = []
-        if enabled_only:
+        if enabled_only and include_list_when_disabled:
+            sql += (
+                " WHERE m.enabled = 1 OR "
+                "(COALESCE(m.list_when_disabled, 0) = 1 AND LOWER(m.tier) = 'free')"
+            )
+        elif enabled_only:
             sql += " WHERE m.enabled = 1"
         sql += " ORDER BY m.sort_order ASC, m.id ASC"
         if page is None:
@@ -1683,7 +1710,12 @@ async def list_mobile_servers(
         page = max(1, page)
         per_page = min(100, max(1, per_page))
         count_sql = "SELECT COUNT(*) AS c FROM mobile_servers m"
-        if enabled_only:
+        if enabled_only and include_list_when_disabled:
+            count_sql += (
+                " WHERE m.enabled = 1 OR "
+                "(COALESCE(m.list_when_disabled, 0) = 1 AND LOWER(m.tier) = 'free')"
+            )
+        elif enabled_only:
             count_sql += " WHERE m.enabled = 1"
         async with db.execute(count_sql) as cur:
             total = int((await cur.fetchone())["c"])
@@ -1725,6 +1757,12 @@ async def upsert_mobile_server(
     vpn_server_id: str | None = None,
     plan_id: int | None = None,
     config_uri: str | None = None,
+    nodes_text: str | None = None,
+    manual_total_bytes: int | None = None,
+    manual_upload_bytes: int | None = None,
+    manual_download_bytes: int | None = None,
+    manual_expire_at: int | None = None,
+    list_when_disabled: bool = False,
     enabled: bool = True,
     sort_order: int = 0,
 ) -> dict[str, Any]:
@@ -1732,8 +1770,10 @@ async def upsert_mobile_server(
         await db.execute(
             """INSERT INTO mobile_servers
                (public_id, name, region, protocol, tier, vpn_server_id, plan_id,
-                config_uri, enabled, sort_order)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                config_uri, nodes_text, manual_total_bytes, manual_upload_bytes,
+                manual_download_bytes, manual_expire_at, list_when_disabled,
+                enabled, sort_order)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(public_id) DO UPDATE SET
                  name = excluded.name,
                  region = excluded.region,
@@ -1741,7 +1781,13 @@ async def upsert_mobile_server(
                  tier = excluded.tier,
                  vpn_server_id = excluded.vpn_server_id,
                  plan_id = excluded.plan_id,
-                 config_uri = COALESCE(excluded.config_uri, mobile_servers.config_uri),
+                 config_uri = excluded.config_uri,
+                 nodes_text = excluded.nodes_text,
+                 manual_total_bytes = excluded.manual_total_bytes,
+                 manual_upload_bytes = excluded.manual_upload_bytes,
+                 manual_download_bytes = excluded.manual_download_bytes,
+                 manual_expire_at = excluded.manual_expire_at,
+                 list_when_disabled = excluded.list_when_disabled,
                  enabled = excluded.enabled,
                  sort_order = excluded.sort_order
             """,
@@ -1754,6 +1800,12 @@ async def upsert_mobile_server(
                 vpn_server_id,
                 plan_id,
                 config_uri,
+                (nodes_text or "").strip() or None,
+                manual_total_bytes,
+                manual_upload_bytes,
+                manual_download_bytes,
+                manual_expire_at,
+                1 if list_when_disabled else 0,
                 1 if enabled else 0,
                 sort_order,
             ),

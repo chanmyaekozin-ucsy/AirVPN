@@ -69,7 +69,9 @@ fun UsersScreen(
     onManage: (Long) -> Unit,
     onCloseManage: () -> Unit,
     onAdjust: (subId: Int, daysDelta: Int, dataGbDelta: Double) -> Unit,
-    onReplaceKey: (Int) -> Unit,
+    onSetQuota: (subId: Int, dataGb: Double?, daysLeft: Int?) -> Unit,
+    onReplaceKey: (subId: Int, shareUri: String?) -> Unit,
+    onRemoveKey: (subId: Int) -> Unit,
     onCreateKey: (telegramId: Long, serverId: String, dataGb: Double, days: Int, notify: Boolean) -> Unit,
     onClearCreatedFlash: () -> Unit,
     loadingMore: Boolean = false,
@@ -207,7 +209,9 @@ fun UsersScreen(
             lastSubUrl = lastCreatedSubUrl,
             onDismiss = onCloseManage,
             onAdjust = onAdjust,
+            onSetQuota = onSetQuota,
             onReplaceKey = onReplaceKey,
+            onRemoveKey = onRemoveKey,
             onCopy = { text -> copyText(context, text) },
             onClearFlash = onClearCreatedFlash,
         )
@@ -235,14 +239,19 @@ private fun ManageKeysDialog(
     lastSubUrl: String?,
     onDismiss: () -> Unit,
     onAdjust: (Int, Int, Double) -> Unit,
-    onReplaceKey: (Int) -> Unit,
+    onSetQuota: (Int, Double?, Int?) -> Unit,
+    onReplaceKey: (Int, String?) -> Unit,
+    onRemoveKey: (Int) -> Unit,
     onCopy: (String) -> Unit,
     onClearFlash: () -> Unit,
 ) {
     var daysText by remember { mutableStateOf("7") }
     var dataText by remember { mutableStateOf("5") }
+    var setDaysText by remember { mutableStateOf("") }
+    var setDataText by remember { mutableStateOf("") }
     var selectedSub by remember(subs) { mutableStateOf(subs.firstOrNull()?.id) }
     var replaceSubId by remember { mutableStateOf<Int?>(null) }
+    var removeSubId by remember { mutableStateOf<Int?>(null) }
 
     AdminDialog(
         onDismissRequest = onDismiss,
@@ -253,7 +262,7 @@ private fun ManageKeysDialog(
         showDismiss = true,
         confirmLabel = null,
         onConfirm = null,
-        maxContentHeight = 520,
+        maxContentHeight = 560,
     ) {
         if (!lastKey.isNullOrBlank() || !lastSubUrl.isNullOrBlank()) {
             Text("Fresh links", fontWeight = FontWeight.SemiBold, color = Ink)
@@ -286,8 +295,9 @@ private fun ManageKeysDialog(
                     )
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "%.2f GB left · %s".format(
-                            s.dataLeftGb,
+                        "%.2f / %.2f GB · %s".format(
+                            s.dataUsedGb,
+                            s.dataLimitGb,
                             when {
                                 s.daysLeft == null -> "days —"
                                 s.daysLeft < 0 -> "expired"
@@ -310,7 +320,11 @@ private fun ManageKeysDialog(
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         AdminOutlinedButton(
                             text = if (selected) "Selected" else "Select",
-                            onClick = { selectedSub = s.id },
+                            onClick = {
+                                selectedSub = s.id
+                                setDataText = trimNum(s.dataLimitGb)
+                                setDaysText = (s.daysLeft?.coerceAtLeast(0) ?: 0).toString()
+                            },
                             compact = true,
                         )
                         if (!s.vlessKey.isNullOrBlank()) {
@@ -320,20 +334,72 @@ private fun ManageKeysDialog(
                             AdminTextButton("Copy sub", onClick = { onCopy(s.subscriptionUrl) })
                         }
                     }
-                    if (!s.isFree) {
-                        Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(4.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         AdminOutlinedButton(
-                            text = "Replace key",
+                            text = "Replace / paste",
                             onClick = { replaceSubId = s.id },
                             contentColor = Warning,
                             compact = true,
                         )
+                        if (s.isActive || !s.vlessKey.isNullOrBlank()) {
+                            AdminOutlinedButton(
+                                text = "Remove key",
+                                onClick = { removeSubId = s.id },
+                                contentColor = Danger,
+                                compact = true,
+                            )
+                        }
                     }
                 }
             }
 
             QuietDivider()
-            Text("Adjust selected", fontWeight = FontWeight.SemiBold, color = Ink)
+            Text("Set exact quota (selected)", fontWeight = FontWeight.SemiBold, color = Ink)
+            Text(
+                "Type any GB / days — not limited to ± buttons",
+                style = MaterialTheme.typography.labelSmall,
+                color = InkMuted,
+            )
+            Spacer(Modifier.height(6.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = setDataText,
+                    onValueChange = { setDataText = it.filter { c -> c == '.' || c.isDigit() } },
+                    label = { Text("Data GB") },
+                    placeholder = { Text("e.g. 42.5") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = adminFieldColors(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                )
+                OutlinedTextField(
+                    value = setDaysText,
+                    onValueChange = { setDaysText = it.filter { c -> c.isDigit() } },
+                    label = { Text("Days left") },
+                    placeholder = { Text("e.g. 14") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = adminFieldColors(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                )
+            }
+            AdminPrimaryButton(
+                text = "Apply exact values",
+                onClick = {
+                    val id = selectedSub ?: return@AdminPrimaryButton
+                    val gb = setDataText.toDoubleOrNull()
+                    val days = setDaysText.toIntOrNull()
+                    if (gb == null && days == null) return@AdminPrimaryButton
+                    onSetQuota(id, gb, days)
+                },
+                compact = true,
+            )
+
+            QuietDivider()
+            Text("Quick ± adjust", fontWeight = FontWeight.SemiBold, color = Ink)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = daysText,
@@ -400,14 +466,58 @@ private fun ManageKeysDialog(
     }
 
     replaceSubId?.let { subId ->
+        ReplaceKeyDialog(
+            subId = subId,
+            onDismiss = { replaceSubId = null },
+            onConfirm = { paste ->
+                onReplaceKey(subId, paste)
+                replaceSubId = null
+            },
+        )
+    }
+
+    removeSubId?.let { subId ->
         AdminConfirmDialog(
-            onDismissRequest = { replaceSubId = null },
-            title = "Replace key?",
-            message = "Subscription #$subId will get a new VLESS UUID and subscription token. Old links stop working.",
-            confirmLabel = "Replace",
-            onConfirm = { onReplaceKey(subId) },
+            onDismissRequest = { removeSubId = null },
+            title = "Remove key from sub?",
+            message = "Subscription #$subId will be deactivated and the share key removed from the user’s subscription link. Panel client is deleted when possible.",
+            confirmLabel = "Remove",
+            onConfirm = { onRemoveKey(subId) },
             eyebrow = "Danger zone",
             destructive = true,
+        )
+    }
+}
+
+@Composable
+private fun ReplaceKeyDialog(
+    subId: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (shareUri: String?) -> Unit,
+) {
+    var paste by remember { mutableStateOf("") }
+
+    AdminDialog(
+        onDismissRequest = onDismiss,
+        title = "Replace key",
+        eyebrow = "Subscription #$subId",
+        subtitle = "Paste a vless:// / ss:// from 3x-ui or elsewhere — or leave blank to auto-issue from panel (paid only)",
+        confirmLabel = if (paste.isBlank()) "Auto new key" else "Save pasted key",
+        onConfirm = {
+            onConfirm(paste.trim().ifBlank { null })
+        },
+        dismissLabel = "Cancel",
+        showDismiss = true,
+    ) {
+        OutlinedTextField(
+            value = paste,
+            onValueChange = { paste = it },
+            label = { Text("Share key (optional)") },
+            placeholder = { Text("vless://uuid@host:443?…") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+            minLines = 3,
         )
     }
 }
@@ -481,6 +591,9 @@ private fun CreateKeyDialog(
         }
     }
 }
+
+private fun trimNum(v: Double): String =
+    if (v == v.toLong().toDouble()) v.toLong().toString() else "%.3f".format(v).trimEnd('0').trimEnd('.')
 
 private fun copyText(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager

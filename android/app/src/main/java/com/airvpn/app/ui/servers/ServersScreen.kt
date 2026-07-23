@@ -33,6 +33,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,11 +87,16 @@ fun ServersScreen(
     onDeleteImported: (String) -> Unit,
     onRemoveSubscription: (String) -> Unit,
     onBuyPaid: (VpnServerItem) -> Unit,
+    onAppear: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     var showImport by remember { mutableStateOf(false) }
     var keyText by remember { mutableStateOf("") }
     var plansServer by remember { mutableStateOf<VpnServerItem?>(null) }
+
+    LaunchedEffect(Unit) {
+        onAppear()
+    }
 
     val freeServers = catalog.free
     val paidServers = catalog.paid

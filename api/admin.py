@@ -115,6 +115,14 @@ class BanBody(BaseModel):
 class SubAdjustBody(BaseModel):
     days_delta: int = 0
     data_gb_delta: float = 0.0
+    # Absolute setters (Users screen) — applied after deltas when both sent
+    set_data_gb: Optional[float] = Field(default=None, ge=0.001)
+    set_days_left: Optional[int] = Field(default=None, ge=0)
+
+
+class ReplaceKeyBody(BaseModel):
+    """Empty share_uri → provision a new panel key. Otherwise paste a vless:// (or ss://) share."""
+    share_uri: Optional[str] = Field(default=None, max_length=8192)
 
 
 class ManualSubBody(BaseModel):
@@ -135,8 +143,35 @@ class MobileServerBody(BaseModel):
     vpn_server_id: Optional[str] = Field(default=None, max_length=32)
     plan_id: Optional[int] = None
     config_uri: Optional[str] = None
+    nodes_text: Optional[str] = Field(default=None, max_length=100_000)
+    # Manual free-sub usage (bytes). Prefer data_gb helpers from admin UI.
+    manual_total_bytes: Optional[int] = Field(default=None, ge=0)
+    manual_upload_bytes: Optional[int] = Field(default=None, ge=0)
+    manual_download_bytes: Optional[int] = Field(default=None, ge=0)
+    manual_expire_at: Optional[int] = Field(default=None, ge=0)  # unix seconds
+    manual_data_gb: Optional[float] = Field(default=None, ge=0)
+    manual_used_gb: Optional[float] = Field(default=None, ge=0)
+    list_when_disabled: bool = False
     enabled: bool = True
     sort_order: int = 0
+
+
+def _gb_to_bytes(gb: float | None) -> int | None:
+    if gb is None:
+        return None
+    return int(float(gb) * 1024 * 1024 * 1024)
+
+
+def _bytes_to_gb(raw: Any) -> float | None:
+    if raw is None:
+        return None
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if n <= 0:
+        return 0.0
+    return round(n / (1024 * 1024 * 1024), 3)
 
 
 class AdBody(BaseModel):
@@ -268,6 +303,7 @@ def _serialize_ad(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _serialize_mobile_server(row: dict[str, Any]) -> dict[str, Any]:
+    used = int(row.get("manual_upload_bytes") or 0) + int(row.get("manual_download_bytes") or 0)
     return {
         "id": row.get("public_id"),
         "name": row.get("name"),
@@ -277,6 +313,14 @@ def _serialize_mobile_server(row: dict[str, Any]) -> dict[str, Any]:
         "vpn_server_id": row.get("vpn_server_id"),
         "plan_id": row.get("plan_id"),
         "config_uri": row.get("config_uri"),
+        "nodes_text": row.get("nodes_text") or "",
+        "manual_total_bytes": row.get("manual_total_bytes"),
+        "manual_upload_bytes": row.get("manual_upload_bytes"),
+        "manual_download_bytes": row.get("manual_download_bytes"),
+        "manual_expire_at": row.get("manual_expire_at"),
+        "manual_data_gb": _bytes_to_gb(row.get("manual_total_bytes")),
+        "manual_used_gb": _bytes_to_gb(used) if used or row.get("manual_total_bytes") is not None else None,
+        "list_when_disabled": bool(row.get("list_when_disabled")),
         "enabled": bool(row.get("enabled")),
         "sort_order": int(row.get("sort_order") or 0),
         "plan_title": row.get("plan_title"),
@@ -761,6 +805,8 @@ async def admin_adjust_subscription(
             sub_id,
             days_delta=body.days_delta,
             data_gb_delta=body.data_gb_delta,
+            set_data_gb=body.set_data_gb,
+            set_days_left=body.set_days_left,
         )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -775,18 +821,39 @@ async def admin_adjust_subscription(
 @router.post("/subscriptions/{sub_id}/replace-key")
 async def admin_replace_subscription_key(
     sub_id: int,
+    body: ReplaceKeyBody = ReplaceKeyBody(),
     _admin_id: int = Depends(require_admin),
 ) -> dict[str, Any]:
     from services.admin_subs import replace_subscription_key
 
+    share = (body.share_uri or "").strip() or None
     try:
-        sub = await replace_subscription_key(sub_id)
+        sub = await replace_subscription_key(sub_id, share_uri=share)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("replace_subscription_key failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"status": "ok", "subscription": sub}
+
+
+@router.post("/subscriptions/{sub_id}/remove-key")
+async def admin_remove_subscription_key(
+    sub_id: int,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    from services.admin_subs import remove_subscription_key
+
+    try:
+        sub = await remove_subscription_key(sub_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("remove_subscription_key failed")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"status": "ok", "subscription": sub}
 
@@ -838,23 +905,42 @@ async def admin_upsert_catalog(
 ) -> dict[str, Any]:
     tier = (body.tier or "free").strip().lower()
     config_uri = (body.config_uri or "").strip() or None
+    nodes_text = (body.nodes_text or "").strip() or None
     if tier == "free":
-        if not config_uri:
+        has_share = False
+        if config_uri:
+            low = config_uri.lower()
+            has_share = (
+                low.startswith("vless://")
+                or low.startswith("ss://")
+                or low.startswith("http://")
+                or low.startswith("https://")
+            )
+            if not has_share:
+                raise HTTPException(
+                    status_code=400,
+                    detail="config_uri must be vless://, ss://, or an http(s) subscription URL",
+                )
+        has_nodes = bool(nodes_text and ("vless://" in nodes_text.lower() or "ss://" in nodes_text.lower()))
+        if not has_share and not has_nodes:
             raise HTTPException(
                 status_code=400,
-                detail="Free servers need config_uri (vless://, ss://, or https:// subscription)",
+                detail="Free servers need a config_uri and/or nodes_text (vless:// / ss:// lines)",
             )
-        low = config_uri.lower()
-        if not (
-            low.startswith("vless://")
-            or low.startswith("ss://")
-            or low.startswith("http://")
-            or low.startswith("https://")
-        ):
-            raise HTTPException(
-                status_code=400,
-                detail="config_uri must be vless://, ss://, or an http(s) subscription URL",
-            )
+
+    total_bytes = body.manual_total_bytes
+    if body.manual_data_gb is not None:
+        total_bytes = _gb_to_bytes(body.manual_data_gb)
+    used_bytes = None
+    if body.manual_used_gb is not None:
+        used_bytes = _gb_to_bytes(body.manual_used_gb)
+    upload_bytes = body.manual_upload_bytes
+    download_bytes = body.manual_download_bytes
+    if used_bytes is not None:
+        # Store used entirely in download for simplicity when admin sets used GB
+        upload_bytes = 0
+        download_bytes = used_bytes
+
     row = await db.upsert_mobile_server(
         public_id=body.public_id,
         name=body.name,
@@ -864,6 +950,12 @@ async def admin_upsert_catalog(
         vpn_server_id=body.vpn_server_id,
         plan_id=body.plan_id,
         config_uri=config_uri,
+        nodes_text=nodes_text,
+        manual_total_bytes=total_bytes,
+        manual_upload_bytes=upload_bytes,
+        manual_download_bytes=download_bytes,
+        manual_expire_at=body.manual_expire_at,
+        list_when_disabled=body.list_when_disabled,
         enabled=body.enabled,
         sort_order=body.sort_order,
     )

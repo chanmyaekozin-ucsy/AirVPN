@@ -311,8 +311,20 @@ private fun AdminRoot(vm: AdminViewModel) {
                                     serverIds = state.servers.map { it.id },
                                     onManage = vm::openUserKeys,
                                     onCloseManage = vm::closeUserKeys,
-                                    onAdjust = vm::adjustSubscription,
-                                    onReplaceKey = vm::replaceSubscriptionKey,
+                                    onAdjust = { id, days, gb ->
+                                        vm.adjustSubscription(id, daysDelta = days, dataGbDelta = gb)
+                                    },
+                                    onSetQuota = { id, gb, days ->
+                                        vm.adjustSubscription(
+                                            id,
+                                            setDataGb = gb,
+                                            setDaysLeft = days,
+                                        )
+                                    },
+                                    onReplaceKey = { id, uri ->
+                                        vm.replaceSubscriptionKey(id, uri)
+                                    },
+                                    onRemoveKey = vm::removeSubscriptionKey,
                                     onCreateKey = { tid, server, gb, days, notify ->
                                         vm.createManualSubscription(tid, server, gb, days, notify)
                                     },

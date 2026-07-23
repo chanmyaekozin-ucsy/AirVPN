@@ -419,56 +419,133 @@ def _public_from_sub_node(node: dict[str, Any], *, online: bool) -> dict[str, An
     return out
 
 
+def _has_manual_userinfo(row: dict[str, Any]) -> bool:
+    return any(
+        row.get(k) is not None
+        for k in (
+            "manual_total_bytes",
+            "manual_upload_bytes",
+            "manual_download_bytes",
+            "manual_expire_at",
+        )
+    )
+
+
+def _merge_manual_userinfo(row: dict[str, Any], userinfo: dict[str, Any]) -> dict[str, Any]:
+    out = dict(userinfo or {})
+    if row.get("manual_upload_bytes") is not None:
+        out["upload"] = int(row.get("manual_upload_bytes") or 0)
+    if row.get("manual_download_bytes") is not None:
+        out["download"] = int(row.get("manual_download_bytes") or 0)
+    if row.get("manual_total_bytes") is not None:
+        out["total"] = int(row.get("manual_total_bytes") or 0)
+    if row.get("manual_expire_at") is not None:
+        out["expire"] = int(row.get("manual_expire_at") or 0)
+    return out
+
+
+def _free_catalog_visible(row: dict[str, Any]) -> bool:
+    if row.get("enabled"):
+        return True
+    return bool(row.get("list_when_disabled")) and (row.get("tier") or "").lower() == "free"
+
+
 def _free_sub_meta(
     row: dict[str, Any],
     nodes: list[dict[str, Any]],
     userinfo: dict[str, Any],
 ) -> dict[str, Any]:
     parent_id = row["public_id"]
+    info = _merge_manual_userinfo(row, userinfo)
     return {
         "id": parent_id,
         "name": row.get("name") or parent_id,
-        "upload": int(userinfo.get("upload") or 0),
-        "download": int(userinfo.get("download") or 0),
-        "total": int(userinfo.get("total") or 0),
-        "expire": int(userinfo.get("expire") or 0),
+        "upload": int(info.get("upload") or 0),
+        "download": int(info.get("download") or 0),
+        "total": int(info.get("total") or 0),
+        "expire": int(info.get("expire") or 0),
         "node_count": len(nodes),
     }
+
+
+async def _free_nodes_and_userinfo(
+    row: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any], bool]:
+    """
+    Resolve free catalog nodes + optional upstream userinfo.
+    Returns (nodes, userinfo, as_subscription).
+    as_subscription=True → expand to child nodes + free_subscriptions meta.
+    """
+    from services.sub_link import (
+        is_share_uri,
+        is_subscription_url,
+        parse_subscription_nodes,
+    )
+
+    parent_id = row["public_id"]
+    name = row.get("name") or parent_id
+    region = row.get("region") or ""
+    nodes_text = (row.get("nodes_text") or "").strip()
+    uri = (row.get("config_uri") or "").strip()
+    manual = _has_manual_userinfo(row)
+
+    if nodes_text:
+        nodes = parse_subscription_nodes(
+            nodes_text,
+            parent_id=parent_id,
+            parent_name=name,
+            parent_region=region,
+        )
+        return nodes, {}, True
+
+    if is_subscription_url(uri):
+        nodes, userinfo = await _cached_free_sub(row)
+        return nodes, userinfo, True
+
+    if is_share_uri(uri) and manual:
+        nodes = parse_subscription_nodes(
+            uri,
+            parent_id=parent_id,
+            parent_name=name,
+            parent_region=region,
+        )
+        return nodes, {}, True
+
+    return [], {}, False
 
 
 async def _free_publics_for_row(
     row: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
-    """One share URI → one server; subscription URL → nodes + usage meta."""
-    from services.sub_link import is_subscription_url
+    """One share URI → one server; sub / manual nodes → nodes + usage meta."""
+    nodes, userinfo, as_sub = await _free_nodes_and_userinfo(row)
+    if not as_sub:
+        return [await _server_public(row)], None
 
-    uri = (row.get("config_uri") or "").strip()
-    if is_subscription_url(uri):
-        nodes, userinfo = await _cached_free_sub(row)
-        meta = _free_sub_meta(row, nodes, userinfo)
-        if not nodes:
-            base = await _server_public(row, online=False)
-            base["name"] = f"{row.get('name') or row['public_id']} (sub empty)"
-            base["parent_id"] = row["public_id"]
-            base["from_subscription"] = True
-            return [base], meta
-        sample = nodes[:12]
+    meta = _free_sub_meta(row, nodes, userinfo)
+    if not nodes:
+        base = await _server_public(row, online=False)
+        base["name"] = f"{row.get('name') or row['public_id']} (sub empty)"
+        base["parent_id"] = row["public_id"]
+        base["from_subscription"] = True
+        return [base], meta
 
-        async def _online_node(n: dict[str, Any]) -> bool:
-            host = n.get("host")
-            port = int(n.get("port") or 0)
-            if not host or port <= 0:
-                return True
-            return await _probe_tcp(str(host), port)
+    sample = nodes[:12]
 
-        flags = await asyncio.gather(*[_online_node(n) for n in sample])
-        online_map = {sample[i]["id"]: flags[i] for i in range(len(sample))}
-        publics = [
-            _public_from_sub_node(n, online=online_map.get(n["id"], True))
-            for n in nodes
-        ]
-        return publics, meta
-    return [await _server_public(row)], None
+    async def _online_node(n: dict[str, Any]) -> bool:
+        host = n.get("host")
+        port = int(n.get("port") or 0)
+        if not host or port <= 0:
+            return True
+        return await _probe_tcp(str(host), port)
+
+    flags = await asyncio.gather(*[_online_node(n) for n in sample])
+    online_map = {sample[i]["id"]: flags[i] for i in range(len(sample))}
+    publics = [
+        _public_from_sub_node(n, online=online_map.get(n["id"], True))
+        for n in nodes
+    ]
+    return publics, meta
 
 
 async def _resolve_free_share_uri(server_id: str) -> tuple[str, str]:
@@ -480,36 +557,41 @@ async def _resolve_free_share_uri(server_id: str) -> tuple[str, str]:
 
     parent_id, node_key = split_node_public_id(server_id)
     row = await db.get_mobile_server(parent_id)
-    if not row or not row.get("enabled"):
+    if not row or not _free_catalog_visible(row):
         raise HTTPException(404, "Server not found")
     if (row.get("tier") or "free").lower() != "free":
         raise HTTPException(404, "Server not found")
 
+    nodes_text = (row.get("nodes_text") or "").strip()
     config_uri = (row.get("config_uri") or "").strip()
-    if not config_uri:
-        raise HTTPException(503, "Free server not configured")
 
-    if is_subscription_url(config_uri):
-        nodes = await _cached_free_sub_nodes(row)
+    if nodes_text or is_subscription_url(config_uri):
+        nodes, _userinfo, _as_sub = await _free_nodes_and_userinfo(row)
+        if not nodes and is_subscription_url(config_uri):
+            # Cache may have rotated — refresh once for remote subs
+            from services.sub_link import invalidate_subscription_cache
+
+            invalidate_subscription_cache(parent_id)
+            nodes, _, _ = await _free_nodes_and_userinfo(row)
         if not nodes:
             raise HTTPException(503, "Free subscription has no nodes")
         if node_key:
             full_id = f"{parent_id}::{node_key}"
             match = next((n for n in nodes if n["id"] == full_id), None)
-            if not match:
-                # Cache may have rotated — refresh once
+            if not match and is_subscription_url(config_uri):
                 from services.sub_link import invalidate_subscription_cache
 
                 invalidate_subscription_cache(parent_id)
-                nodes = await _cached_free_sub_nodes(row)
+                nodes, _, _ = await _free_nodes_and_userinfo(row)
                 match = next((n for n in nodes if n["id"] == full_id), None)
             if not match:
                 raise HTTPException(404, "Subscription node not found — refresh servers")
             return match["uri"], match.get("protocol") or "vless"
-        # Connecting to parent id: use first node
         first = nodes[0]
         return first["uri"], first.get("protocol") or "vless"
 
+    if not config_uri:
+        raise HTTPException(503, "Free server not configured")
     if not is_share_uri(config_uri) and node_key:
         raise HTTPException(404, "Server not found")
     if not is_share_uri(config_uri):
@@ -808,7 +890,10 @@ async def servers(request: Request) -> dict[str, Any]:
         per_min=int(getattr(config, "MOBILE_RATE_SERVERS_PER_MIN", 20) or 20),
         per_hour=int(getattr(config, "MOBILE_RATE_SERVERS_PER_HOUR", 120) or 120),
     )
-    rows = await db.list_mobile_servers(enabled_only=True)
+    rows = await db.list_mobile_servers(
+        enabled_only=True,
+        include_list_when_disabled=True,
+    )
     free_rows = [r for r in rows if (r.get("tier") or "") == "free"]
     paid_rows = [r for r in rows if (r.get("tier") or "") == "paid"]
 
@@ -873,10 +958,14 @@ async def connect(
 
     parent_id, _node_key = split_node_public_id(body.server_id)
     row = await db.get_mobile_server(parent_id)
-    if not row or not row.get("enabled"):
+    if not row:
         raise HTTPException(404, "Server not found")
-
     tier = (row.get("tier") or "free").lower()
+    if tier == "free":
+        if not _free_catalog_visible(row):
+            raise HTTPException(404, "Server not found")
+    elif not row.get("enabled"):
+        raise HTTPException(404, "Server not found")
     config_uri: Optional[str] = None
     protocol = (row.get("protocol") or "vless").lower()
 

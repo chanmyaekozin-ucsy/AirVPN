@@ -179,6 +179,13 @@ interface AdminApi {
     suspend fun replaceSubscriptionKey(
         @Header("Authorization") auth: String,
         @Path("id") id: Int,
+        @Body body: ReplaceKeyBody = ReplaceKeyBody(),
+    ): SubWrapDto
+
+    @POST("v1/admin/subscriptions/{id}/remove-key")
+    suspend fun removeSubscriptionKey(
+        @Header("Authorization") auth: String,
+        @Path("id") id: Int,
     ): SubWrapDto
 
     @POST("v1/admin/subscriptions/create")
@@ -577,6 +584,12 @@ data class SubWrapDto(val status: String? = null, val subscription: Subscription
 data class SubAdjustBody(
     @Json(name = "days_delta") val daysDelta: Int = 0,
     @Json(name = "data_gb_delta") val dataGbDelta: Double = 0.0,
+    @Json(name = "set_data_gb") val setDataGb: Double? = null,
+    @Json(name = "set_days_left") val setDaysLeft: Int? = null,
+)
+
+data class ReplaceKeyBody(
+    @Json(name = "share_uri") val shareUri: String? = null,
 )
 
 data class ManualSubBody(
@@ -597,6 +610,11 @@ data class CatalogServerDto(
     val enabled: Boolean = true,
     @Json(name = "sort_order") val sortOrder: Int = 0,
     @Json(name = "config_uri") val configUri: String? = null,
+    @Json(name = "nodes_text") val nodesText: String? = null,
+    @Json(name = "manual_data_gb") val manualDataGb: Double? = null,
+    @Json(name = "manual_used_gb") val manualUsedGb: Double? = null,
+    @Json(name = "manual_expire_at") val manualExpireAt: Long? = null,
+    @Json(name = "list_when_disabled") val listWhenDisabled: Boolean = false,
 ) {
     fun toModel() = CatalogServer(
         id = id,
@@ -607,6 +625,11 @@ data class CatalogServerDto(
         enabled = enabled,
         sortOrder = sortOrder,
         configUri = configUri,
+        nodesText = nodesText.orEmpty(),
+        manualDataGb = manualDataGb,
+        manualUsedGb = manualUsedGb,
+        manualExpireAt = manualExpireAt,
+        listWhenDisabled = listWhenDisabled,
     )
 }
 
@@ -625,6 +648,11 @@ data class CatalogBody(
     val protocol: String = "vless",
     val tier: String = "free",
     @Json(name = "config_uri") val configUri: String? = null,
+    @Json(name = "nodes_text") val nodesText: String? = null,
+    @Json(name = "manual_data_gb") val manualDataGb: Double? = null,
+    @Json(name = "manual_used_gb") val manualUsedGb: Double? = null,
+    @Json(name = "manual_expire_at") val manualExpireAt: Long? = null,
+    @Json(name = "list_when_disabled") val listWhenDisabled: Boolean = false,
     val enabled: Boolean = true,
     @Json(name = "sort_order") val sortOrder: Int = 0,
 )

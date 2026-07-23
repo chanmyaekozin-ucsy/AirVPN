@@ -94,6 +94,11 @@ class AirVpnViewModel : ViewModel() {
     private var pingJob: Job? = null
     private var geoJob: Job? = null
     private var connectedPingJob: Job? = null
+    private var lastServersTabRefreshMs: Long = 0L
+
+    companion object {
+        private const val SERVERS_TAB_REFRESH_MIN_MS = 15_000L
+    }
 
     fun bootstrap(store: SessionStore, context: Context) {
         session = store
@@ -409,6 +414,17 @@ class AirVpnViewModel : ViewModel() {
 
     fun refreshSubscription() {
         refreshAllSubscriptions(silent = false)
+    }
+
+    /**
+     * Called when the Servers tab becomes visible.
+     * Silently refreshes imported + catalog subscription usage/nodes (throttled).
+     */
+    fun onServersTabOpened() {
+        val now = System.currentTimeMillis()
+        if (now - lastServersTabRefreshMs < SERVERS_TAB_REFRESH_MIN_MS) return
+        lastServersTabRefreshMs = now
+        refreshAllSubscriptions(silent = true)
     }
 
     fun refreshAllSubscriptions(silent: Boolean) {

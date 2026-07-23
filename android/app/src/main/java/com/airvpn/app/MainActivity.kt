@@ -356,6 +356,7 @@ fun AirVpnRoot(initialImportCode: String?, vm: AirVpnViewModel = viewModel()) {
                 subscriptions = ui.subscriptions,
                 pings = ui.pings,
                 pinging = ui.pinging,
+                onAppear = { vm.onServersTabOpened() },
                 onRefresh = { vm.refreshServers() },
                 onSelect = { vm.selectServer(it) },
                 onImportPaste = { vm.importPaste(it) },

@@ -14,6 +14,7 @@ import com.airvpn.admin.data.api.LoginBody
 import com.airvpn.admin.data.api.ManualSubBody
 import com.airvpn.admin.data.api.PlanBody
 import com.airvpn.admin.data.api.RejectBody
+import com.airvpn.admin.data.api.ReplaceKeyBody
 import com.airvpn.admin.data.api.SubAdjustBody
 import com.airvpn.admin.data.api.VpnNodeBody
 import com.airvpn.admin.data.local.SessionStore
@@ -591,8 +592,23 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun adjustSubscription(subId: Int, daysDelta: Int, dataGbDelta: Double) = launch("adjust") {
-        api.adjustSubscription(auth(), subId, SubAdjustBody(daysDelta, dataGbDelta))
+    fun adjustSubscription(
+        subId: Int,
+        daysDelta: Int = 0,
+        dataGbDelta: Double = 0.0,
+        setDataGb: Double? = null,
+        setDaysLeft: Int? = null,
+    ) = launch("adjust") {
+        api.adjustSubscription(
+            auth(),
+            subId,
+            SubAdjustBody(
+                daysDelta = daysDelta,
+                dataGbDelta = dataGbDelta,
+                setDataGb = setDataGb,
+                setDaysLeft = setDaysLeft,
+            ),
+        )
         val tid = _state.value.managedTelegramId
         if (tid != null) {
             val res = api.userSubscriptions(auth(), tid)
@@ -608,8 +624,12 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         refreshStats()
     }
 
-    fun replaceSubscriptionKey(subId: Int) = launch("replaceKey") {
-        val res = api.replaceSubscriptionKey(auth(), subId)
+    fun replaceSubscriptionKey(subId: Int, shareUri: String? = null) = launch("replaceKey") {
+        val res = api.replaceSubscriptionKey(
+            auth(),
+            subId,
+            ReplaceKeyBody(shareUri = shareUri?.ifBlank { null }),
+        )
         val sub = res.subscription?.toModel()
         val tid = _state.value.managedTelegramId
         if (tid != null) {
@@ -617,7 +637,11 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
             _state.update {
                 it.copy(
                     managedSubs = list.subscriptions.map { s -> s.toModel() },
-                    message = "New key issued for #$subId",
+                    message = if (shareUri.isNullOrBlank()) {
+                        "New key issued for #$subId"
+                    } else {
+                        "Pasted key saved for #$subId"
+                    },
                     lastCreatedKey = sub?.vlessKey,
                     lastCreatedSubUrl = sub?.subscriptionUrl,
                 )
@@ -625,12 +649,29 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             _state.update {
                 it.copy(
-                    message = "New key issued for #$subId",
+                    message = "Key updated for #$subId",
                     lastCreatedKey = sub?.vlessKey,
                     lastCreatedSubUrl = sub?.subscriptionUrl,
                 )
             }
         }
+    }
+
+    fun removeSubscriptionKey(subId: Int) = launch("removeKey") {
+        api.removeSubscriptionKey(auth(), subId)
+        val tid = _state.value.managedTelegramId
+        if (tid != null) {
+            val list = api.userSubscriptions(auth(), tid)
+            _state.update {
+                it.copy(
+                    managedSubs = list.subscriptions.map { s -> s.toModel() },
+                    message = "Key removed from sub link (#$subId)",
+                )
+            }
+        } else {
+            _state.update { it.copy(message = "Key removed (#$subId)") }
+        }
+        refreshStats()
     }
 
     fun createManualSubscription(
@@ -709,6 +750,11 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         region: String,
         tier: String,
         configUri: String?,
+        nodesText: String?,
+        manualDataGb: Double?,
+        manualUsedGb: Double?,
+        manualExpireAt: Long?,
+        listWhenDisabled: Boolean,
         enabled: Boolean,
         sortOrder: Int,
     ) = launch("saveCatalog") {
@@ -720,6 +766,11 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
                 region = region,
                 tier = tier,
                 configUri = configUri?.ifBlank { null },
+                nodesText = nodesText?.ifBlank { null },
+                manualDataGb = manualDataGb,
+                manualUsedGb = manualUsedGb,
+                manualExpireAt = manualExpireAt,
+                listWhenDisabled = listWhenDisabled,
                 enabled = enabled,
                 sortOrder = sortOrder,
             ),

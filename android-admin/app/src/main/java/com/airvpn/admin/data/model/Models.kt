@@ -108,6 +108,11 @@ data class CatalogServer(
     val enabled: Boolean,
     val sortOrder: Int,
     val configUri: String?,
+    val nodesText: String = "",
+    val manualDataGb: Double? = null,
+    val manualUsedGb: Double? = null,
+    val manualExpireAt: Long? = null,
+    val listWhenDisabled: Boolean = false,
 )
 
 data class AdItem(

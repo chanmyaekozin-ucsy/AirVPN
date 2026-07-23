@@ -27,20 +27,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import com.airvpn.app.data.model.AdCreative
+import com.airvpn.app.ui.theme.Cyan
 import com.airvpn.app.ui.theme.Hairline
 import com.airvpn.app.ui.theme.Ink
 import com.airvpn.app.ui.theme.InkMuted
 import com.airvpn.app.ui.theme.Navy
 import com.airvpn.app.util.AdImagePrefetcher
 import kotlinx.coroutines.delay
+import kotlin.random.Random
 
 /**
  * Horizontal first-party banner (admin-managed image).
@@ -98,7 +104,8 @@ fun PrefetchAdImages(ads: List<AdCreative>) {
 }
 
 /**
- * Connect interstitial: shows ad image sized by its aspect ratio, mandatory ~3s wait.
+ * Connect interstitial: shows ad image sized by its aspect ratio.
+ * Wait duration is random 3–5 seconds on each connect attempt.
  * Images are prefetched on home, so the creative should already be cached.
  */
 @Composable
@@ -106,12 +113,15 @@ fun ConnectAdDialog(
     ad: AdCreative,
     onFinished: () -> Unit,
     onClickAd: () -> Unit,
-    seconds: Int = 3,
+    seconds: Int? = null,
 ) {
-    var remaining by remember(ad.id) { mutableIntStateOf(seconds) }
+    val waitSeconds = remember {
+        seconds?.coerceIn(3, 5) ?: Random.nextInt(3, 6) // 3, 4, or 5
+    }
+    var remaining by remember { mutableIntStateOf(waitSeconds) }
 
-    LaunchedEffect(ad.id) {
-        for (sec in seconds downTo 1) {
+    LaunchedEffect(waitSeconds) {
+        for (sec in waitSeconds downTo 1) {
             remaining = sec
             delay(1_000)
         }
@@ -171,15 +181,41 @@ fun ConnectAdDialog(
                 },
             )
             Spacer(Modifier.height(14.dp))
-            Text(
-                text = if (remaining > 0) {
-                    "Connecting in ${remaining}s…"
-                } else {
-                    "Connecting…"
-                },
-                style = MaterialTheme.typography.bodyMedium,
-                color = InkMuted,
-            )
+            if (remaining > 0) {
+                Text(
+                    text = buildAnnotatedString {
+                        append("Connecting in ")
+                        withStyle(
+                            SpanStyle(
+                                color = Cyan,
+                                fontSize = 28.sp,
+                                fontWeight = FontWeight.Bold,
+                            ),
+                        ) {
+                            append("$remaining")
+                        }
+                        withStyle(
+                            SpanStyle(
+                                color = Cyan,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            ),
+                        ) {
+                            append("s")
+                        }
+                        append("…")
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = InkMuted,
+                    textAlign = TextAlign.Center,
+                )
+            } else {
+                Text(
+                    text = "Connecting…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = InkMuted,
+                )
+            }
         }
     }
 }

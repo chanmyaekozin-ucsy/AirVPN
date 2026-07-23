@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import logging
 import math
+import re
+import uuid as uuid_lib
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from urllib.parse import unquote
 
 import database as db
 from services.key_replacement import delete_panel_client
@@ -15,12 +18,49 @@ from vpn_servers import get_server
 
 logger = logging.getLogger(__name__)
 
+_UUID_RE = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+)
+
 
 def _parse_expires(value: str) -> datetime:
     exp = datetime.fromisoformat(value)
     if exp.tzinfo is None:
         exp = exp.replace(tzinfo=db.MMT)
     return exp
+
+
+def _normalize_share_uri(raw: str) -> str:
+    uri = (raw or "").strip()
+    # Allow accidental wrapping / multi-line paste — take first share line
+    for line in uri.splitlines():
+        t = line.strip()
+        if not t or t.startswith("#"):
+            continue
+        low = t.lower()
+        if low.startswith("vless://") or low.startswith("ss://"):
+            return t
+        for part in re.split(r"\s+", t):
+            pl = part.lower()
+            if pl.startswith("vless://") or pl.startswith("ss://"):
+                return part
+    raise ValueError("Paste a vless:// or ss:// share key")
+
+
+def _uuid_from_share_uri(uri: str) -> str:
+    low = uri.lower()
+    if low.startswith("vless://"):
+        # vless://uuid@host:port?...#name
+        rest = uri[8:]
+        at = rest.find("@")
+        candidate = unquote(rest[:at] if at > 0 else rest.split("?", 1)[0].split("#", 1)[0])
+        if _UUID_RE.match(candidate):
+            return candidate
+        raise ValueError("vless:// share key is missing a valid UUID")
+    if low.startswith("ss://"):
+        # No stable UUID — keep a deterministic placeholder so DB NOT NULL holds
+        return str(uuid_lib.uuid5(uuid_lib.NAMESPACE_URL, uri.strip()))
+    raise ValueError("Unsupported share key")
 
 
 def _serialize_sub(row: dict[str, Any]) -> dict[str, Any]:
@@ -115,8 +155,15 @@ async def adjust_subscription(
     *,
     days_delta: int = 0,
     data_gb_delta: float = 0.0,
+    set_data_gb: float | None = None,
+    set_days_left: int | None = None,
 ) -> dict[str, Any]:
-    if days_delta == 0 and abs(data_gb_delta) < 1e-9:
+    if (
+        days_delta == 0
+        and abs(data_gb_delta) < 1e-9
+        and set_data_gb is None
+        and set_days_left is None
+    ):
         raise ValueError("Nothing to adjust")
 
     sub = await db.get_subscription_by_id(sub_id)
@@ -132,16 +179,26 @@ async def adjust_subscription(
 
     expires_at = str(sub.get("expires_at") or db.mmt_now().isoformat())
     exp = _parse_expires(expires_at)
-    if days_delta:
+    if set_days_left is not None:
+        # Absolute: expire after N full days from now (0 → expire now)
+        exp = db.mmt_now() + timedelta(days=int(set_days_left))
+    elif days_delta:
         exp = exp + timedelta(days=int(days_delta))
     # Keep at least 1 hour ahead of now if still active intent
-    if exp <= db.mmt_now() and days_delta >= 0:
+    if exp <= db.mmt_now() and (
+        (set_days_left is not None and set_days_left > 0)
+        or (set_days_left is None and days_delta >= 0)
+    ):
         exp = db.mmt_now() + timedelta(hours=1)
     new_expires = exp.isoformat()
 
     limit = float(sub.get("data_limit_gb") or 0)
     bonus_mb = int(sub.get("bonus_data_mb") or 0)
-    if data_gb_delta:
+    if set_data_gb is not None:
+        # Absolute total quota → store in data_limit_gb, clear bonus
+        limit = max(0.001, float(set_data_gb))
+        bonus_mb = 0
+    elif data_gb_delta:
         # Prefer adjusting bonus for small tweaks; large adds go to limit
         if abs(data_gb_delta) < 5 and data_gb_delta != int(data_gb_delta):
             bonus_mb = max(0, bonus_mb + int(round(data_gb_delta * 1024)))
@@ -153,7 +210,11 @@ async def adjust_subscription(
         data_limit_gb=limit,
         bonus_data_mb=bonus_mb,
         expires_at=new_expires,
-        is_active=True if exp > db.mmt_now() else bool(sub.get("is_active")),
+        is_active=(
+            exp > db.mmt_now()
+            if (set_days_left is not None or days_delta)
+            else (True if exp > db.mmt_now() else bool(sub.get("is_active")))
+        ),
     )
     if not updated:
         raise RuntimeError("Update failed")
@@ -168,13 +229,27 @@ async def adjust_subscription(
     return _serialize_sub(updated)
 
 
-async def replace_subscription_key(sub_id: int) -> dict[str, Any]:
-    """Issue a fresh VLESS on the same server, keeping remaining GB + expiry."""
+async def replace_subscription_key(
+    sub_id: int,
+    *,
+    share_uri: str | None = None,
+) -> dict[str, Any]:
+    """
+    Replace the share key on a subscription.
+    - share_uri set → paste external/manual vless:// or ss:// (no panel provision)
+    - share_uri empty → provision a fresh VLESS on the same server (paid only)
+    Keeps remaining GB + expiry.
+    """
     sub = await db.get_subscription_by_id(sub_id)
     if not sub:
         raise LookupError("Subscription not found")
+
+    pasted = (share_uri or "").strip()
+    if pasted:
+        return await _replace_with_pasted_share(sub, pasted)
+
     if sub.get("is_free"):
-        raise ValueError("Use daily gift flow for free keys")
+        raise ValueError("Paste a share key for free subs, or use daily gift flow")
 
     try:
         synced = await sync_subscriptions_usage([sub])
@@ -195,7 +270,6 @@ async def replace_subscription_key(sub_id: int) -> dict[str, Any]:
     expiry_ms = int(exp.astimezone(timezone.utc).timestamp() * 1000)
     total_bytes = max(1024 * 1024, int(remaining * (1024**3)))
 
-    # Remove old panel client (best effort)
     await delete_panel_client(sub)
 
     try:
@@ -218,11 +292,54 @@ async def replace_subscription_key(sub_id: int) -> dict[str, Any]:
         panel_email=email,
         is_active=True,
     )
-    # Reset used since new client starts at 0
     await db.update_subscription_usage(sub_id, 0.0)
     updated = await db.get_subscription_by_id(sub_id)
     if not updated:
         raise RuntimeError("Replace succeeded but reload failed")
+    return _serialize_sub(updated)
+
+
+async def _replace_with_pasted_share(sub: dict[str, Any], raw: str) -> dict[str, Any]:
+    """Store a pasted share key; remove old panel client if any."""
+    uri = _normalize_share_uri(raw)
+    uid = _uuid_from_share_uri(uri)
+    sub_id = int(sub["id"])
+
+    await delete_panel_client(sub)
+
+    updated = await db.update_subscription_quota(
+        sub_id,
+        vless_uuid=uid,
+        vless_key=uri,
+        panel_email="",
+        is_active=True,
+    )
+    if not updated:
+        raise RuntimeError("Replace with pasted key failed")
+    return _serialize_sub(updated)
+
+
+async def remove_subscription_key(sub_id: int) -> dict[str, Any]:
+    """
+    Deactivate a subscription and delete its panel client.
+    The share key disappears from the user's /sub/{token} link.
+    """
+    sub = await db.get_subscription_by_id(sub_id)
+    if not sub:
+        raise LookupError("Subscription not found")
+    if not sub.get("is_active") and not (sub.get("vless_key") or "").strip():
+        raise ValueError("Key already removed")
+
+    await delete_panel_client(sub)
+
+    updated = await db.update_subscription_quota(
+        sub_id,
+        is_active=False,
+        vless_key="",
+        panel_email="",
+    )
+    if not updated:
+        raise RuntimeError("Remove failed")
     return _serialize_sub(updated)
 
 
@@ -281,7 +398,6 @@ async def create_manual_subscription(
         data_limit_gb=float(data_gb),
         expires_at=expires_at,
     )
-    # Attach user fields for serialize
     row = {
         **row,
         "telegram_id": telegram_id,
