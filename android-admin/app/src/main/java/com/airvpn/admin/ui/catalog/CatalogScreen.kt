@@ -10,9 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -246,7 +244,6 @@ private fun CatalogDialog(
     var listWhenDisabled by remember { mutableStateOf(initial?.listWhenDisabled ?: false) }
     var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
     var sort by remember { mutableStateOf(initial?.sortOrder?.toString() ?: "0") }
-    val scroll = rememberScrollState()
 
     AdminDialog(
         onDismissRequest = onDismiss,
@@ -254,6 +251,7 @@ private fun CatalogDialog(
         eyebrow = "App catalog",
         subtitle = "Free: manual nodes + data/expiry, or https:// sub / vless://",
         confirmLabel = "Save",
+        maxContentHeight = 560,
         onConfirm = confirm@{
             if (id.isBlank() || name.isBlank()) return@confirm
             val expireAt = resolveExpireAt(expireDate, expireDays)
@@ -273,127 +271,120 @@ private fun CatalogDialog(
             )
         },
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .verticalScroll(scroll),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            OutlinedTextField(
-                id, { id = it },
-                label = { Text("Public id") },
-                enabled = initial == null,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
+        OutlinedTextField(
+            id, { id = it },
+            label = { Text("Public id") },
+            enabled = initial == null,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            name, { name = it },
+            label = { Text("Name") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            region, { region = it },
+            label = { Text("Region / CC") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            tier, { tier = it },
+            label = { Text("Tier (free/paid)") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            uri, { uri = it },
+            label = { Text("Config: vless:// or https:// sub (optional)") },
+            placeholder = { Text("Leave blank if using nodes below") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+            minLines = 2,
+        )
+        OutlinedTextField(
+            nodes, { nodes = it },
+            label = { Text("Available nodes (one vless:// or ss:// per line)") },
+            placeholder = { Text("vless://…\nss://…") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+            minLines = 4,
+        )
+        Text(
+            "Manual free-sub usage (shown in app; overrides upstream when set)",
+            style = MaterialTheme.typography.labelMedium,
+            color = InkMuted,
+        )
+        OutlinedTextField(
+            dataGb, { dataGb = it },
+            label = { Text("Data limit GB") },
+            placeholder = { Text("e.g. 50") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            usedGb, { usedGb = it },
+            label = { Text("Used GB (optional)") },
+            placeholder = { Text("e.g. 12.5") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            expireDate, { expireDate = it },
+            label = { Text("Expire date (yyyy-MM-dd) or unix") },
+            placeholder = { Text("2026-12-31") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            expireDays, { expireDays = it },
+            label = { Text("Or expire in N days from now") },
+            placeholder = { Text("30") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            sort, { sort = it },
+            label = { Text("Sort") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Enabled", color = Ink)
+            Spacer(Modifier.weight(1f))
+            Switch(
+                checked = enabled,
+                onCheckedChange = { enabled = it },
+                colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
             )
-            OutlinedTextField(
-                name, { name = it },
-                label = { Text("Name") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-            )
-            OutlinedTextField(
-                region, { region = it },
-                label = { Text("Region / CC") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-            )
-            OutlinedTextField(
-                tier, { tier = it },
-                label = { Text("Tier (free/paid)") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-            )
-            OutlinedTextField(
-                uri, { uri = it },
-                label = { Text("Config: vless:// or https:// sub (optional)") },
-                placeholder = { Text("Leave blank if using nodes below") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-                minLines = 2,
-            )
-            OutlinedTextField(
-                nodes, { nodes = it },
-                label = { Text("Available nodes (one vless:// or ss:// per line)") },
-                placeholder = { Text("vless://…\nss://…") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-                minLines = 4,
-            )
-            Text(
-                "Manual free-sub usage (shown in app; overrides upstream when set)",
-                style = MaterialTheme.typography.labelMedium,
-                color = InkMuted,
-            )
-            OutlinedTextField(
-                dataGb, { dataGb = it },
-                label = { Text("Data limit GB") },
-                placeholder = { Text("e.g. 50") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-            )
-            OutlinedTextField(
-                usedGb, { usedGb = it },
-                label = { Text("Used GB (optional)") },
-                placeholder = { Text("e.g. 12.5") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-            )
-            OutlinedTextField(
-                expireDate, { expireDate = it },
-                label = { Text("Expire date (yyyy-MM-dd) or unix") },
-                placeholder = { Text("2026-12-31") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-            )
-            OutlinedTextField(
-                expireDays, { expireDays = it },
-                label = { Text("Or expire in N days from now") },
-                placeholder = { Text("30") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-            )
-            OutlinedTextField(
-                sort, { sort = it },
-                label = { Text("Sort") },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
-                colors = adminFieldColors(),
-            )
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Enabled", color = Ink)
-                Spacer(Modifier.weight(1f))
-                Switch(
-                    checked = enabled,
-                    onCheckedChange = { enabled = it },
-                    colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("List when disabled", color = Ink)
+                Text(
+                    "Still show free nodes in app if Enabled is off",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = InkMuted,
                 )
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("List when disabled", color = Ink)
-                    Text(
-                        "Still show free nodes in app if Enabled is off",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = InkMuted,
-                    )
-                }
-                Switch(
-                    checked = listWhenDisabled,
-                    onCheckedChange = { listWhenDisabled = it },
-                    colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
-                )
-            }
+            Switch(
+                checked = listWhenDisabled,
+                onCheckedChange = { listWhenDisabled = it },
+                colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+            )
         }
     }
 }
