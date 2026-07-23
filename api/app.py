@@ -25,8 +25,11 @@ logger = logging.getLogger(__name__)
 
 _ROOT = Path(__file__).resolve().parent.parent
 _MOBILE_APP_JSON = _ROOT / "data" / "mobile_app.json"
-_ADS_DIR = _ROOT / "data" / "ads"
-_ADS_DIR.mkdir(parents=True, exist_ok=True)
+_ADS_DIR = Path(getattr(config, "MOBILE_ADS_DIR", str(_ROOT / "data" / "ads")))
+try:
+    _ADS_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 
 # Simple in-memory rate limit: key -> list of timestamps
 _rate: dict[str, list[float]] = defaultdict(list)
@@ -45,6 +48,42 @@ def _rate_ok(key: str, limit: int, window_sec: float) -> bool:
         return False
     _rate[key].append(now)
     return True
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP (direct or first X-Forwarded-For hop)."""
+    forwarded = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
+    if forwarded:
+        return forwarded[:64]
+    return request.client.host if request.client else "unknown"
+
+
+def _require_rate(request: Request, *, kind: str, per_min: int, per_hour: int) -> None:
+    ip = _client_ip(request)
+    if not _rate_ok(f"{kind}:min:{ip}", per_min, 60) or not _rate_ok(
+        f"{kind}:hour:{ip}", per_hour, 3600
+    ):
+        raise HTTPException(429, "Too many attempts — wait a minute")
+
+
+def _validate_free_share_uri(uri: str) -> str:
+    """Reject oversized / unexpected free share URIs before encrypting."""
+    clean = (uri or "").strip()
+    if not clean:
+        raise HTTPException(503, "Free server not configured")
+    max_chars = int(getattr(config, "MOBILE_FREE_CONFIG_MAX_CHARS", 8192) or 8192)
+    if len(clean) > max_chars:
+        raise HTTPException(503, "Free config invalid")
+    low = clean.lower()
+    if not (
+        low.startswith("vless://")
+        or low.startswith("ss://")
+    ):
+        raise HTTPException(503, "Free config invalid")
+    # Block obvious SSRF-style local schemes that should never appear
+    if any(x in low for x in ("file:", "javascript:", "data:")):
+        raise HTTPException(503, "Free config invalid")
+    return clean
 
 
 @asynccontextmanager
@@ -319,6 +358,7 @@ async def _cached_free_sub(
         is_subscription_url,
         put_cached_subscription,
     )
+    from utils.circuit_breaker import CircuitOpenError
 
     parent_id = row["public_id"]
     uri = (row.get("config_uri") or "").strip()
@@ -336,8 +376,15 @@ async def _cached_free_sub(
             parent_name=row.get("name") or parent_id,
             parent_region=row.get("region") or "",
         )
+        # fetch_subscription already caches on success; keep put for older callers
         put_cached_subscription(parent_id, nodes, userinfo)
         return nodes, userinfo
+    except CircuitOpenError as exc:
+        logger.warning("free sub circuit open for %s: %s", parent_id, exc)
+        stale = get_cached_subscription(parent_id, allow_stale=True)
+        if stale:
+            return stale
+        return [], {}
     except Exception as exc:
         logger.warning("free sub fetch failed for %s: %s", parent_id, exc)
         stale = get_cached_subscription(parent_id, allow_stale=True)
@@ -726,7 +773,7 @@ async def analytics_event(body: AnalyticsEventBody, request: Request) -> dict[st
     - app_open → daily active user (1 count per device per Myanmar day)
     - ad_click → increments ad click counters
     """
-    ip = request.client.host if request.client else "unknown"
+    ip = _client_ip(request)
     if not _rate_ok(f"analytics:{ip}", 120, 60):
         raise HTTPException(429, "Too many events")
 
@@ -754,7 +801,13 @@ async def analytics_event(body: AnalyticsEventBody, request: Request) -> dict[st
 
 
 @app.get("/v1/servers")
-async def servers() -> dict[str, Any]:
+async def servers(request: Request) -> dict[str, Any]:
+    _require_rate(
+        request,
+        kind="servers",
+        per_min=int(getattr(config, "MOBILE_RATE_SERVERS_PER_MIN", 20) or 20),
+        per_hour=int(getattr(config, "MOBILE_RATE_SERVERS_PER_HOUR", 120) or 120),
+    )
     rows = await db.list_mobile_servers(enabled_only=True)
     free_rows = [r for r in rows if (r.get("tier") or "") == "free"]
     paid_rows = [r for r in rows if (r.get("tier") or "") == "paid"]
@@ -816,14 +869,6 @@ async def connect(
     authorization: Optional[str] = Header(default=None),
     x_restore_code: Optional[str] = Header(default=None, alias="X-Restore-Code"),
 ) -> dict[str, Any]:
-    ip = request.client.host if request.client else "unknown"
-    # Allow frequent reconnects while testing; still blocks abuse bursts.
-    # 30 / minute and 200 / hour per client IP.
-    if not _rate_ok(f"connect:min:{ip}", 30, 60) or not _rate_ok(
-        f"connect:hour:{ip}", 200, 3600
-    ):
-        raise HTTPException(429, "Too many attempts — wait a minute")
-
     from services.sub_link import split_node_public_id
 
     parent_id, _node_key = split_node_public_id(body.server_id)
@@ -835,8 +880,27 @@ async def connect(
     config_uri: Optional[str] = None
     protocol = (row.get("protocol") or "vless").lower()
 
+    # Paid reconnects stay relatively permissive; free config delivery is tighter.
+    if tier == "free":
+        _require_rate(
+            request,
+            kind="connect:free",
+            per_min=int(getattr(config, "MOBILE_RATE_CONNECT_FREE_PER_MIN", 10) or 10),
+            per_hour=int(
+                getattr(config, "MOBILE_RATE_CONNECT_FREE_PER_HOUR", 60) or 60
+            ),
+        )
+    else:
+        _require_rate(
+            request,
+            kind="connect",
+            per_min=int(getattr(config, "MOBILE_RATE_CONNECT_PER_MIN", 30) or 30),
+            per_hour=int(getattr(config, "MOBILE_RATE_CONNECT_PER_HOUR", 200) or 200),
+        )
+
     if tier == "free":
         config_uri, protocol = await _resolve_free_share_uri(body.server_id)
+        config_uri = _validate_free_share_uri(config_uri)
     else:
         # Paid rows use exact public_id (not subscription expansion)
         if body.server_id != parent_id:

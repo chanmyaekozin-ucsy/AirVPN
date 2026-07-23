@@ -20,7 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -99,8 +98,8 @@ fun PrefetchAdImages(ads: List<AdCreative>) {
 }
 
 /**
- * Connect interstitial: shows ad image sized by its aspect ratio, mandatory ~3s wait
- * after the image is ready (or a short load timeout).
+ * Connect interstitial: shows ad image sized by its aspect ratio, mandatory ~3s wait.
+ * Images are prefetched on home, so the creative should already be cached.
  */
 @Composable
 fun ConnectAdDialog(
@@ -110,23 +109,13 @@ fun ConnectAdDialog(
     seconds: Int = 3,
 ) {
     var remaining by remember(ad.id) { mutableIntStateOf(seconds) }
-    var imageReady by remember(ad.id) { mutableStateOf(false) }
-    var countdownStarted by remember(ad.id) { mutableStateOf(false) }
 
-    // If image is slow, start countdown after a short grace so connect is not blocked forever
     LaunchedEffect(ad.id) {
-        delay(2_500)
-        if (!imageReady) imageReady = true
-    }
-
-    LaunchedEffect(ad.id, imageReady) {
-        if (!imageReady || countdownStarted) return@LaunchedEffect
-        countdownStarted = true
-        remaining = seconds
-        while (remaining > 0) {
+        for (sec in seconds downTo 1) {
+            remaining = sec
             delay(1_000)
-            remaining -= 1
         }
+        remaining = 0
         onFinished()
     }
 
@@ -170,8 +159,6 @@ fun ConnectAdDialog(
                     .aspectRatio(ratio)
                     .clip(RoundedCornerShape(10.dp))
                     .clickable(enabled = ad.clickUrl.isNotBlank(), onClick = onClickAd),
-                onSuccess = { imageReady = true },
-                onError = { imageReady = true },
                 loading = {
                     Box(
                         Modifier
@@ -185,10 +172,10 @@ fun ConnectAdDialog(
             )
             Spacer(Modifier.height(14.dp))
             Text(
-                text = when {
-                    !countdownStarted -> "Loading…"
-                    remaining > 0 -> "Connecting in ${remaining}s…"
-                    else -> "Connecting…"
+                text = if (remaining > 0) {
+                    "Connecting in ${remaining}s…"
+                } else {
+                    "Connecting…"
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = InkMuted,

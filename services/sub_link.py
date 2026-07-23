@@ -1,29 +1,60 @@
 """Fetch and parse VPN subscription links (base64 / plain vless|ss lines)."""
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import logging
+import os
 import re
 from typing import Any
 from urllib.parse import unquote, urlparse
 
 import httpx
 
+from utils.circuit_breaker import CircuitBreakerRegistry, CircuitOpenError
+
 logger = logging.getLogger(__name__)
 
 _NODE_SEP = "::"
 _UA = "AirVPN/1.0 (MobileAPI)"
-_CACHE_TTL_SEC = 300.0
+_CACHE_TTL_SEC = float(os.getenv("MOBILE_SUB_CACHE_TTL_SEC", "300"))
+_FETCH_MAX_CONCURRENT = max(1, int(os.getenv("MOBILE_SUB_FETCH_MAX_CONCURRENT", "3")))
+_BREAKER_FAILURES = max(1, int(os.getenv("MOBILE_SUB_BREAKER_FAILURES", "5")))
+_BREAKER_COOLDOWN = float(os.getenv("MOBILE_SUB_BREAKER_COOLDOWN_SEC", "90"))
+
 # parent_id -> (fetched_at, nodes, userinfo)
 _sub_cache: dict[str, tuple[float, list[dict[str, Any]], dict[str, Any]]] = {}
+_breakers = CircuitBreakerRegistry(
+    failure_threshold=_BREAKER_FAILURES,
+    recovery_timeout_sec=_BREAKER_COOLDOWN,
+)
+_fetch_sem: asyncio.Semaphore | None = None
+# parent_id -> in-flight task (singleflight)
+_inflight: dict[str, asyncio.Task[tuple[list[dict[str, Any]], dict[str, Any]]]] = {}
+
+
+def _semaphore() -> asyncio.Semaphore:
+    global _fetch_sem
+    if _fetch_sem is None:
+        _fetch_sem = asyncio.Semaphore(_FETCH_MAX_CONCURRENT)
+    return _fetch_sem
 
 
 def invalidate_subscription_cache(parent_id: str | None = None) -> None:
     if parent_id:
         _sub_cache.pop(parent_id, None)
+        _breakers.reset(parent_id)
+        task = _inflight.pop(parent_id, None)
+        if task and not task.done():
+            task.cancel()
     else:
         _sub_cache.clear()
+        _breakers.reset()
+        for task in list(_inflight.values()):
+            if not task.done():
+                task.cancel()
+        _inflight.clear()
 
 
 def get_cached_subscription_nodes(
@@ -247,10 +278,64 @@ async def fetch_subscription(
     parent_region: str = "",
     timeout: float = 25.0,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    """Fetch nodes + subscription-userinfo for a free catalog sub link."""
+    """
+    Fetch nodes + subscription-userinfo for a free catalog sub link.
+
+    Protections:
+    - circuit breaker per parent_id (open → stale cache or CircuitOpenError)
+    - singleflight (one in-flight fetch per parent_id)
+    - global concurrency semaphore
+    """
     clean = (url or "").strip()
     if not is_subscription_url(clean):
         raise ValueError("Not an http(s) subscription URL")
+
+    breaker = _breakers.get(parent_id)
+    if not breaker.allow():
+        stale = get_cached_subscription(parent_id, allow_stale=True)
+        if stale:
+            logger.info("sub circuit open for %s — serving stale cache", parent_id)
+            return stale
+        raise CircuitOpenError(f"Subscription upstream circuit open for {parent_id}")
+
+    existing = _inflight.get(parent_id)
+    if existing is not None and not existing.done():
+        return await existing
+
+    async def _run() -> tuple[list[dict[str, Any]], dict[str, Any]]:
+        async with _semaphore():
+            try:
+                result = await _fetch_subscription_http(
+                    clean,
+                    parent_id=parent_id,
+                    parent_name=parent_name,
+                    parent_region=parent_region,
+                    timeout=timeout,
+                )
+                breaker.record_success()
+                put_cached_subscription(parent_id, result[0], result[1])
+                return result
+            except Exception:
+                breaker.record_failure()
+                raise
+
+    task = asyncio.create_task(_run())
+    _inflight[parent_id] = task
+    try:
+        return await task
+    finally:
+        if _inflight.get(parent_id) is task:
+            _inflight.pop(parent_id, None)
+
+
+async def _fetch_subscription_http(
+    clean: str,
+    *,
+    parent_id: str,
+    parent_name: str,
+    parent_region: str,
+    timeout: float,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     async with httpx.AsyncClient(
         timeout=timeout,
         follow_redirects=True,
@@ -258,6 +343,8 @@ async def fetch_subscription(
     ) as client:
         resp = await client.get(clean)
         resp.raise_for_status()
+        if len(resp.content) > 2 * 1024 * 1024:
+            raise ValueError("Subscription body too large")
         text = _decode_body(resp.content)
         header = (
             resp.headers.get("subscription-userinfo")

@@ -59,11 +59,11 @@ data class AirUiState(
 ) {
     val subscription: SubscriptionInfo? get() = subscriptions.firstOrNull()
 
-    /** Hide first-party ads when user has AirVPN paid profile or a live imported sub. */
+    /** Hide first-party ads for paid profile or live *imported* subs — not free catalog subs. */
     val showAds: Boolean
         get() {
             if (profile?.hasPaid == true) return false
-            if (subscriptions.any { !it.isExpired }) return false
+            if (subscriptions.any { !it.isCatalogManaged && !it.isExpired }) return false
             return true
         }
 
@@ -198,7 +198,13 @@ class AirVpnViewModel : ViewModel() {
                         ),
                     )
                 }
-                .onFailure {
+                .onFailure { e ->
+                    val msg = when {
+                        e is HttpException && e.code() == 429 ->
+                            "Too many refreshes — wait a minute"
+                        imported.isNotEmpty() -> null
+                        else -> "Could not load servers"
+                    }
                     if (imported.isNotEmpty()) {
                         applyCatalog(
                             ServerCatalog(
@@ -207,11 +213,14 @@ class AirVpnViewModel : ViewModel() {
                                 freeSubscriptions = _ui.value.catalog.freeSubscriptions,
                             ),
                         )
+                        if (msg != null) {
+                            _ui.update { it.copy(statusMessage = msg) }
+                        }
                     } else {
                         _ui.update {
                             it.copy(
                                 loadingServers = false,
-                                statusMessage = "Could not load servers",
+                                statusMessage = msg ?: "Could not load servers",
                             )
                         }
                     }
@@ -559,8 +568,16 @@ class AirVpnViewModel : ViewModel() {
             _ui.update { it.copy(statusMessage = "Server is down") }
             return
         }
-        val expired = _ui.value.subscriptions.any { it.isExpired && it.url == server.subscriptionUrl }
-            || (_ui.value.subscriptions.size == 1 && _ui.value.subscriptions.first().isExpired && server.fromSubscription)
+        val expired = _ui.value.subscriptions.any {
+            it.isExpired && it.url == server.subscriptionUrl
+        } || run {
+            // Legacy single-imported-sub case (not free catalog)
+            val imported = _ui.value.subscriptions.filter { !it.isCatalogManaged }
+            server.fromSubscription &&
+                !server.subscriptionUrl.orEmpty().startsWith("catalog://", ignoreCase = true) &&
+                imported.size == 1 &&
+                imported.first().isExpired
+        }
         if (expired) {
             _ui.update { it.copy(statusMessage = "Subscription expired") }
             return

@@ -17,6 +17,21 @@ _default_db = Path(__file__).resolve().parent / "airvpn.sqlite3"
 _env_db = os.getenv("SQLITE_PATH", "").strip()
 SQLITE_PATH: str = _env_db if _env_db else str(_default_db)
 
+# Ad image uploads — must live on the same persistent volume as SQLite in Docker,
+# otherwise /ads/*.jpg disappear on every Coolify/redeploy.
+_env_ads = os.getenv("MOBILE_ADS_DIR", "").strip()
+if _env_ads:
+    MOBILE_ADS_DIR: str = _env_ads
+elif Path(SQLITE_PATH).as_posix().startswith("/data/"):
+    MOBILE_ADS_DIR = "/data/ads"
+else:
+    MOBILE_ADS_DIR = str(Path(__file__).resolve().parent / "data" / "ads")
+try:
+    Path(MOBILE_ADS_DIR).mkdir(parents=True, exist_ok=True)
+except Exception:
+    # Host may not have /data during local import; container creates it at runtime.
+    pass
+
 # Comma-separated Telegram user IDs with full admin access
 _admin_raw = os.getenv("ADMIN_TELEGRAM_IDS", "")
 ADMIN_TELEGRAM_IDS: list[int] = [
@@ -141,6 +156,21 @@ RATE_PAYMENT_PER_HOUR: int = int(os.getenv("RATE_PAYMENT_PER_HOUR", "5"))
 RATE_KBZ_VERIFY_PER_HOUR: int = int(os.getenv("RATE_KBZ_VERIFY_PER_HOUR", "10"))
 RATE_RECEIPT_SCREENSHOT_PER_MIN: int = int(
     os.getenv("RATE_RECEIPT_SCREENSHOT_PER_MIN", "2")
+)
+
+# Mobile API abuse guards (per client IP)
+MOBILE_RATE_SERVERS_PER_MIN: int = int(os.getenv("MOBILE_RATE_SERVERS_PER_MIN", "20"))
+MOBILE_RATE_SERVERS_PER_HOUR: int = int(os.getenv("MOBILE_RATE_SERVERS_PER_HOUR", "120"))
+MOBILE_RATE_CONNECT_PER_MIN: int = int(os.getenv("MOBILE_RATE_CONNECT_PER_MIN", "30"))
+MOBILE_RATE_CONNECT_PER_HOUR: int = int(os.getenv("MOBILE_RATE_CONNECT_PER_HOUR", "200"))
+MOBILE_RATE_CONNECT_FREE_PER_MIN: int = int(
+    os.getenv("MOBILE_RATE_CONNECT_FREE_PER_MIN", "10")
+)
+MOBILE_RATE_CONNECT_FREE_PER_HOUR: int = int(
+    os.getenv("MOBILE_RATE_CONNECT_FREE_PER_HOUR", "60")
+)
+MOBILE_FREE_CONFIG_MAX_CHARS: int = int(
+    os.getenv("MOBILE_FREE_CONFIG_MAX_CHARS", "8192")
 )
 
 # VPN client download links — Play Store / App Store (label, url)

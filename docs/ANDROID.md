@@ -80,7 +80,7 @@ ad del summer
 - `banner` — horizontal strip under Connect on Main
 - `dialog` — mandatory ~3s interstitial before Connect
 - Ads are **hidden** when the user has an active imported subscription or paid AirVPN profile
-- Local files: put images in `data/ads/` and use `/ads/filename.png` (set `MOBILE_API_PUBLIC_BASE` for absolute URLs)
+- Local files: put images in `data/ads/` (local) or `/data/ads` (Docker volume) and use `/ads/filename.png` (set `MOBILE_API_PUBLIC_BASE` for absolute URLs). In production, uploads go to `MOBILE_ADS_DIR` so they survive redeploys.
 - Also configurable via `data/mobile_app.json` → `"ads": [...]`
 
 ### Analytics

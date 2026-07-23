@@ -16,7 +16,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 RUN useradd --create-home --uid 1000 appuser \
-    && mkdir -p /data \
+    && mkdir -p /data /data/ads \
     && chmod +x /app/entrypoint.sh \
     && chown -R appuser:appuser /app /data
 
@@ -27,13 +27,14 @@ EXPOSE 9090
 ENV ENV=production \
     DEV_MOCK_VPN=false \
     SQLITE_PATH=/data/airvpn.sqlite3 \
+    MOBILE_ADS_DIR=/data/ads \
     KBZ_SESSION_PATH=/data/kbz/kbz_session.json \
     SUB_SERVER_PORT=9090 \
     MOBILE_API_PORT=9090 \
     MOBILE_API_PUBLIC_BASE=https://airvpn.flash-myanmar.com
 
 # Mount:
-#   - private volume at /data for SQLite (airvpn.sqlite3)
+#   - private volume at /data for SQLite (airvpn.sqlite3) + ad images (/data/ads)
 #   - shared host path /data/kbz → /data/kbz for merchant kbz_session.json
 #     (same file as Cloud Game Shop + Donimate Payment Manager)
 # Expose port 9090 (nginx: airvpn.flash-myanmar.com → 127.0.0.1:9090)

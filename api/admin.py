@@ -25,8 +25,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/v1/admin", tags=["admin"])
 
 _ROOT = Path(__file__).resolve().parent.parent
-_ADS_DIR = _ROOT / "data" / "ads"
-_ADS_DIR.mkdir(parents=True, exist_ok=True)
+_ADS_DIR = Path(getattr(config, "MOBILE_ADS_DIR", str(_ROOT / "data" / "ads")))
+try:
+    _ADS_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 
 _SAFE_NAME = re.compile(r"[^a-zA-Z0-9._-]+")
 
