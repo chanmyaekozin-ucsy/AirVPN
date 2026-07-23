@@ -17,6 +17,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -26,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.airvpn.admin.data.model.CatalogServer
+import com.airvpn.admin.data.model.VpnServerInfo
 import com.airvpn.admin.ui.components.AdminDialog
 import com.airvpn.admin.ui.components.AdminOutlinedButton
 import com.airvpn.admin.ui.components.AdminPrimaryButton
@@ -50,6 +52,9 @@ import java.util.TimeZone
 @Composable
 fun CatalogScreen(
     servers: List<CatalogServer>,
+    vpnNodes: List<VpnServerInfo> = emptyList(),
+    issuedKey: String? = null,
+    issuingKey: Boolean = false,
     loadingMore: Boolean = false,
     canLoadMore: Boolean = false,
     onSave: (
@@ -66,6 +71,8 @@ fun CatalogScreen(
         enabled: Boolean,
         sortOrder: Int,
     ) -> Unit,
+    onIssueKey: (serverId: String, dataGb: Double, days: Int, remark: String) -> Unit,
+    onConsumeIssuedKey: () -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onDelete: (String) -> Unit,
     onLoadMore: () -> Unit = {},
@@ -196,11 +203,21 @@ fun CatalogScreen(
     if (creating || editing != null) {
         CatalogDialog(
             initial = editing,
-            onDismiss = { creating = false; editing = null },
+            vpnNodes = vpnNodes,
+            issuedKey = issuedKey,
+            issuingKey = issuingKey,
+            onDismiss = {
+                creating = false
+                editing = null
+                onConsumeIssuedKey()
+            },
+            onIssueKey = onIssueKey,
+            onConsumeIssuedKey = onConsumeIssuedKey,
             onSave = { id, name, region, tier, uri, nodes, dataGb, usedGb, expireAt, listOff, enabled, sort ->
                 onSave(id, name, region, tier, uri, nodes, dataGb, usedGb, expireAt, listOff, enabled, sort)
                 creating = false
                 editing = null
+                onConsumeIssuedKey()
             },
         )
     }
@@ -209,7 +226,12 @@ fun CatalogScreen(
 @Composable
 private fun CatalogDialog(
     initial: CatalogServer?,
+    vpnNodes: List<VpnServerInfo>,
+    issuedKey: String?,
+    issuingKey: Boolean,
     onDismiss: () -> Unit,
+    onIssueKey: (serverId: String, dataGb: Double, days: Int, remark: String) -> Unit,
+    onConsumeIssuedKey: () -> Unit,
     onSave: (
         String,
         String,
@@ -232,7 +254,7 @@ private fun CatalogDialog(
     var uri by remember { mutableStateOf(initial?.configUri ?: "") }
     var nodes by remember { mutableStateOf(initial?.nodesText ?: "") }
     var dataGb by remember {
-        mutableStateOf(initial?.manualDataGb?.let { trimGb(it) } ?: "")
+        mutableStateOf(initial?.manualDataGb?.let { trimGb(it) } ?: "50")
     }
     var usedGb by remember {
         mutableStateOf(initial?.manualUsedGb?.let { trimGb(it) } ?: "")
@@ -240,16 +262,33 @@ private fun CatalogDialog(
     var expireDate by remember {
         mutableStateOf(initial?.manualExpireAt?.let { formatExpire(it) } ?: "")
     }
-    var expireDays by remember { mutableStateOf("") }
+    var expireDays by remember { mutableStateOf(if (initial == null) "30" else "") }
     var listWhenDisabled by remember { mutableStateOf(initial?.listWhenDisabled ?: false) }
     var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
     var sort by remember { mutableStateOf(initial?.sortOrder?.toString() ?: "0") }
+    var selectedNode by remember {
+        mutableStateOf(vpnNodes.firstOrNull { it.panelConfigured }?.id ?: vpnNodes.firstOrNull()?.id.orEmpty())
+    }
+    var placeAs by remember { mutableStateOf("nodes") } // "nodes" | "config"
+
+    LaunchedEffect(issuedKey) {
+        val key = issuedKey?.trim().orEmpty()
+        if (key.isBlank()) return@LaunchedEffect
+        if (placeAs == "config" || (uri.isBlank() && nodes.isBlank())) {
+            uri = key
+        } else {
+            nodes = if (nodes.isBlank()) key else nodes.trimEnd() + "\n" + key
+        }
+        if (dataGb.isBlank()) dataGb = "50"
+        if (expireDays.isBlank() && expireDate.isBlank()) expireDays = "30"
+        onConsumeIssuedKey()
+    }
 
     AdminDialog(
         onDismissRequest = onDismiss,
         title = if (initial == null) "Add server" else "Edit server",
         eyebrow = "App catalog",
-        subtitle = "Free: manual nodes + data/expiry, or https:// sub / vless://",
+        subtitle = "Free: create VLESS from VPN nodes, or paste https:// / vless://",
         confirmLabel = "Save",
         maxContentHeight = 560,
         onConfirm = confirm@{
@@ -300,6 +339,69 @@ private fun CatalogDialog(
             shape = RoundedCornerShape(12.dp),
             colors = adminFieldColors(),
         )
+
+        Text(
+            "Create VLESS from VPN node (includes disabled)",
+            style = MaterialTheme.typography.labelMedium,
+            color = InkMuted,
+        )
+        if (vpnNodes.isEmpty()) {
+            Text(
+                "No VPN nodes loaded — open Servers & Plans once, then retry.",
+                style = MaterialTheme.typography.bodySmall,
+                color = InkMuted,
+            )
+        } else {
+            vpnNodes.forEach { node ->
+                val selected = selectedNode == node.id
+                val label = buildString {
+                    append(node.id.uppercase())
+                    append(" · ")
+                    append(node.nameEn.ifBlank { node.vpsHost })
+                    if (!node.enabled) append(" · OFF")
+                    if (!node.panelConfigured) append(" · not configured")
+                }
+                AdminOutlinedButton(
+                    text = if (selected) "✓ $label" else label,
+                    onClick = { selectedNode = node.id },
+                    compact = true,
+                    contentColor = when {
+                        selected -> Cyan
+                        !node.enabled -> InkMuted
+                        else -> Ink
+                    },
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AdminOutlinedButton(
+                    text = if (placeAs == "nodes") "→ Nodes list" else "Place in nodes",
+                    onClick = { placeAs = "nodes" },
+                    compact = true,
+                    contentColor = if (placeAs == "nodes") Cyan else Ink,
+                )
+                AdminOutlinedButton(
+                    text = if (placeAs == "config") "→ Config URI" else "Place as config",
+                    onClick = { placeAs = "config" },
+                    compact = true,
+                    contentColor = if (placeAs == "config") Cyan else Ink,
+                )
+            }
+            AdminPrimaryButton(
+                text = if (issuingKey) "Creating…" else "Create VLESS on node",
+                onClick = {
+                    val sid = selectedNode.ifBlank { return@AdminPrimaryButton }
+                    val gb = dataGb.toDoubleOrNull() ?: 50.0
+                    val days = expireDays.toIntOrNull()
+                        ?: ((initial?.manualExpireAt?.let {
+                            ((it - System.currentTimeMillis() / 1000L) / 86400L).toInt().coerceAtLeast(1)
+                        }) ?: 30)
+                    val remark = name.ifBlank { id }.ifBlank { "catalog-$sid" }
+                    onIssueKey(sid, gb, days.coerceAtLeast(1), remark)
+                },
+                compact = true,
+            )
+        }
+
         OutlinedTextField(
             uri, { uri = it },
             label = { Text("Config: vless:// or https:// sub (optional)") },

@@ -201,6 +201,12 @@ interface AdminApi {
         @Query("per_page") perPage: Int = 20,
     ): CatalogDto
 
+    @POST("v1/admin/catalog/issue-key")
+    suspend fun issueCatalogKey(
+        @Header("Authorization") auth: String,
+        @Body body: CatalogIssueKeyBody,
+    ): CatalogIssueKeyDto
+
     @POST("v1/admin/catalog")
     suspend fun upsertCatalog(
         @Header("Authorization") auth: String,
@@ -641,6 +647,22 @@ data class CatalogDto(
     @Json(name = "total_pages") val totalPages: Int = 1,
 )
 data class CatalogWrapDto(val server: CatalogServerDto)
+data class CatalogIssueKeyBody(
+    @Json(name = "server_id") val serverId: String,
+    @Json(name = "data_gb") val dataGb: Double = 50.0,
+    val days: Int = 30,
+    val remark: String = "",
+)
+data class CatalogIssueKeyDto(
+    @Json(name = "server_id") val serverId: String = "",
+    val enabled: Boolean = true,
+    @Json(name = "vless_key") val vlessKey: String = "",
+    val uuid: String? = null,
+    @Json(name = "panel_email") val panelEmail: String? = null,
+    @Json(name = "data_gb") val dataGb: Double = 0.0,
+    val days: Int = 0,
+    val remark: String? = null,
+)
 data class CatalogBody(
     @Json(name = "public_id") val publicId: String,
     val name: String,

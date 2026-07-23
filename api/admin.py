@@ -134,6 +134,14 @@ class ManualSubBody(BaseModel):
     notify: bool = False
 
 
+class CatalogIssueKeyBody(BaseModel):
+    """Provision a VLESS client on a VPN node (enabled or disabled) for catalog use."""
+    server_id: str = Field(min_length=1, max_length=32)
+    data_gb: float = Field(default=50.0, gt=0)
+    days: int = Field(default=30, gt=0)
+    remark: str = Field(default="", max_length=64)
+
+
 class MobileServerBody(BaseModel):
     public_id: str = Field(min_length=1, max_length=64)
     name: str = Field(min_length=1, max_length=128)
@@ -884,6 +892,55 @@ async def admin_create_subscription(
 
 
 # ─── Mobile catalog ──────────────────────────────────────────────────────────
+
+
+@router.post("/catalog/issue-key")
+async def admin_catalog_issue_key(
+    body: CatalogIssueKeyBody,
+    admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    """
+    Create a panel VLESS client on any configured VPN node (including disabled)
+    and return the share URI for pasting into a catalog free server.
+    """
+    from vpn_servers import get_server
+    from vps.panel_client import PanelError, provision_vless
+
+    await reload_servers_from_db()
+    sid = body.server_id.strip().lower()
+    server = get_server(sid)
+    if not server:
+        raise HTTPException(status_code=404, detail=f"VPN node not found: {sid}")
+    if not (server.panel_url or "").strip() or not (server.vps_host or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail=f"Node {sid} is not fully configured (panel URL / VPS host)",
+        )
+
+    remark = (body.remark or "").strip() or f"AirVPN-Catalog-{sid}"
+    try:
+        uid, email, vless_key = await provision_vless(
+            admin_id,
+            float(body.data_gb),
+            int(body.days),
+            server_id=sid,
+        )
+    except PanelError as exc:
+        raise HTTPException(status_code=502, detail=f"Panel error: {exc}") from exc
+    except Exception as exc:
+        logger.exception("catalog issue-key failed node=%s", sid)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "server_id": sid,
+        "enabled": bool(server.enabled),
+        "vless_key": vless_key,
+        "uuid": uid,
+        "panel_email": email,
+        "data_gb": float(body.data_gb),
+        "days": int(body.days),
+        "remark": remark,
+    }
 
 
 @router.get("/catalog")

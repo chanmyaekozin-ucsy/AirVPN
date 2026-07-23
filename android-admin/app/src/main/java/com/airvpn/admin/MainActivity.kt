@@ -216,7 +216,12 @@ private fun AdminRoot(vm: AdminViewModel) {
                         items = navItems,
                         selectedKey = tab.name,
                         onSelect = { key ->
-                            AdminTab.entries.find { it.name == key }?.let { tab = it }
+                            AdminTab.entries.find { it.name == key }?.let { next ->
+                                tab = next
+                                if (next == AdminTab.Catalog && state.servers.isEmpty()) {
+                                    vm.refreshServersPlans()
+                                }
+                            }
                         },
                     )
                 },
@@ -347,9 +352,16 @@ private fun AdminRoot(vm: AdminViewModel) {
                                 )
                                 AdminTab.Catalog -> CatalogScreen(
                                     servers = state.catalog,
+                                    vpnNodes = state.servers,
+                                    issuedKey = state.issuedCatalogKey,
+                                    issuingKey = state.issuingCatalogKey,
                                     loadingMore = state.catalogLoadingMore,
                                     canLoadMore = state.catalogCanLoadMore,
                                     onSave = vm::saveCatalog,
+                                    onIssueKey = { sid, gb, days, remark ->
+                                        vm.issueCatalogKey(sid, gb, days, remark)
+                                    },
+                                    onConsumeIssuedKey = vm::consumeIssuedCatalogKey,
                                     onToggle = vm::setCatalogEnabled,
                                     onDelete = vm::deleteCatalog,
                                     onLoadMore = vm::loadMoreCatalog,

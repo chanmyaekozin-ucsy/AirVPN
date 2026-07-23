@@ -10,6 +10,7 @@ import com.airvpn.admin.data.api.ApiFactory
 import com.airvpn.admin.data.api.BanBody
 import com.airvpn.admin.data.api.BroadcastBody
 import com.airvpn.admin.data.api.CatalogBody
+import com.airvpn.admin.data.api.CatalogIssueKeyBody
 import com.airvpn.admin.data.api.LoginBody
 import com.airvpn.admin.data.api.ManualSubBody
 import com.airvpn.admin.data.api.PlanBody
@@ -82,6 +83,8 @@ data class AdminUiState(
     val managedSubs: List<SubscriptionItem> = emptyList(),
     val lastCreatedKey: String? = null,
     val lastCreatedSubUrl: String? = null,
+    val issuedCatalogKey: String? = null,
+    val issuingCatalogKey: Boolean = false,
 ) {
     val paymentsCanLoadMore: Boolean
         get() = paymentsPage > 0 && paymentsPage < paymentsTotalPages && !paymentsLoadingMore
@@ -708,6 +711,44 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearCreatedKeyFlash() {
         _state.update { it.copy(lastCreatedKey = null, lastCreatedSubUrl = null) }
+    }
+
+    fun issueCatalogKey(
+        serverId: String,
+        dataGb: Double,
+        days: Int,
+        remark: String = "",
+    ) {
+        viewModelScope.launch {
+            _state.update { it.copy(issuingCatalogKey = true, error = null) }
+            try {
+                val res = api.issueCatalogKey(
+                    auth(),
+                    CatalogIssueKeyBody(
+                        serverId = serverId,
+                        dataGb = dataGb,
+                        days = days,
+                        remark = remark,
+                    ),
+                )
+                _state.update {
+                    it.copy(
+                        issuingCatalogKey = false,
+                        issuedCatalogKey = res.vlessKey,
+                        message = "VLESS created on ${res.serverId}" +
+                            if (res.enabled) "" else " (disabled node)",
+                    )
+                }
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(issuingCatalogKey = false, error = "issue key: ${errMsg(e)}")
+                }
+            }
+        }
+    }
+
+    fun consumeIssuedCatalogKey() {
+        _state.update { it.copy(issuedCatalogKey = null) }
     }
 
     fun refreshCatalog(reset: Boolean = true) {
