@@ -740,11 +740,11 @@ object ApiFactory {
     /** SQLite often returns 0/1 for booleans — accept both JSON forms. */
     private class TolerantBooleanAdapter {
         @FromJson
-        fun fromJson(reader: JsonReader): Boolean? {
+        fun fromJson(reader: JsonReader): Boolean {
             return when (reader.peek()) {
                 JsonReader.Token.NULL -> {
-                    reader.nextNull()
-                    null
+                    reader.nextNull<Unit>()
+                    false
                 }
                 JsonReader.Token.BOOLEAN -> reader.nextBoolean()
                 JsonReader.Token.NUMBER -> reader.nextInt() != 0
@@ -760,10 +760,12 @@ object ApiFactory {
         }
 
         @ToJson
-        fun toJson(value: Boolean?): Boolean? = value
+        fun toJson(writer: com.squareup.moshi.JsonWriter, value: Boolean) {
+            writer.value(value)
+        }
     }
 
-    private val moshi = Moshi.Builder()
+    private val moshi: Moshi = Moshi.Builder()
         .add(TolerantBooleanAdapter())
         .add(KotlinJsonAdapterFactory())
         .build()
