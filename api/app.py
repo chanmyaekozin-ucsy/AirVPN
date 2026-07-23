@@ -90,8 +90,13 @@ def _validate_free_share_uri(uri: str) -> str:
 async def lifespan(_app: FastAPI):
     await db.init_db()
     from api.admin import ensure_admin_seed
+    from vpn_servers import ensure_vpn_nodes_seeded
 
     await ensure_admin_seed()
+    try:
+        await ensure_vpn_nodes_seeded()
+    except Exception:
+        logger.exception("VPN node seed on API startup failed")
     yield
 
 
@@ -432,11 +437,18 @@ def _has_manual_userinfo(row: dict[str, Any]) -> bool:
 
 
 def _merge_manual_userinfo(row: dict[str, Any], userinfo: dict[str, Any]) -> dict[str, Any]:
+    """
+    Merge catalog overrides with live/upstream userinfo.
+    Live upload/download win when present; manual total/expire still apply for quota display.
+    """
     out = dict(userinfo or {})
-    if row.get("manual_upload_bytes") is not None:
-        out["upload"] = int(row.get("manual_upload_bytes") or 0)
-    if row.get("manual_download_bytes") is not None:
-        out["download"] = int(row.get("manual_download_bytes") or 0)
+    live_up = int(out.get("upload") or 0)
+    live_down = int(out.get("download") or 0)
+    if live_up == 0 and live_down == 0:
+        if row.get("manual_upload_bytes") is not None:
+            out["upload"] = int(row.get("manual_upload_bytes") or 0)
+        if row.get("manual_download_bytes") is not None:
+            out["download"] = int(row.get("manual_download_bytes") or 0)
     if row.get("manual_total_bytes") is not None:
         out["total"] = int(row.get("manual_total_bytes") or 0)
     if row.get("manual_expire_at") is not None:
@@ -476,6 +488,7 @@ async def _free_nodes_and_userinfo(
     Returns (nodes, userinfo, as_subscription).
     as_subscription=True → expand to child nodes + free_subscriptions meta.
     """
+    from services.catalog_usage import fetch_catalog_nodes_userinfo
     from services.sub_link import (
         is_share_uri,
         is_subscription_url,
@@ -496,20 +509,25 @@ async def _free_nodes_and_userinfo(
             parent_name=name,
             parent_region=region,
         )
-        return nodes, {}, True
+        live = await fetch_catalog_nodes_userinfo(parent_id=parent_id, nodes=nodes)
+        return nodes, live, True
 
     if is_subscription_url(uri):
         nodes, userinfo = await _cached_free_sub(row)
         return nodes, userinfo, True
 
-    if is_share_uri(uri) and manual:
+    if is_share_uri(uri):
         nodes = parse_subscription_nodes(
             uri,
             parent_id=parent_id,
             parent_name=name,
             parent_region=region,
         )
-        return nodes, {}, True
+        live = await fetch_catalog_nodes_userinfo(parent_id=parent_id, nodes=nodes)
+        # Treat as free-sub card when we have manual quota OR live traffic OR multi intent
+        if manual or nodes:
+            return nodes, live, True
+        return [], {}, False
 
     return [], {}, False
 
