@@ -794,6 +794,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "my": "Active VPN ရှိသူများ",
         "en": "Active Subscribers",
     },
+    "admin_notify_paid": {
+        "my": "Paid အသုံးပြုသူများ",
+        "en": "Paid Users",
+    },
     "admin_notify_enter_message": {
         "my": "ပို့မည့် စာသား ရိုက်ထည့်ပါ (ပယ်ဖျက်ရန် /cancel):",
         "en": "Enter notification message (or /cancel):",

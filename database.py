@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -247,6 +248,32 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_mobile_servers_tier
             ON mobile_servers(tier, enabled, sort_order);
+
+        CREATE TABLE IF NOT EXISTS vpn_nodes (
+            id TEXT PRIMARY KEY,
+            name_en TEXT NOT NULL,
+            name_my TEXT NOT NULL DEFAULT '',
+            panel_url TEXT NOT NULL DEFAULT '',
+            panel_username TEXT NOT NULL DEFAULT '',
+            panel_password TEXT NOT NULL DEFAULT '',
+            panel_inbound_id INTEGER NOT NULL DEFAULT 1,
+            panel_verify_ssl INTEGER NOT NULL DEFAULT 1,
+            vps_host TEXT NOT NULL DEFAULT '',
+            vps_port INTEGER NOT NULL DEFAULT 443,
+            vless_security TEXT NOT NULL DEFAULT 'reality',
+            vless_flow TEXT NOT NULL DEFAULT 'xtls-rprx-vision',
+            vless_sni TEXT NOT NULL DEFAULT '',
+            vless_fp TEXT NOT NULL DEFAULT 'chrome',
+            vless_pbk TEXT NOT NULL DEFAULT '',
+            vless_sid TEXT NOT NULL DEFAULT '',
+            vless_spx TEXT NOT NULL DEFAULT '/',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_vpn_nodes_order
+            ON vpn_nodes(enabled, sort_order, id);
 
         CREATE TABLE IF NOT EXISTS mobile_ads (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1496,10 +1523,23 @@ async def get_mobile_analytics_stats() -> dict[str, Any]:
 # ─── Notifications (admin broadcast) ─────────────────────────────────────────
 
 async def get_broadcast_telegram_ids(audience: str) -> list[int]:
-    """audience: 'all' or 'active'"""
+    """audience: 'all' | 'paid' | 'active' (active kept as any live sub for history)."""
     now = mmt_now().isoformat()
+    key = (audience or "all").strip().lower()
     async with _db() as db:
-        if audience == "active":
+        if key in ("paid", "paying"):
+            async with db.execute(
+                """SELECT DISTINCT u.telegram_id
+                   FROM users u
+                   JOIN subscriptions s ON s.user_id = u.id
+                   WHERE u.is_banned = 0
+                     AND s.is_active = 1
+                     AND s.is_free = 0
+                     AND s.expires_at > ?""",
+                (now,),
+            ) as cur:
+                return [r["telegram_id"] for r in await cur.fetchall()]
+        if key == "active":
             async with db.execute(
                 """SELECT DISTINCT u.telegram_id
                    FROM users u
@@ -1513,6 +1553,13 @@ async def get_broadcast_telegram_ids(audience: str) -> list[int]:
         ) as cur:
             return [r["telegram_id"] for r in await cur.fetchall()]
 
+
+async def count_broadcast_audiences() -> dict[str, int]:
+    return {
+        "all": len(await get_broadcast_telegram_ids("all")),
+        "paid": len(await get_broadcast_telegram_ids("paid")),
+        "active": len(await get_broadcast_telegram_ids("active")),
+    }
 
 async def save_notification(
     audience: str,
@@ -2260,3 +2307,147 @@ async def search_users(
         "per_page": per_page,
         "total_pages": total_pages,
     }
+
+
+# ─── VPN nodes (admin-managed locations) ─────────────────────────────────────
+
+async def count_vpn_nodes() -> int:
+    async with _db() as db:
+        async with db.execute("SELECT COUNT(*) AS c FROM vpn_nodes") as cur:
+            return int((await cur.fetchone())["c"])
+
+
+async def list_vpn_nodes(*, enabled_only: bool = False) -> list[dict[str, Any]]:
+    async with _db() as db:
+        where = "WHERE enabled = 1" if enabled_only else ""
+        async with db.execute(
+            f"""SELECT * FROM vpn_nodes {where}
+                ORDER BY sort_order ASC, id ASC"""
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def get_vpn_node(node_id: str) -> dict[str, Any] | None:
+    sid = (node_id or "").strip().lower()
+    if not sid:
+        return None
+    async with _db() as db:
+        async with db.execute(
+            "SELECT * FROM vpn_nodes WHERE id = ?", (sid,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def upsert_vpn_node(
+    *,
+    node_id: str,
+    name_en: str,
+    name_my: str = "",
+    panel_url: str = "",
+    panel_username: str = "",
+    panel_password: str = "",
+    panel_inbound_id: int = 1,
+    panel_verify_ssl: bool = True,
+    vps_host: str = "",
+    vps_port: int = 443,
+    vless_security: str = "reality",
+    vless_flow: str = "xtls-rprx-vision",
+    vless_sni: str = "",
+    vless_fp: str = "chrome",
+    vless_pbk: str = "",
+    vless_sid: str = "",
+    vless_spx: str = "/",
+    enabled: bool = True,
+    sort_order: int = 0,
+) -> dict[str, Any]:
+    sid = (node_id or "").strip().lower()
+    if not sid or not re.match(r"^[a-z0-9_-]{1,32}$", sid):
+        raise ValueError("node id must be 1-32 chars: a-z, 0-9, _, -")
+    name_en_s = (name_en or sid.upper()).strip()
+    name_my_s = (name_my or name_en_s).strip()
+    now = mmt_now().isoformat()
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO vpn_nodes (
+                id, name_en, name_my, panel_url, panel_username, panel_password,
+                panel_inbound_id, panel_verify_ssl, vps_host, vps_port,
+                vless_security, vless_flow, vless_sni, vless_fp, vless_pbk,
+                vless_sid, vless_spx, enabled, sort_order, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name_en = excluded.name_en,
+                name_my = excluded.name_my,
+                panel_url = excluded.panel_url,
+                panel_username = excluded.panel_username,
+                panel_password = CASE
+                    WHEN excluded.panel_password = '' THEN vpn_nodes.panel_password
+                    ELSE excluded.panel_password
+                END,
+                panel_inbound_id = excluded.panel_inbound_id,
+                panel_verify_ssl = excluded.panel_verify_ssl,
+                vps_host = excluded.vps_host,
+                vps_port = excluded.vps_port,
+                vless_security = excluded.vless_security,
+                vless_flow = excluded.vless_flow,
+                vless_sni = excluded.vless_sni,
+                vless_fp = excluded.vless_fp,
+                vless_pbk = CASE
+                    WHEN excluded.vless_pbk = '' THEN vpn_nodes.vless_pbk
+                    ELSE excluded.vless_pbk
+                END,
+                vless_sid = excluded.vless_sid,
+                vless_spx = excluded.vless_spx,
+                enabled = excluded.enabled,
+                sort_order = excluded.sort_order,
+                updated_at = excluded.updated_at
+            """,
+            (
+                sid,
+                name_en_s,
+                name_my_s,
+                (panel_url or "").strip().rstrip("/"),
+                (panel_username or "").strip(),
+                (panel_password or "").strip(),
+                int(panel_inbound_id or 1),
+                1 if panel_verify_ssl else 0,
+                (vps_host or "").strip(),
+                int(vps_port or 443),
+                (vless_security or "reality").strip(),
+                (vless_flow or "xtls-rprx-vision").strip(),
+                (vless_sni or "").strip(),
+                (vless_fp or "chrome").strip(),
+                (vless_pbk or "").strip(),
+                (vless_sid or "").strip(),
+                (vless_spx or "/").strip() or "/",
+                1 if enabled else 0,
+                int(sort_order or 0),
+                now,
+                now,
+            ),
+        )
+        await db.commit()
+    row = await get_vpn_node(sid)
+    if not row:
+        raise ValueError("node save failed")
+    return row
+
+
+async def set_vpn_node_enabled(node_id: str, enabled: bool) -> bool:
+    sid = (node_id or "").strip().lower()
+    async with _db() as db:
+        cur = await db.execute(
+            """UPDATE vpn_nodes SET enabled = ?, updated_at = ?
+               WHERE id = ?""",
+            (1 if enabled else 0, mmt_now().isoformat(), sid),
+        )
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def delete_vpn_node(node_id: str) -> bool:
+    sid = (node_id or "").strip().lower()
+    async with _db() as db:
+        cur = await db.execute("DELETE FROM vpn_nodes WHERE id = ?", (sid,))
+        await db.commit()
+        return cur.rowcount > 0

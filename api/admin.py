@@ -18,7 +18,7 @@ import config
 import database as db
 from database import mmt_now
 from services.admin_stats import fetch_admin_stats
-from vpn_servers import list_servers, reload_servers
+from vpn_servers import ensure_vpn_nodes_seeded, list_servers, reload_servers_from_db
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +83,28 @@ class PlanBody(BaseModel):
     is_active: bool = True
 
 
+class VpnNodeBody(BaseModel):
+    id: str = Field(min_length=1, max_length=32)
+    name_en: str = Field(min_length=1, max_length=128)
+    name_my: str = Field(default="", max_length=128)
+    panel_url: str = Field(default="", max_length=512)
+    panel_username: str = Field(default="", max_length=128)
+    panel_password: str = Field(default="", max_length=256)
+    panel_inbound_id: int = Field(default=1, ge=1)
+    panel_verify_ssl: bool = True
+    vps_host: str = Field(default="", max_length=255)
+    vps_port: int = Field(default=443, ge=1, le=65535)
+    vless_security: str = Field(default="reality", max_length=32)
+    vless_flow: str = Field(default="xtls-rprx-vision", max_length=64)
+    vless_sni: str = Field(default="", max_length=255)
+    vless_fp: str = Field(default="chrome", max_length=64)
+    vless_pbk: str = Field(default="", max_length=256)
+    vless_sid: str = Field(default="", max_length=64)
+    vless_spx: str = Field(default="/", max_length=128)
+    enabled: bool = True
+    sort_order: int = 0
+
+
 class BanBody(BaseModel):
     banned: bool = True
 
@@ -124,6 +146,11 @@ class AdBody(BaseModel):
     image_height: int = Field(default=0, ge=0)
     enabled: bool = True
     sort_order: int = 0
+
+
+class BroadcastBody(BaseModel):
+    audience: str = Field(default="all", min_length=2, max_length=16)
+    message: str = Field(min_length=1, max_length=3500)
 
 
 class AdPatchBody(BaseModel):
@@ -284,26 +311,145 @@ async def admin_stats(_admin_id: int = Depends(require_admin)) -> dict[str, Any]
     return await fetch_admin_stats()
 
 
-# ─── VPN servers (env catalog) + plans (DB) ───────────────────────────────────
+# ─── VPN nodes (DB) + plans (DB) ──────────────────────────────────────────────
+
+
+def _serialize_vpn_node(row: dict[str, Any], *, plan_count: int = 0) -> dict[str, Any]:
+    password = (row.get("panel_password") or "").strip()
+    pbk = (row.get("vless_pbk") or "").strip()
+    return {
+        "id": row["id"],
+        "name_en": row.get("name_en") or "",
+        "name_my": row.get("name_my") or "",
+        "panel_url": row.get("panel_url") or "",
+        "panel_username": row.get("panel_username") or "",
+        "panel_password_set": bool(password),
+        "panel_inbound_id": int(row.get("panel_inbound_id") or 1),
+        "panel_verify_ssl": bool(row.get("panel_verify_ssl", 1)),
+        "vps_host": row.get("vps_host") or "",
+        "vps_port": int(row.get("vps_port") or 443),
+        "vless_security": row.get("vless_security") or "reality",
+        "vless_flow": row.get("vless_flow") or "xtls-rprx-vision",
+        "vless_sni": row.get("vless_sni") or "",
+        "vless_fp": row.get("vless_fp") or "chrome",
+        "vless_pbk_set": bool(pbk),
+        "vless_sid": row.get("vless_sid") or "",
+        "vless_spx": row.get("vless_spx") or "/",
+        "enabled": bool(row.get("enabled", 1)),
+        "sort_order": int(row.get("sort_order") or 0),
+        "panel_configured": bool((row.get("panel_url") or "").strip() and (row.get("vps_host") or "").strip()),
+        "plan_count": plan_count,
+        "source": "db",
+    }
 
 
 @router.get("/servers")
 async def admin_list_servers(_admin_id: int = Depends(require_admin)) -> dict[str, Any]:
-    reload_servers()
+    await reload_servers_from_db()
+    rows = await db.list_vpn_nodes(enabled_only=False)
+    if not rows:
+        # Env-only fallback (before first seed)
+        servers = []
+        for s in list_servers(include_disabled=True):
+            servers.append(
+                {
+                    "id": s.id,
+                    "name_en": s.name_en,
+                    "name_my": s.name_my,
+                    "panel_url": s.panel_url,
+                    "panel_username": s.panel_username,
+                    "panel_password_set": bool(s.panel_password),
+                    "panel_inbound_id": s.panel_inbound_id,
+                    "panel_verify_ssl": s.panel_verify_ssl,
+                    "vps_host": s.vps_host,
+                    "vps_port": s.vps_port,
+                    "vless_security": s.vless_security,
+                    "vless_flow": s.vless_flow,
+                    "vless_sni": s.vless_sni,
+                    "vless_fp": s.vless_fp,
+                    "vless_pbk_set": bool(s.vless_pbk),
+                    "vless_sid": s.vless_sid,
+                    "vless_spx": s.vless_spx,
+                    "enabled": s.enabled,
+                    "sort_order": s.sort_order,
+                    "panel_configured": s.is_configured(),
+                    "plan_count": len(s.plans),
+                    "source": s.source,
+                }
+            )
+        return {"servers": servers}
+
     servers = []
-    for s in list_servers():
-        servers.append(
-            {
-                "id": s.id,
-                "name_en": s.name_en,
-                "name_my": s.name_my,
-                "vps_host": s.vps_host,
-                "vps_port": s.vps_port,
-                "panel_configured": s.is_configured(),
-                "plan_count": len(s.plans),
-            }
-        )
+    for row in rows:
+        plans = await db.list_plans(server_id=row["id"], include_inactive=True)
+        servers.append(_serialize_vpn_node(row, plan_count=len(plans)))
     return {"servers": servers}
+
+
+@router.post("/servers")
+async def admin_upsert_server(
+    body: VpnNodeBody,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    try:
+        row = await db.upsert_vpn_node(
+            node_id=body.id,
+            name_en=body.name_en,
+            name_my=body.name_my,
+            panel_url=body.panel_url,
+            panel_username=body.panel_username,
+            panel_password=body.panel_password,
+            panel_inbound_id=body.panel_inbound_id,
+            panel_verify_ssl=body.panel_verify_ssl,
+            vps_host=body.vps_host,
+            vps_port=body.vps_port,
+            vless_security=body.vless_security,
+            vless_flow=body.vless_flow,
+            vless_sni=body.vless_sni,
+            vless_fp=body.vless_fp,
+            vless_pbk=body.vless_pbk,
+            vless_sid=body.vless_sid,
+            vless_spx=body.vless_spx,
+            enabled=body.enabled,
+            sort_order=body.sort_order,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await reload_servers_from_db()
+    plans = await db.list_plans(server_id=row["id"], include_inactive=True)
+    return {"server": _serialize_vpn_node(row, plan_count=len(plans))}
+
+
+@router.post("/servers/{server_id}/enabled")
+async def admin_set_server_enabled(
+    server_id: str,
+    enabled: bool = True,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    ok = await db.set_vpn_node_enabled(server_id, enabled)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Server not found")
+    await reload_servers_from_db()
+    return {"status": "ok", "id": server_id.strip().lower(), "enabled": enabled}
+
+
+@router.delete("/servers/{server_id}")
+async def admin_delete_server(
+    server_id: str,
+    _admin_id: int = Depends(require_admin),
+) -> dict[str, str]:
+    sid = server_id.strip().lower()
+    active_plans = await db.list_plans(server_id=sid, include_inactive=False)
+    if active_plans:
+        raise HTTPException(
+            status_code=400,
+            detail="Disable or remove active plans for this node first",
+        )
+    ok = await db.delete_vpn_node(sid)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Server not found")
+    await reload_servers_from_db()
+    return {"status": "ok"}
 
 
 @router.get("/plans")
@@ -839,8 +985,80 @@ async def admin_upload_ad_image(
     return {"image_url": f"/ads/{filename}", "filename": filename}
 
 
+# ─── Telegram broadcast notifications ────────────────────────────────────────
+
+
+def _serialize_notification(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "audience": row.get("audience") or "all",
+        "message": row.get("message") or "",
+        "sent_by": row.get("sent_by"),
+        "sent_count": int(row.get("sent_count") or 0),
+        "failed_count": int(row.get("failed_count") or 0),
+        "created_at": row.get("created_at"),
+    }
+
+
+@router.get("/notifications")
+async def admin_list_notifications(
+    limit: int = 20,
+    admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    _ = admin_id
+    lim = max(1, min(50, limit))
+    rows = await db.get_recent_notifications(lim)
+    counts = await db.count_broadcast_audiences()
+    return {
+        "audiences": counts,
+        "notifications": [_serialize_notification(r) for r in rows],
+    }
+
+
+@router.post("/notifications/broadcast")
+async def admin_broadcast_notification(
+    body: BroadcastBody,
+    admin_id: int = Depends(require_admin),
+) -> dict[str, Any]:
+    from services.notify import broadcast_notification, normalize_audience
+
+    try:
+        audience = normalize_audience(body.audience)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status_code=400, detail="message is required")
+
+    try:
+        notif_id, sent, failed = await broadcast_notification(
+            _bot(),
+            audience,
+            message,
+            admin_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("broadcast failed")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return {
+        "status": "ok",
+        "id": notif_id,
+        "audience": audience,
+        "sent": sent,
+        "failed": failed,
+        "targets": sent + failed,
+    }
+
+
 async def ensure_admin_seed() -> None:
-    """Seed paid plans from .env once if the plans table has none."""
+    """Seed VPN nodes + paid plans from .env once when DB tables are empty."""
+    try:
+        await ensure_vpn_nodes_seeded()
+    except Exception:
+        logger.exception("Failed to seed VPN nodes from env")
     try:
         if await db.count_paid_plans() == 0:
             await db.sync_plans_from_env()

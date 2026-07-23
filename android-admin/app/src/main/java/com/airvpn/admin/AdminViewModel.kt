@@ -8,16 +8,20 @@ import com.airvpn.admin.data.api.AdBody
 import com.airvpn.admin.data.api.AdPatchBody
 import com.airvpn.admin.data.api.ApiFactory
 import com.airvpn.admin.data.api.BanBody
+import com.airvpn.admin.data.api.BroadcastBody
 import com.airvpn.admin.data.api.CatalogBody
 import com.airvpn.admin.data.api.LoginBody
 import com.airvpn.admin.data.api.ManualSubBody
 import com.airvpn.admin.data.api.PlanBody
 import com.airvpn.admin.data.api.RejectBody
 import com.airvpn.admin.data.api.SubAdjustBody
+import com.airvpn.admin.data.api.VpnNodeBody
 import com.airvpn.admin.data.local.SessionStore
 import com.airvpn.admin.data.model.AdItem
 import com.airvpn.admin.data.model.AdminStats
+import com.airvpn.admin.data.model.AudienceCounts
 import com.airvpn.admin.data.model.CatalogServer
+import com.airvpn.admin.data.model.NotificationItem
 import com.airvpn.admin.data.model.PaymentAccount
 import com.airvpn.admin.data.model.PaymentItem
 import com.airvpn.admin.data.model.PlanItem
@@ -67,6 +71,11 @@ data class AdminUiState(
     val adsPage: Int = 0,
     val adsTotalPages: Int = 1,
     val adsLoadingMore: Boolean = false,
+    val notifyAudience: String = "all",
+    val notifyMessage: String = "",
+    val notifySending: Boolean = false,
+    val audienceCounts: AudienceCounts = AudienceCounts(),
+    val notifications: List<NotificationItem> = emptyList(),
     val refreshing: Boolean = false,
     val managedTelegramId: Long? = null,
     val managedSubs: List<SubscriptionItem> = emptyList(),
@@ -310,6 +319,13 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
                                 _state.update { it.copy(error = "ads: ${errMsg(e)}") }
                             }
                         },
+                        async {
+                            runCatching {
+                                loadNotificationsIntoState()
+                            }.onFailure { e ->
+                                _state.update { it.copy(error = "notify: ${errMsg(e)}") }
+                            }
+                        },
                     )
                     jobs.awaitAll()
                 }
@@ -415,6 +431,66 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         val servers = api.servers(auth()).servers.map { it.toModel() }
         val plans = api.plans(auth()).plans.map { it.toModel() }
         _state.update { it.copy(servers = servers, plans = plans) }
+    }
+
+    fun saveServer(
+        id: String,
+        nameEn: String,
+        nameMy: String,
+        panelUrl: String,
+        panelUsername: String,
+        panelPassword: String,
+        panelInboundId: Int,
+        panelVerifySsl: Boolean,
+        vpsHost: String,
+        vpsPort: Int,
+        vlessSecurity: String,
+        vlessFlow: String,
+        vlessSni: String,
+        vlessFp: String,
+        vlessPbk: String,
+        vlessSid: String,
+        vlessSpx: String,
+        enabled: Boolean,
+        sortOrder: Int,
+    ) = launch("saveServer") {
+        api.upsertServer(
+            auth(),
+            VpnNodeBody(
+                id = id.trim().lowercase(),
+                nameEn = nameEn,
+                nameMy = nameMy,
+                panelUrl = panelUrl,
+                panelUsername = panelUsername,
+                panelPassword = panelPassword,
+                panelInboundId = panelInboundId,
+                panelVerifySsl = panelVerifySsl,
+                vpsHost = vpsHost,
+                vpsPort = vpsPort,
+                vlessSecurity = vlessSecurity,
+                vlessFlow = vlessFlow,
+                vlessSni = vlessSni,
+                vlessFp = vlessFp,
+                vlessPbk = vlessPbk,
+                vlessSid = vlessSid,
+                vlessSpx = vlessSpx,
+                enabled = enabled,
+                sortOrder = sortOrder,
+            ),
+        )
+        _state.update { it.copy(message = "Node saved") }
+        refreshServersPlans()
+    }
+
+    fun setServerEnabled(id: String, enabled: Boolean) = launch("serverEnabled") {
+        api.setServerEnabled(auth(), id, enabled)
+        refreshServersPlans()
+    }
+
+    fun deleteServer(id: String) = launch("deleteServer") {
+        api.deleteServer(auth(), id)
+        _state.update { it.copy(message = "Node deleted") }
+        refreshServersPlans()
     }
 
     fun savePlan(
@@ -733,6 +809,63 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         val res = api.uploadAd(auth(), ApiFactory.imagePart(file))
         onUrl(res.imageUrl)
         _state.update { it.copy(message = "Image uploaded") }
+    }
+
+    fun setNotifyAudience(audience: String) {
+        _state.update { it.copy(notifyAudience = audience) }
+    }
+
+    fun setNotifyMessage(message: String) {
+        _state.update { it.copy(notifyMessage = message) }
+    }
+
+    fun refreshNotifications() = launch("notifications") {
+        loadNotificationsIntoState()
+    }
+
+    private suspend fun loadNotificationsIntoState() {
+        val res = api.notifications(auth())
+        _state.update {
+            it.copy(
+                audienceCounts = AudienceCounts(
+                    all = res.audiences.all,
+                    paid = res.audiences.paid,
+                    active = res.audiences.active,
+                ),
+                notifications = res.notifications.map { n -> n.toModel() },
+            )
+        }
+    }
+
+    fun sendBroadcast() {
+        val st = _state.value
+        val msg = st.notifyMessage.trim()
+        if (msg.isBlank()) {
+            _state.update { it.copy(error = "Enter a message first") }
+            return
+        }
+        if (st.notifySending) return
+        viewModelScope.launch {
+            _state.update { it.copy(notifySending = true, error = null) }
+            try {
+                val res = api.broadcast(
+                    auth(),
+                    BroadcastBody(audience = st.notifyAudience, message = msg),
+                )
+                _state.update {
+                    it.copy(
+                        notifySending = false,
+                        notifyMessage = "",
+                        message = "Sent to ${res.sent} · failed ${res.failed}",
+                    )
+                }
+                loadNotificationsIntoState()
+            } catch (e: Exception) {
+                _state.update {
+                    it.copy(notifySending = false, error = "broadcast: ${errMsg(e)}")
+                }
+            }
+        }
     }
 
     private fun launch(label: String, block: suspend () -> Unit) {

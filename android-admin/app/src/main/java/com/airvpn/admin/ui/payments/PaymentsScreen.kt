@@ -16,7 +16,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -37,6 +36,7 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.airvpn.admin.data.api.ApiFactory
 import com.airvpn.admin.data.model.PaymentItem
+import com.airvpn.admin.ui.components.AdminDialog
 import com.airvpn.admin.ui.components.AdminOutlinedButton
 import com.airvpn.admin.ui.components.AdminPrimaryButton
 import com.airvpn.admin.ui.components.AdminScreen
@@ -44,8 +44,11 @@ import com.airvpn.admin.ui.components.AdminTextButton
 import com.airvpn.admin.ui.components.InfiniteListHandler
 import com.airvpn.admin.ui.components.ListRowCard
 import com.airvpn.admin.ui.components.LoadMoreFooter
+import com.airvpn.admin.ui.components.SortChipRow
+import com.airvpn.admin.ui.components.SortOption
 import com.airvpn.admin.ui.components.StatusChip
 import com.airvpn.admin.ui.components.StatusTone
+import com.airvpn.admin.ui.components.adminFieldColors
 import com.airvpn.admin.ui.theme.Cyan
 import com.airvpn.admin.ui.theme.Danger
 import com.airvpn.admin.ui.theme.Hairline
@@ -73,9 +76,18 @@ fun PaymentsScreen(
     var rejectId by remember { mutableStateOf<Int?>(null) }
     var reason by remember { mutableStateOf("") }
     var previewUrl by remember { mutableStateOf<String?>(null) }
+    var sortKey by remember { mutableStateOf("newest") }
     val fmt = NumberFormat.getIntegerInstance(Locale.US)
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    val sorted = remember(payments, sortKey) {
+        when (sortKey) {
+            "oldest" -> payments.sortedBy { it.id }
+            "amount_high" -> payments.sortedByDescending { it.amountKs }
+            "amount_low" -> payments.sortedBy { it.amountKs }
+            else -> payments.sortedByDescending { it.id }
+        }
+    }
 
     InfiniteListHandler(
         listState = listState,
@@ -86,7 +98,7 @@ fun PaymentsScreen(
     AdminScreen(
         title = "Payments",
         eyebrow = "Finance",
-        subtitle = "${payments.size} records in view",
+        subtitle = "${sorted.size} records in view",
         modifier = modifier.fillMaxSize(),
     ) {
         Row(
@@ -113,12 +125,23 @@ fun PaymentsScreen(
                 )
             }
         }
+        Spacer(Modifier.height(10.dp))
+        SortChipRow(
+            options = listOf(
+                SortOption("newest", "Newest"),
+                SortOption("oldest", "Oldest"),
+                SortOption("amount_high", "Amount ↓"),
+                SortOption("amount_low", "Amount ↑"),
+            ),
+            selectedKey = sortKey,
+            onSelect = { sortKey = it },
+        )
         Spacer(Modifier.height(16.dp))
         LazyColumn(
             state = listState,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(payments, key = { it.id }) { p ->
+            items(sorted, key = { it.id }) { p ->
                 ListRowCard {
                     Row(modifier = Modifier.fillMaxWidth()) {
                         Text(
@@ -289,63 +312,58 @@ fun PaymentsScreen(
     }
 
     rejectId?.let { id ->
-        AlertDialog(
+        AdminDialog(
             onDismissRequest = { rejectId = null },
-            title = { Text("Reject #$id") },
-            text = {
-                OutlinedTextField(
-                    value = reason,
-                    onValueChange = { reason = it },
-                    label = { Text("Reason") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
+            title = "Reject payment",
+            eyebrow = "Payments",
+            subtitle = "Request #$id",
+            confirmLabel = "Reject",
+            confirmDestructive = true,
+            onConfirm = {
+                onReject(id, reason)
+                rejectId = null
             },
-            confirmButton = {
-                AdminTextButton(
-                    text = "Reject",
-                    onClick = {
-                        onReject(id, reason)
-                        rejectId = null
-                    },
-                    contentColor = Danger,
-                )
-            },
-            dismissButton = {
-                AdminTextButton(
-                    text = "Cancel",
-                    onClick = { rejectId = null },
-                    contentColor = InkMuted,
-                )
-            },
-        )
+            scrollable = false,
+        ) {
+            OutlinedTextField(
+                value = reason,
+                onValueChange = { reason = it },
+                label = { Text("Reason") },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = adminFieldColors(focused = Danger),
+                minLines = 2,
+            )
+        }
     }
 
     previewUrl?.let { url ->
         if (!authToken.isNullOrBlank()) {
-            AlertDialog(
+            AdminDialog(
                 onDismissRequest = { previewUrl = null },
-                title = { Text("Receipt") },
-                text = {
-                    AsyncImage(
-                        model = ImageRequest.Builder(context)
-                            .data(url)
-                            .addHeader("Authorization", ApiFactory.auth(authToken))
-                            .build(),
-                        contentDescription = "Receipt full",
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(360.dp),
-                        contentScale = ContentScale.Fit,
-                    )
-                },
-                confirmButton = {
-                    AdminTextButton(
-                        text = "Close",
-                        onClick = { previewUrl = null },
-                        contentColor = Navy,
-                    )
-                },
-            )
+                title = "Receipt",
+                eyebrow = "Payments",
+                dismissLabel = "Close",
+                showDismiss = true,
+                confirmLabel = null,
+                onConfirm = null,
+                scrollable = false,
+            ) {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(url)
+                        .addHeader("Authorization", ApiFactory.auth(authToken))
+                        .build(),
+                    contentDescription = "Receipt full",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(360.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .border(1.dp, Hairline, RoundedCornerShape(12.dp))
+                        .background(Hairline),
+                    contentScale = ContentScale.Fit,
+                )
+            }
         }
     }
 }

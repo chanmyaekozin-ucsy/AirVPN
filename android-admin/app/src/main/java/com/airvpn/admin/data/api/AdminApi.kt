@@ -4,6 +4,7 @@ import com.airvpn.admin.BuildConfig
 import com.airvpn.admin.data.model.AdItem
 import com.airvpn.admin.data.model.AdminStats
 import com.airvpn.admin.data.model.CatalogServer
+import com.airvpn.admin.data.model.NotificationItem
 import com.airvpn.admin.data.model.PaymentAccount
 import com.airvpn.admin.data.model.PaymentItem
 import com.airvpn.admin.data.model.PlanItem
@@ -91,6 +92,25 @@ interface AdminApi {
 
     @GET("v1/admin/servers")
     suspend fun servers(@Header("Authorization") auth: String): ServersDto
+
+    @POST("v1/admin/servers")
+    suspend fun upsertServer(
+        @Header("Authorization") auth: String,
+        @Body body: VpnNodeBody,
+    ): ServerWrapDto
+
+    @POST("v1/admin/servers/{id}/enabled")
+    suspend fun setServerEnabled(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+        @Query("enabled") enabled: Boolean,
+    ): StatusResponse
+
+    @DELETE("v1/admin/servers/{id}")
+    suspend fun deleteServer(
+        @Header("Authorization") auth: String,
+        @Path("id") id: String,
+    ): StatusResponse
 
     @GET("v1/admin/plans")
     suspend fun plans(
@@ -216,6 +236,18 @@ interface AdminApi {
         @Header("Authorization") auth: String,
         @Part file: MultipartBody.Part,
     ): UploadDto
+
+    @GET("v1/admin/notifications")
+    suspend fun notifications(
+        @Header("Authorization") auth: String,
+        @Query("limit") limit: Int = 20,
+    ): NotificationsDto
+
+    @POST("v1/admin/notifications/broadcast")
+    suspend fun broadcast(
+        @Header("Authorization") auth: String,
+        @Body body: BroadcastBody,
+    ): BroadcastResultDto
 }
 
 data class LoginBody(
@@ -357,23 +389,76 @@ data class ServerDto(
     val id: String,
     @Json(name = "name_en") val nameEn: String? = null,
     @Json(name = "name_my") val nameMy: String? = null,
+    @Json(name = "panel_url") val panelUrl: String? = null,
+    @Json(name = "panel_username") val panelUsername: String? = null,
+    @Json(name = "panel_password_set") val panelPasswordSet: Boolean = false,
+    @Json(name = "panel_inbound_id") val panelInboundId: Int = 1,
+    @Json(name = "panel_verify_ssl") val panelVerifySsl: Boolean = true,
     @Json(name = "vps_host") val vpsHost: String? = null,
     @Json(name = "vps_port") val vpsPort: Int = 443,
+    @Json(name = "vless_security") val vlessSecurity: String? = null,
+    @Json(name = "vless_flow") val vlessFlow: String? = null,
+    @Json(name = "vless_sni") val vlessSni: String? = null,
+    @Json(name = "vless_fp") val vlessFp: String? = null,
+    @Json(name = "vless_pbk_set") val vlessPbkSet: Boolean = false,
+    @Json(name = "vless_sid") val vlessSid: String? = null,
+    @Json(name = "vless_spx") val vlessSpx: String? = null,
+    val enabled: Boolean = true,
+    @Json(name = "sort_order") val sortOrder: Int = 0,
     @Json(name = "panel_configured") val panelConfigured: Boolean = false,
     @Json(name = "plan_count") val planCount: Int = 0,
+    val source: String? = null,
 ) {
     fun toModel() = VpnServerInfo(
         id = id,
         nameEn = nameEn.orEmpty(),
         nameMy = nameMy.orEmpty(),
+        panelUrl = panelUrl.orEmpty(),
+        panelUsername = panelUsername.orEmpty(),
+        panelPasswordSet = panelPasswordSet,
+        panelInboundId = panelInboundId,
+        panelVerifySsl = panelVerifySsl,
         vpsHost = vpsHost.orEmpty(),
         vpsPort = vpsPort,
+        vlessSecurity = vlessSecurity ?: "reality",
+        vlessFlow = vlessFlow ?: "xtls-rprx-vision",
+        vlessSni = vlessSni.orEmpty(),
+        vlessFp = vlessFp ?: "chrome",
+        vlessPbkSet = vlessPbkSet,
+        vlessSid = vlessSid.orEmpty(),
+        vlessSpx = vlessSpx ?: "/",
+        enabled = enabled,
+        sortOrder = sortOrder,
         panelConfigured = panelConfigured,
         planCount = planCount,
+        source = source ?: "db",
     )
 }
 
 data class ServersDto(val servers: List<ServerDto> = emptyList())
+data class ServerWrapDto(val server: ServerDto)
+
+data class VpnNodeBody(
+    val id: String,
+    @Json(name = "name_en") val nameEn: String,
+    @Json(name = "name_my") val nameMy: String = "",
+    @Json(name = "panel_url") val panelUrl: String = "",
+    @Json(name = "panel_username") val panelUsername: String = "",
+    @Json(name = "panel_password") val panelPassword: String = "",
+    @Json(name = "panel_inbound_id") val panelInboundId: Int = 1,
+    @Json(name = "panel_verify_ssl") val panelVerifySsl: Boolean = true,
+    @Json(name = "vps_host") val vpsHost: String = "",
+    @Json(name = "vps_port") val vpsPort: Int = 443,
+    @Json(name = "vless_security") val vlessSecurity: String = "reality",
+    @Json(name = "vless_flow") val vlessFlow: String = "xtls-rprx-vision",
+    @Json(name = "vless_sni") val vlessSni: String = "",
+    @Json(name = "vless_fp") val vlessFp: String = "chrome",
+    @Json(name = "vless_pbk") val vlessPbk: String = "",
+    @Json(name = "vless_sid") val vlessSid: String = "",
+    @Json(name = "vless_spx") val vlessSpx: String = "/",
+    val enabled: Boolean = true,
+    @Json(name = "sort_order") val sortOrder: Int = 0,
+)
 
 data class PlanDto(
     val id: Int,
@@ -595,12 +680,58 @@ data class UploadDto(
     val filename: String? = null,
 )
 
+data class BroadcastBody(
+    val audience: String,
+    val message: String,
+)
+
+data class BroadcastResultDto(
+    val status: String? = null,
+    val id: Int = 0,
+    val audience: String? = null,
+    val sent: Int = 0,
+    val failed: Int = 0,
+    val targets: Int = 0,
+)
+
+data class AudienceCountsDto(
+    val all: Int = 0,
+    val paid: Int = 0,
+    val active: Int = 0,
+)
+
+data class NotificationDto(
+    val id: Int,
+    val audience: String? = null,
+    val message: String? = null,
+    @Json(name = "sent_by") val sentBy: Long? = null,
+    @Json(name = "sent_count") val sentCount: Int = 0,
+    @Json(name = "failed_count") val failedCount: Int = 0,
+    @Json(name = "created_at") val createdAt: String? = null,
+) {
+    fun toModel() = NotificationItem(
+        id = id,
+        audience = audience.orEmpty(),
+        message = message.orEmpty(),
+        sentBy = sentBy,
+        sentCount = sentCount,
+        failedCount = failedCount,
+        createdAt = createdAt,
+    )
+}
+
+data class NotificationsDto(
+    val audiences: AudienceCountsDto = AudienceCountsDto(),
+    val notifications: List<NotificationDto> = emptyList(),
+)
+
 object ApiFactory {
     private val moshi = Moshi.Builder().add(KotlinJsonAdapterFactory()).build()
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(40, TimeUnit.SECONDS)
+        .readTimeout(180, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
         .build()
 
     val api: AdminApi = Retrofit.Builder()

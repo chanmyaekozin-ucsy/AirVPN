@@ -333,6 +333,7 @@ def admin_notify_audience(lang: str) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
             [KeyboardButton(t(lang, "admin_notify_all"))],
+            [KeyboardButton(t(lang, "admin_notify_paid"))],
             [KeyboardButton(t(lang, "admin_notify_active"))],
             [KeyboardButton(t(lang, "back"))],
         ],

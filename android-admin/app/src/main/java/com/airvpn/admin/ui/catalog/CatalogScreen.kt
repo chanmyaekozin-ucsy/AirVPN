@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -26,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.airvpn.admin.data.model.CatalogServer
+import com.airvpn.admin.ui.components.AdminDialog
 import com.airvpn.admin.ui.components.AdminOutlinedButton
 import com.airvpn.admin.ui.components.AdminPrimaryButton
 import com.airvpn.admin.ui.components.AdminScreen
@@ -33,6 +34,9 @@ import com.airvpn.admin.ui.components.AdminTextButton
 import com.airvpn.admin.ui.components.InfiniteListHandler
 import com.airvpn.admin.ui.components.ListRowCard
 import com.airvpn.admin.ui.components.LoadMoreFooter
+import com.airvpn.admin.ui.components.SortChipRow
+import com.airvpn.admin.ui.components.SortOption
+import com.airvpn.admin.ui.components.adminFieldColors
 import com.airvpn.admin.ui.theme.Cyan
 import com.airvpn.admin.ui.theme.Danger
 import com.airvpn.admin.ui.theme.Ink
@@ -52,7 +56,16 @@ fun CatalogScreen(
 ) {
     var editing by remember { mutableStateOf<CatalogServer?>(null) }
     var creating by remember { mutableStateOf(false) }
+    var sortKey by remember { mutableStateOf("order") }
     val listState = rememberLazyListState()
+    val sorted = remember(servers, sortKey) {
+        when (sortKey) {
+            "name" -> servers.sortedBy { it.name.lowercase() }
+            "tier" -> servers.sortedBy { it.tier.lowercase() }
+            "enabled" -> servers.sortedByDescending { it.enabled }
+            else -> servers.sortedWith(compareBy({ it.sortOrder }, { it.name.lowercase() }))
+        }
+    }
 
     InfiniteListHandler(
         listState = listState,
@@ -73,11 +86,22 @@ fun CatalogScreen(
             )
         },
     ) {
+        SortChipRow(
+            options = listOf(
+                SortOption("order", "Sort order"),
+                SortOption("name", "Name"),
+                SortOption("tier", "Tier"),
+                SortOption("enabled", "Enabled first"),
+            ),
+            selectedKey = sortKey,
+            onSelect = { sortKey = it },
+        )
+        Spacer(Modifier.height(16.dp))
         LazyColumn(
             state = listState,
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(servers, key = { it.id }) { s ->
+            items(sorted, key = { it.id }) { s ->
                 ListRowCard {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -159,51 +183,70 @@ private fun CatalogDialog(
     var enabled by remember { mutableStateOf(initial?.enabled ?: true) }
     var sort by remember { mutableStateOf(initial?.sortOrder?.toString() ?: "0") }
 
-    AlertDialog(
+    AdminDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "Add server" else "Edit server") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    id, { id = it },
-                    label = { Text("Public id") },
-                    enabled = initial == null,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(name, { name = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(region, { region = it }, label = { Text("Region / CC") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(
-                    tier, { tier = it },
-                    label = { Text("Tier (free/paid)") },
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    uri, { uri = it },
-                    label = { Text("Config: vless:// or https:// sub") },
-                    placeholder = { Text("vless://… or https://…/sub") },
-                    modifier = Modifier.fillMaxWidth(),
-                    minLines = 2,
-                )
-                OutlinedTextField(sort, { sort = it }, label = { Text("Sort") }, modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Enabled", color = Ink)
-                    Spacer(Modifier.weight(1f))
-                    Switch(checked = enabled, onCheckedChange = { enabled = it })
-                }
-            }
+        title = if (initial == null) "Add server" else "Edit server",
+        eyebrow = "App catalog",
+        subtitle = "vless:// share key or https:// subscription",
+        confirmLabel = "Save",
+        onConfirm = confirm@{
+            if (id.isBlank() || name.isBlank()) return@confirm
+            onSave(id, name, region, tier, uri.ifBlank { null }, enabled, sort.toIntOrNull() ?: 0)
         },
-        confirmButton = {
-            AdminTextButton(
-                text = "Save",
-                onClick = {
-                    if (id.isBlank() || name.isBlank()) return@AdminTextButton
-                    onSave(id, name, region, tier, uri.ifBlank { null }, enabled, sort.toIntOrNull() ?: 0)
-                },
-                contentColor = Navy,
+    ) {
+        OutlinedTextField(
+            id, { id = it },
+            label = { Text("Public id") },
+            enabled = initial == null,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            name, { name = it },
+            label = { Text("Name") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            region, { region = it },
+            label = { Text("Region / CC") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            tier, { tier = it },
+            label = { Text("Tier (free/paid)") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            uri, { uri = it },
+            label = { Text("Config: vless:// or https:// sub") },
+            placeholder = { Text("vless://… or https://…/sub") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+            minLines = 2,
+        )
+        OutlinedTextField(
+            sort, { sort = it },
+            label = { Text("Sort") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Enabled", color = Ink)
+            Spacer(Modifier.weight(1f))
+            Switch(
+                checked = enabled,
+                onCheckedChange = { enabled = it },
+                colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
             )
-        },
-        dismissButton = {
-            AdminTextButton(text = "Cancel", onClick = onDismiss, contentColor = InkMuted)
-        },
-    )
+        }
+    }
 }

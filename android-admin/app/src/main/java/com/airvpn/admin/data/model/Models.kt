@@ -58,10 +58,25 @@ data class VpnServerInfo(
     val id: String,
     val nameEn: String,
     val nameMy: String,
+    val panelUrl: String = "",
+    val panelUsername: String = "",
+    val panelPasswordSet: Boolean = false,
+    val panelInboundId: Int = 1,
+    val panelVerifySsl: Boolean = true,
     val vpsHost: String,
     val vpsPort: Int,
+    val vlessSecurity: String = "reality",
+    val vlessFlow: String = "xtls-rprx-vision",
+    val vlessSni: String = "",
+    val vlessFp: String = "chrome",
+    val vlessPbkSet: Boolean = false,
+    val vlessSid: String = "",
+    val vlessSpx: String = "/",
+    val enabled: Boolean = true,
+    val sortOrder: Int = 0,
     val panelConfigured: Boolean,
     val planCount: Int,
+    val source: String = "db",
 )
 
 data class PlanItem(
@@ -124,4 +139,20 @@ data class SubscriptionItem(
     val vlessKey: String?,
     val subscriptionUrl: String?,
     val paymentId: Int?,
+)
+
+data class NotificationItem(
+    val id: Int,
+    val audience: String,
+    val message: String,
+    val sentBy: Long?,
+    val sentCount: Int,
+    val failedCount: Int,
+    val createdAt: String?,
+)
+
+data class AudienceCounts(
+    val all: Int = 0,
+    val paid: Int = 0,
+    val active: Int = 0,
 )

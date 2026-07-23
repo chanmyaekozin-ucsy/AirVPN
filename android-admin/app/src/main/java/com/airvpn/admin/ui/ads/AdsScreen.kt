@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -42,6 +41,7 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.airvpn.admin.data.api.ApiFactory
 import com.airvpn.admin.data.model.AdItem
+import com.airvpn.admin.ui.components.AdminDialog
 import com.airvpn.admin.ui.components.AdminOutlinedButton
 import com.airvpn.admin.ui.components.AdminPrimaryButton
 import com.airvpn.admin.ui.components.AdminScreen
@@ -49,8 +49,11 @@ import com.airvpn.admin.ui.components.AdminTextButton
 import com.airvpn.admin.ui.components.InfiniteListHandler
 import com.airvpn.admin.ui.components.ListRowCard
 import com.airvpn.admin.ui.components.LoadMoreFooter
+import com.airvpn.admin.ui.components.SortChipRow
+import com.airvpn.admin.ui.components.SortOption
 import com.airvpn.admin.ui.components.StatusChip
 import com.airvpn.admin.ui.components.StatusTone
+import com.airvpn.admin.ui.components.adminFieldColors
 import com.airvpn.admin.ui.theme.Cyan
 import com.airvpn.admin.ui.theme.Danger
 import com.airvpn.admin.ui.theme.Hairline
@@ -82,9 +85,17 @@ fun AdsScreen(
     modifier: Modifier = Modifier,
 ) {
     var filter by remember { mutableStateOf<String?>(null) }
+    var sortKey by remember { mutableStateOf("order") }
     var editing by remember { mutableStateOf<AdItem?>(null) }
     var creating by remember { mutableStateOf(false) }
-    val shown = ads.filter { filter == null || it.placement == filter }
+    val shown = remember(ads, filter, sortKey) {
+        val filtered = ads.filter { filter == null || it.placement == filter }
+        when (sortKey) {
+            "title" -> filtered.sortedBy { it.title.ifBlank { it.id }.lowercase() }
+            "enabled" -> filtered.sortedByDescending { it.enabled }
+            else -> filtered.sortedWith(compareBy({ it.sortOrder }, { it.id }))
+        }
+    }
     val listState = rememberLazyListState()
 
     InfiniteListHandler(
@@ -125,6 +136,16 @@ fun AdsScreen(
                 )
             }
         }
+        Spacer(Modifier.height(10.dp))
+        SortChipRow(
+            options = listOf(
+                SortOption("order", "Sort order"),
+                SortOption("title", "Title"),
+                SortOption("enabled", "Enabled first"),
+            ),
+            selectedKey = sortKey,
+            onSelect = { sortKey = it },
+        )
         Spacer(Modifier.height(16.dp))
         LazyColumn(
             state = listState,
@@ -235,68 +256,112 @@ private fun AdDialog(
         onUpload(tmp) { url -> imageUrl = url }
     }
 
-    AlertDialog(
+    AdminDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "Add ad" else "Edit ad") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    id, { id = it },
-                    label = { Text("Public id") },
-                    enabled = initial == null,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(placement, { placement = it }, label = { Text("Placement (banner/dialog)") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(imageUrl, { imageUrl = it }, label = { Text("Image URL") }, modifier = Modifier.fillMaxWidth())
-                AdminOutlinedButton(
-                    text = "Upload image",
-                    onClick = { picker.launch("image/*") },
-                    compact = true,
-                )
-                if (imageUrl.isNotBlank()) {
-                    AsyncImage(
-                        model = ApiFactory.absoluteUrl(imageUrl),
-                        contentDescription = null,
-                        modifier = Modifier.fillMaxWidth().height(100.dp),
-                        contentScale = ContentScale.Fit,
-                    )
-                }
-                OutlinedTextField(clickUrl, { clickUrl = it }, label = { Text("Click URL") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(title, { title = it }, label = { Text("Title") }, modifier = Modifier.fillMaxWidth())
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedTextField(width, { width = it }, label = { Text("W") }, modifier = Modifier.weight(1f))
-                    OutlinedTextField(height, { height = it }, label = { Text("H") }, modifier = Modifier.weight(1f))
-                    OutlinedTextField(sort, { sort = it }, label = { Text("Sort") }, modifier = Modifier.weight(1f))
-                }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Enabled", color = Ink)
-                    Spacer(Modifier.weight(1f))
-                    Switch(checked = enabled, onCheckedChange = { enabled = it })
-                }
-            }
-        },
-        confirmButton = {
-            AdminTextButton(
-                text = "Save",
-                onClick = {
-                    if (id.isBlank() || imageUrl.isBlank()) return@AdminTextButton
-                    onSave(
-                        id.trim(),
-                        placement.trim().ifBlank { "banner" },
-                        imageUrl.trim(),
-                        clickUrl.trim(),
-                        title.trim(),
-                        width.toIntOrNull() ?: 0,
-                        height.toIntOrNull() ?: 0,
-                        enabled,
-                        sort.toIntOrNull() ?: 0,
-                    )
-                },
-                contentColor = Navy,
+        title = if (initial == null) "Add ad" else "Edit ad",
+        eyebrow = "Ads",
+        subtitle = "Banner or connect-dialog creative",
+        confirmLabel = "Save",
+        onConfirm = confirm@{
+            if (id.isBlank() || imageUrl.isBlank()) return@confirm
+            onSave(
+                id.trim(),
+                placement.trim().ifBlank { "banner" },
+                imageUrl.trim(),
+                clickUrl.trim(),
+                title.trim(),
+                width.toIntOrNull() ?: 0,
+                height.toIntOrNull() ?: 0,
+                enabled,
+                sort.toIntOrNull() ?: 0,
             )
         },
-        dismissButton = {
-            AdminTextButton(text = "Cancel", onClick = onDismiss, contentColor = InkMuted)
-        },
-    )
+    ) {
+        OutlinedTextField(
+            id, { id = it },
+            label = { Text("Public id") },
+            enabled = initial == null,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            placement, { placement = it },
+            label = { Text("Placement (banner/dialog)") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            imageUrl, { imageUrl = it },
+            label = { Text("Image URL") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        AdminOutlinedButton(
+            text = "Upload image",
+            onClick = { picker.launch("image/*") },
+            compact = true,
+        )
+        if (imageUrl.isNotBlank()) {
+            AsyncImage(
+                model = ApiFactory.absoluteUrl(imageUrl),
+                contentDescription = null,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(100.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .border(1.dp, Hairline, RoundedCornerShape(12.dp))
+                    .background(Hairline),
+                contentScale = ContentScale.Fit,
+            )
+        }
+        OutlinedTextField(
+            clickUrl, { clickUrl = it },
+            label = { Text("Click URL") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            title, { title = it },
+            label = { Text("Title") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                width, { width = it },
+                label = { Text("W") },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(12.dp),
+                colors = adminFieldColors(),
+            )
+            OutlinedTextField(
+                height, { height = it },
+                label = { Text("H") },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(12.dp),
+                colors = adminFieldColors(),
+            )
+            OutlinedTextField(
+                sort, { sort = it },
+                label = { Text("Sort") },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(12.dp),
+                colors = adminFieldColors(),
+            )
+        }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Enabled", color = Ink)
+            Spacer(Modifier.weight(1f))
+            Switch(
+                checked = enabled,
+                onCheckedChange = { enabled = it },
+                colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
+            )
+        }
+    }
 }

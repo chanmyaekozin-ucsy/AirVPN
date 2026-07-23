@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -25,13 +25,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.airvpn.admin.data.model.PaymentAccount
+import com.airvpn.admin.ui.components.AdminDialog
 import com.airvpn.admin.ui.components.AdminOutlinedButton
 import com.airvpn.admin.ui.components.AdminPrimaryButton
 import com.airvpn.admin.ui.components.AdminScreen
-import com.airvpn.admin.ui.components.AdminTextButton
 import com.airvpn.admin.ui.components.ListRowCard
 import com.airvpn.admin.ui.components.StatusChip
 import com.airvpn.admin.ui.components.StatusTone
+import com.airvpn.admin.ui.components.adminFieldColors
 import com.airvpn.admin.ui.theme.Cyan
 import com.airvpn.admin.ui.theme.Ink
 import com.airvpn.admin.ui.theme.InkMuted
@@ -118,30 +119,42 @@ private fun AccountDialog(
     var name by remember { mutableStateOf(initial?.accountName ?: "") }
     var active by remember { mutableStateOf(initial?.isActive ?: true) }
 
-    AlertDialog(
+    AdminDialog(
         onDismissRequest = onDismiss,
-        title = { Text(if (initial == null) "Add account" else "Edit account") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(method, { method = it }, label = { Text("Method") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(number, { number = it }, label = { Text("Account number") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(name, { name = it }, label = { Text("Account name") }, modifier = Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Active", color = Ink)
-                    Spacer(Modifier.weight(1f))
-                    Switch(checked = active, onCheckedChange = { active = it })
-                }
-            }
-        },
-        confirmButton = {
-            AdminTextButton(
-                text = "Save",
-                onClick = { onSave(initial?.id, method, number, name, active) },
-                contentColor = Navy,
+        title = if (initial == null) "Add account" else "Edit account",
+        eyebrow = "Payout",
+        confirmLabel = "Save",
+        onConfirm = { onSave(initial?.id, method, number, name, active) },
+    ) {
+        OutlinedTextField(
+            method, { method = it },
+            label = { Text("Method") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            number, { number = it },
+            label = { Text("Account number") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        OutlinedTextField(
+            name, { name = it },
+            label = { Text("Account name") },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            colors = adminFieldColors(),
+        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("Active", color = Ink)
+            Spacer(Modifier.weight(1f))
+            Switch(
+                checked = active,
+                onCheckedChange = { active = it },
+                colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
             )
-        },
-        dismissButton = {
-            AdminTextButton(text = "Cancel", onClick = onDismiss, contentColor = InkMuted)
-        },
-    )
+        }
+    }
 }

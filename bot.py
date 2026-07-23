@@ -30,8 +30,10 @@ logger = logging.getLogger("airvpn")
 
 async def post_init(application: Application) -> None:
     await db.init_db()
+    from vpn_servers import ensure_vpn_nodes_seeded, find_unlisted_server_ids, list_servers
+
+    await ensure_vpn_nodes_seeded()
     await db.sync_plans_from_env()
-    from vpn_servers import find_unlisted_server_ids, list_servers
 
     active = [s.id for s in list_servers()]
     logger.info("VPN servers active: %s", ", ".join(active) or "(none)")

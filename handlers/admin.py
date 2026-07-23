@@ -78,6 +78,7 @@ def _admin_menu_label_pattern() -> str:
         "admin_approve",
         "admin_reject",
         "admin_notify_all",
+        "admin_notify_paid",
         "admin_notify_active",
         "admin_users_prev",
         "admin_users_next",
@@ -613,6 +614,11 @@ async def admin_notify_pick_audience(
         t("my", "admin_notify_all"),
         t("en", "admin_notify_all"),
     }
+    paid_labels = {
+        t(lang, "admin_notify_paid"),
+        t("my", "admin_notify_paid"),
+        t("en", "admin_notify_paid"),
+    }
     active_labels = {
         t(lang, "admin_notify_active"),
         t("my", "admin_notify_active"),
@@ -620,6 +626,8 @@ async def admin_notify_pick_audience(
     }
     if text in all_labels:
         context.user_data["notify_audience"] = "all"
+    elif text in paid_labels:
+        context.user_data["notify_audience"] = "paid"
     elif text in active_labels:
         context.user_data["notify_audience"] = "active"
     else:
@@ -753,9 +761,12 @@ async def notify_broadcast_text(update: Update, context: ContextTypes.DEFAULT_TY
     _notif_id, sent, failed = await broadcast_notification(
         update.get_bot(), audience, message, user.id
     )
-    audience_label = t(
-        lang, "admin_notify_all" if audience == "all" else "admin_notify_active"
-    )
+    audience_key = {
+        "all": "admin_notify_all",
+        "paid": "admin_notify_paid",
+        "active": "admin_notify_active",
+    }.get(audience, "admin_notify_all")
+    audience_label = t(lang, audience_key)
     context.user_data["admin_view"] = "notify"
     await update.message.reply_text(
         t(
@@ -1028,6 +1039,9 @@ def build_admin_conversation_handlers() -> list:
         entry_points=[
             MessageHandler(
                 admin_text_filter("admin_notify_all"), admin_notify_pick_audience
+            ),
+            MessageHandler(
+                admin_text_filter("admin_notify_paid"), admin_notify_pick_audience
             ),
             MessageHandler(
                 admin_text_filter("admin_notify_active"), admin_notify_pick_audience

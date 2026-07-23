@@ -1,12 +1,15 @@
-"""VPN server locations, panel settings, and plans — loaded from .env."""
+"""VPN server locations, panel settings, and plans — env + admin DB nodes."""
 from __future__ import annotations
 
+import logging
 import os
 import re
 import unicodedata
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import config
+
+logger = logging.getLogger(__name__)
 
 _MYANMAR_DIGITS = str.maketrans("၀၁၂၃၄၅၆၇၈၉", "0123456789")
 _HYPHEN_RE = re.compile(r"[\u2010-\u2015\u2212\u002d\uFE58\uFE63\uFF0D]+")
@@ -54,6 +57,9 @@ class VpnServer:
     vless_sid: str
     vless_spx: str
     plans: tuple[VpnPlan, ...] = field(default_factory=tuple)
+    enabled: bool = True
+    sort_order: int = 0
+    source: str = "env"
 
     def name(self, lang: str) -> str:
         return self.name_my if lang == "my" else self.name_en
@@ -178,6 +184,9 @@ def _load_server(server_id: str) -> VpnServer | None:
         vless_sid=_server_env(sid, "VLESS_SID", config.VLESS_SID if legacy else ""),
         vless_spx=_server_env(sid, "VLESS_SPX", config.VLESS_SPX if legacy else "/"),
         plans=plans,
+        enabled=True,
+        sort_order=0,
+        source="env",
     )
 
 
@@ -191,34 +200,138 @@ def _default_sg_plans_raw() -> str:
     )
 
 
-def _load_servers() -> dict[str, VpnServer]:
+def _load_servers_from_env() -> dict[str, VpnServer]:
     raw = os.getenv("VPN_SERVERS", "").strip()
     if not raw:
         raw = "sg"
     servers: dict[str, VpnServer] = {}
-    for part in raw.split(","):
+    for i, part in enumerate(raw.split(",")):
         server = _load_server(part)
+        # Env seed historically required plans; keep that for env-only mode.
         if server and server.plans:
-            servers[server.id] = server
+            servers[server.id] = replace(server, sort_order=i)
     return servers
 
 
-_SERVERS: dict[str, VpnServer] = _load_servers()
+def node_row_to_server(
+    row: dict,
+    plans: tuple[VpnPlan, ...] = (),
+) -> VpnServer:
+    return VpnServer(
+        id=str(row["id"]).strip().lower(),
+        name_en=row.get("name_en") or str(row["id"]).upper(),
+        name_my=row.get("name_my") or row.get("name_en") or str(row["id"]).upper(),
+        panel_url=(row.get("panel_url") or "").rstrip("/"),
+        panel_username=row.get("panel_username") or "",
+        panel_password=row.get("panel_password") or "",
+        panel_inbound_id=int(row.get("panel_inbound_id") or 1),
+        panel_verify_ssl=bool(row.get("panel_verify_ssl", 1)),
+        vps_host=row.get("vps_host") or "",
+        vps_port=int(row.get("vps_port") or 443),
+        vless_security=row.get("vless_security") or "reality",
+        vless_flow=row.get("vless_flow") or "xtls-rprx-vision",
+        vless_sni=row.get("vless_sni") or "",
+        vless_fp=row.get("vless_fp") or "chrome",
+        vless_pbk=row.get("vless_pbk") or "",
+        vless_sid=row.get("vless_sid") or "",
+        vless_spx=row.get("vless_spx") or "/",
+        plans=plans,
+        enabled=bool(row.get("enabled", 1)),
+        sort_order=int(row.get("sort_order") or 0),
+        source="db",
+    )
+
+
+def apply_servers(servers: dict[str, VpnServer]) -> None:
+    global _SERVERS
+    _SERVERS = servers
+
+
+_SERVERS: dict[str, VpnServer] = _load_servers_from_env()
 
 
 def reload_servers() -> None:
+    """Reload from .env only (sync). Prefer reload_servers_from_db in async paths."""
     global _SERVERS
-    _SERVERS = _load_servers()
+    _SERVERS = _load_servers_from_env()
 
 
-def list_servers() -> list[VpnServer]:
-    raw = os.getenv("VPN_SERVERS", "sg").strip()
-    order = [s.strip().lower() for s in raw.split(",") if s.strip()]
-    return [_SERVERS[sid] for sid in order if sid in _SERVERS]
+async def reload_servers_from_db() -> None:
+    """Prefer admin DB nodes; fall back to .env when the table is empty."""
+    import database as db
+
+    rows = await db.list_vpn_nodes(enabled_only=False)
+    if not rows:
+        reload_servers()
+        return
+
+    servers: dict[str, VpnServer] = {}
+    for row in rows:
+        sid = str(row["id"]).strip().lower()
+        plan_rows = await db.list_plans(server_id=sid, include_inactive=False)
+        plans = tuple(
+            VpnPlan(
+                title=p["title"],
+                data_gb=float(p["data_gb"]),
+                price_ks=int(p["price_ks"]),
+                duration_days=int(p["duration_days"]),
+                sort_order=int(p.get("sort_order") or 0),
+            )
+            for p in plan_rows
+        )
+        servers[sid] = node_row_to_server(row, plans)
+    apply_servers(servers)
+    logger.info("Loaded %s VPN node(s) from database", len(servers))
+
+
+async def ensure_vpn_nodes_seeded() -> None:
+    """Copy .env servers into vpn_nodes once so Admin can manage them."""
+    import database as db
+
+    if await db.count_vpn_nodes() > 0:
+        await reload_servers_from_db()
+        return
+
+    reload_servers()
+    env_servers = list(_SERVERS.values())
+    if not env_servers:
+        return
+
+    for i, s in enumerate(env_servers):
+        await db.upsert_vpn_node(
+            node_id=s.id,
+            name_en=s.name_en,
+            name_my=s.name_my,
+            panel_url=s.panel_url,
+            panel_username=s.panel_username,
+            panel_password=s.panel_password,
+            panel_inbound_id=s.panel_inbound_id,
+            panel_verify_ssl=s.panel_verify_ssl,
+            vps_host=s.vps_host,
+            vps_port=s.vps_port,
+            vless_security=s.vless_security,
+            vless_flow=s.vless_flow,
+            vless_sni=s.vless_sni,
+            vless_fp=s.vless_fp,
+            vless_pbk=s.vless_pbk,
+            vless_sid=s.vless_sid,
+            vless_spx=s.vless_spx,
+            enabled=True,
+            sort_order=i,
+        )
+    logger.info("Seeded %s VPN node(s) from .env into database", len(env_servers))
+    await reload_servers_from_db()
+
+
+def list_servers(*, include_disabled: bool = False) -> list[VpnServer]:
+    servers = sorted(_SERVERS.values(), key=lambda s: (s.sort_order, s.id))
+    if include_disabled:
+        return servers
+    return [s for s in servers if s.enabled]
 
 
 def find_unlisted_server_ids() -> list[str]:
-    """Env-defined server IDs that are missing from VPN_SERVERS."""
+    """Env-defined server IDs that are missing from the active catalog."""
     listed = set(_SERVERS.keys())
     configured: set[str] = set()
     for key in os.environ:
@@ -239,13 +352,17 @@ def get_server(server_id: str | None) -> VpnServer | None:
 def get_default_server() -> VpnServer:
     servers = list_servers()
     if not servers:
-        raise RuntimeError("No VPN servers configured. Set VPN_SERVERS in .env")
+        # Fall back to any node (even disabled) so ops tools still work.
+        any_servers = list_servers(include_disabled=True)
+        if not any_servers:
+            raise RuntimeError("No VPN servers configured. Add a node in Admin or set VPN_SERVERS")
+        return any_servers[0]
     return servers[0]
 
 
 def get_free_keys_server() -> VpnServer:
     server = get_server(config.FREE_KEYS_LOCATION)
-    if server:
+    if server and server.enabled:
         return server
     return get_default_server()
 
@@ -271,7 +388,8 @@ def match_server_label(text: str) -> VpnServer | None:
 
 
 def is_active_server(server: VpnServer) -> bool:
-    return server.id in _SERVERS
+    cached = _SERVERS.get(server.id)
+    return bool(cached and cached.enabled)
 
 
 def plan_price_signature(server: VpnServer) -> tuple[tuple[int, int, float, int], ...]:
