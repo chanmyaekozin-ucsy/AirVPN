@@ -262,7 +262,7 @@ class SessionStore(context: Context) {
         prefs.edit().remove(KEY_TOKEN).apply()
     }
 
-    /** Stable anonymous install id for DAU / ad analytics. */
+    /** Stable anonymous install id for DAU / free shared-pool keys (no login). */
     val deviceId: String
         get() {
             val existing = prefs.getString(KEY_DEVICE_ID, null)

@@ -133,6 +133,9 @@ data class SubscriptionInfo(
         get() = if (totalBytes > 0) ((totalBytes - usedBytes).coerceAtLeast(0)) / (1024.0 * 1024.0 * 1024.0) else 0.0
     val isExpired: Boolean
         get() = expireAt > 0 && expireAt < System.currentTimeMillis() / 1000
+    /** Shared free pool exhausted (used >= total). */
+    val isExhausted: Boolean
+        get() = totalBytes > 0 && usedBytes >= totalBytes
 
     /** Whole days until expiry (0 if expires today); null if unknown; negative if expired. */
     val daysLeft: Long?

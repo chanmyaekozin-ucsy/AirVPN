@@ -228,6 +228,8 @@ class ImportBody(BaseModel):
 
 class ConnectBody(BaseModel):
     server_id: str = Field(min_length=1, max_length=64)
+    # Anonymous install id — required for free shared-pool per-device keys (no login).
+    device_id: str = Field(default="", max_length=128)
 
 
 class AnalyticsEventBody(BaseModel):
@@ -480,6 +482,20 @@ def _free_sub_meta(
     }
 
 
+async def _pool_or_catalog_userinfo(
+    parent_id: str,
+    nodes: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Prefer shared-pool device-key traffic when any exist; else catalog URI stats."""
+    from services.catalog_usage import fetch_catalog_nodes_userinfo
+    from services.free_pool import fetch_pool_userinfo
+
+    device_keys = await db.list_free_device_keys_for_parent(parent_id)
+    if device_keys:
+        return await fetch_pool_userinfo(parent_id)
+    return await fetch_catalog_nodes_userinfo(parent_id=parent_id, nodes=nodes)
+
+
 async def _free_nodes_and_userinfo(
     row: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], dict[str, Any], bool]:
@@ -488,7 +504,6 @@ async def _free_nodes_and_userinfo(
     Returns (nodes, userinfo, as_subscription).
     as_subscription=True → expand to child nodes + free_subscriptions meta.
     """
-    from services.catalog_usage import fetch_catalog_nodes_userinfo
     from services.sub_link import (
         is_share_uri,
         is_subscription_url,
@@ -509,7 +524,7 @@ async def _free_nodes_and_userinfo(
             parent_name=name,
             parent_region=region,
         )
-        live = await fetch_catalog_nodes_userinfo(parent_id=parent_id, nodes=nodes)
+        live = await _pool_or_catalog_userinfo(parent_id, nodes)
         return nodes, live, True
 
     if is_subscription_url(uri):
@@ -523,13 +538,107 @@ async def _free_nodes_and_userinfo(
             parent_name=name,
             parent_region=region,
         )
-        live = await fetch_catalog_nodes_userinfo(parent_id=parent_id, nodes=nodes)
+        live = await _pool_or_catalog_userinfo(parent_id, nodes)
         # Treat as free-sub card when we have manual quota OR live traffic OR multi intent
         if manual or nodes:
             return nodes, live, True
         return [], {}, False
 
     return [], {}, False
+
+
+async def _resolve_free_pool_device_uri(
+    server_id: str,
+    device_id: str,
+) -> tuple[str, str] | None:
+    """
+    Shared-pool path: issue/reuse a per-device VLESS for the selected free node.
+    Returns None when this catalog entry cannot use device keys (e.g. ss / remote sub).
+    """
+    from services.free_pool import (
+        ensure_device_vless,
+        fetch_pool_userinfo,
+        node_supports_device_pool,
+        normalize_device_id,
+        pool_total_bytes,
+    )
+    from services.sub_link import is_subscription_url, split_node_public_id
+    from vps.panel_client import PanelError
+
+    parent_id, node_key = split_node_public_id(server_id)
+    row = await db.get_mobile_server(parent_id)
+    if not row or not _free_catalog_visible(row):
+        raise HTTPException(404, "Server not found")
+    if (row.get("tier") or "free").lower() != "free":
+        raise HTTPException(404, "Server not found")
+
+    # Remote http(s) subscriptions stay on the shared-URI path.
+    config_uri = (row.get("config_uri") or "").strip()
+    nodes_text = (row.get("nodes_text") or "").strip()
+    if is_subscription_url(config_uri) and not nodes_text:
+        return None
+
+    nodes, _userinfo, as_sub = await _free_nodes_and_userinfo(row)
+    if not as_sub or not nodes:
+        # Single non-sub share may still be pool-capable
+        if not nodes and config_uri.lower().startswith("vless://"):
+            from services.sub_link import parse_subscription_nodes
+
+            nodes = parse_subscription_nodes(
+                config_uri,
+                parent_id=parent_id,
+                parent_name=row.get("name") or parent_id,
+                parent_region=row.get("region") or "",
+            )
+        if not nodes:
+            return None
+
+    if node_key:
+        full_id = f"{parent_id}::{node_key}"
+        match = next((n for n in nodes if n["id"] == full_id), None)
+        if not match:
+            raise HTTPException(404, "Subscription node not found — refresh servers")
+        target = match
+    else:
+        target = nodes[0]
+
+    if not node_supports_device_pool(target):
+        return None
+
+    did = normalize_device_id(device_id)
+    if not did:
+        raise HTTPException(400, "device_id required for free connect")
+
+    expire_at = row.get("manual_expire_at")
+    if expire_at is not None:
+        try:
+            if int(expire_at) > 0 and int(expire_at) < int(time.time()):
+                raise HTTPException(403, "Free giveaway expired")
+        except (TypeError, ValueError):
+            pass
+
+    pool_info = await fetch_pool_userinfo(parent_id, force=True)
+    pool_used = int(pool_info.get("upload") or 0) + int(pool_info.get("download") or 0)
+    total = pool_total_bytes(row)
+    if total > 0 and pool_used >= total:
+        raise HTTPException(403, "Free data finished — pool empty")
+
+    try:
+        key = await ensure_device_vless(
+            device_id=did,
+            parent_id=parent_id,
+            node=target,
+            catalog_row=row,
+            pool_used_bytes=pool_used,
+        )
+    except PanelError as exc:
+        logger.warning("free pool provision failed parent=%s: %s", parent_id, exc)
+        raise HTTPException(503, "Free server unavailable") from exc
+    except Exception as exc:
+        logger.exception("free pool provision unexpected parent=%s", parent_id)
+        raise HTTPException(503, "Free server unavailable") from exc
+
+    return key, "vless"
 
 
 async def _free_publics_for_row(
@@ -1006,7 +1115,11 @@ async def connect(
         )
 
     if tier == "free":
-        config_uri, protocol = await _resolve_free_share_uri(body.server_id)
+        pooled = await _resolve_free_pool_device_uri(body.server_id, body.device_id)
+        if pooled is not None:
+            config_uri, protocol = pooled
+        else:
+            config_uri, protocol = await _resolve_free_share_uri(body.server_id)
         config_uri = _validate_free_share_uri(config_uri)
     else:
         # Paid rows use exact public_id (not subscription expansion)

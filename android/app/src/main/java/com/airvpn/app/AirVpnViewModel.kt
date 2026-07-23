@@ -598,6 +598,13 @@ class AirVpnViewModel : ViewModel() {
             _ui.update { it.copy(statusMessage = "Subscription expired") }
             return
         }
+        val poolEmpty = _ui.value.subscriptions.any {
+            it.isCatalogManaged && it.isExhausted && it.url == server.subscriptionUrl
+        }
+        if (poolEmpty) {
+            _ui.update { it.copy(statusMessage = "Free data finished") }
+            return
+        }
         if (server.protocol.equals("ssh", true)) {
             _ui.update { it.copy(statusMessage = "${server.tag} coming soon") }
             return
@@ -613,9 +620,13 @@ class AirVpnViewModel : ViewModel() {
             _ui.update { it.copy(statusMessage = "Connecting…") }
             val token = _ui.value.token
             val auth = token?.let { "Bearer $it" }
+            val deviceId = session?.deviceId.orEmpty()
             AirVpnService.clearError()
             runCatching {
-                ApiFactory.api.connect(auth, ConnectBody(server.id)).toModel()
+                ApiFactory.api.connect(
+                    auth,
+                    ConnectBody(serverId = server.id, deviceId = deviceId),
+                ).toModel()
             }.onSuccess { resp ->
                 val uri = ConfigCrypto.decrypt(resp.payload)
                 if (uri.isNullOrBlank()) {
@@ -775,8 +786,20 @@ class AirVpnViewModel : ViewModel() {
     private fun connectErrorMessage(e: Throwable): String {
         return when (e) {
             is HttpException -> when (e.code()) {
+                400 -> "Update the app and try again"
                 401 -> "Import restore code for paid servers"
-                403 -> "Buy this plan in Telegram"
+                403 -> {
+                    val body = runCatching { e.response()?.errorBody()?.string().orEmpty() }
+                        .getOrDefault("")
+                    when {
+                        body.contains("finished", ignoreCase = true) ||
+                            body.contains("pool", ignoreCase = true) ->
+                            "Free data finished"
+                        body.contains("expired", ignoreCase = true) ->
+                            "Free giveaway expired"
+                        else -> "Buy this plan in Telegram"
+                    }
+                }
                 404 -> "Server not found"
                 429 -> "Too many attempts — wait a minute"
                 501 -> "Protocol not ready yet"

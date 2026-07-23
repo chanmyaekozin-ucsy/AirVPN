@@ -332,6 +332,24 @@ async def _migrate_columns(db: aiosqlite.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_mobile_ad_clicks_ad
             ON mobile_ad_clicks(ad_id, day);
 
+        -- Per-device VLESS keys for free catalog shared-pool mode (no login).
+        CREATE TABLE IF NOT EXISTS free_device_keys (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            device_id TEXT NOT NULL,
+            parent_id TEXT NOT NULL,
+            vpn_server_id TEXT NOT NULL,
+            client_uuid TEXT NOT NULL,
+            panel_email TEXT NOT NULL,
+            vless_key TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(device_id, parent_id, vpn_server_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_free_device_keys_parent
+            ON free_device_keys(parent_id);
+        CREATE INDEX IF NOT EXISTS idx_free_device_keys_device
+            ON free_device_keys(device_id, parent_id);
+
         CREATE TABLE IF NOT EXISTS admin_login_otps (
             telegram_id INTEGER PRIMARY KEY,
             code_hash TEXT NOT NULL,
@@ -1812,6 +1830,77 @@ async def upsert_mobile_server(
         )
         await db.commit()
     row = await get_mobile_server(public_id)
+    assert row is not None
+    return row
+
+
+async def get_free_device_key(
+    device_id: str,
+    parent_id: str,
+    vpn_server_id: str,
+) -> dict[str, Any] | None:
+    did = (device_id or "").strip()[:128]
+    pid = (parent_id or "").strip()
+    sid = (vpn_server_id or "").strip().lower()
+    if not did or not pid or not sid:
+        return None
+    async with _db() as db:
+        async with db.execute(
+            """SELECT * FROM free_device_keys
+               WHERE device_id = ? AND parent_id = ? AND vpn_server_id = ?""",
+            (did, pid, sid),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+
+async def list_free_device_keys_for_parent(parent_id: str) -> list[dict[str, Any]]:
+    pid = (parent_id or "").strip()
+    if not pid:
+        return []
+    async with _db() as db:
+        async with db.execute(
+            """SELECT * FROM free_device_keys WHERE parent_id = ?
+               ORDER BY id ASC""",
+            (pid,),
+        ) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+
+
+async def upsert_free_device_key(
+    *,
+    device_id: str,
+    parent_id: str,
+    vpn_server_id: str,
+    client_uuid: str,
+    panel_email: str,
+    vless_key: str,
+) -> dict[str, Any]:
+    did = (device_id or "").strip()[:128]
+    pid = (parent_id or "").strip()
+    sid = (vpn_server_id or "").strip().lower()
+    uid = (client_uuid or "").strip()
+    email = (panel_email or "").strip()
+    key = (vless_key or "").strip()
+    if not did or not pid or not sid or not uid or not email or not key:
+        raise ValueError("free_device_key fields required")
+    now = mmt_now().isoformat()
+    async with _db() as db:
+        await db.execute(
+            """INSERT INTO free_device_keys
+               (device_id, parent_id, vpn_server_id, client_uuid, panel_email,
+                vless_key, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(device_id, parent_id, vpn_server_id) DO UPDATE SET
+                 client_uuid = excluded.client_uuid,
+                 panel_email = excluded.panel_email,
+                 vless_key = excluded.vless_key,
+                 updated_at = excluded.updated_at
+            """,
+            (did, pid, sid, uid, email, key, now, now),
+        )
+        await db.commit()
+    row = await get_free_device_key(did, pid, sid)
     assert row is not None
     return row
 

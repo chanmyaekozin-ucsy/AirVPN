@@ -373,7 +373,7 @@ private fun SubscriptionCard(
         Text(
             text = usage,
             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
-            color = if (info.isExpired) Danger else Ink,
+            color = if (info.isExpired || info.isExhausted) Danger else Ink,
         )
         if (info.totalBytes > 0) {
             Spacer(Modifier.height(8.dp))
@@ -381,7 +381,7 @@ private fun SubscriptionCard(
             LinearProgressIndicator(
                 progress = { frac },
                 modifier = Modifier.fillMaxWidth().height(4.dp),
-                color = if (frac > 0.9f) Danger else Navy,
+                color = if (frac > 0.9f || info.isExhausted) Danger else Navy,
                 trackColor = Hairline,
             )
         }
@@ -395,16 +395,19 @@ private fun SubscriptionCard(
                     val ago = days?.let { " · ${-it}d ago" }.orEmpty()
                     "Expired $label$ago"
                 }
+                info.isExhausted -> "Free pool empty · $label"
                 days != null -> "Expires $label ($days days left)"
                 else -> "Expires $label"
             }
+        } else if (info.isExhausted) {
+            "Free pool empty"
         } else {
             "Expiry unknown"
         }
         Text(
             text = "$exp · ${info.nodeCount} nodes",
             style = MaterialTheme.typography.bodyMedium,
-            color = if (info.isExpired) Danger else InkMuted,
+            color = if (info.isExpired || info.isExhausted) Danger else InkMuted,
         )
     }
 }

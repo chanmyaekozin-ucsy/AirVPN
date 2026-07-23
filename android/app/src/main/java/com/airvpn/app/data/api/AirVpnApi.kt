@@ -107,7 +107,10 @@ data class ProfileDto(
 data class ImportBody(val code: String)
 data class ImportDto(val token: String, val profile: ProfileDto)
 data class MeDto(val profile: ProfileDto)
-data class ConnectBody(@Json(name = "server_id") val serverId: String)
+data class ConnectBody(
+    @Json(name = "server_id") val serverId: String,
+    @Json(name = "device_id") val deviceId: String = "",
+)
 data class AnalyticsEventBody(
     val event: String,
     @Json(name = "device_id") val deviceId: String,
