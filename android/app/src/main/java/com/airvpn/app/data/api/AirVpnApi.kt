@@ -76,9 +76,25 @@ data class ServerDto(
     val online: Boolean = true,
     val host: String? = null,
     val port: Int = 0,
+    @Json(name = "parent_id") val parentId: String = "",
+    @Json(name = "from_subscription") val fromSubscription: Boolean = false,
 )
 
-data class ServersDto(val free: List<ServerDto> = emptyList(), val paid: List<ServerDto> = emptyList())
+data class FreeSubscriptionDto(
+    val id: String,
+    val name: String = "",
+    val upload: Long = 0,
+    val download: Long = 0,
+    val total: Long = 0,
+    val expire: Long = 0,
+    @Json(name = "node_count") val nodeCount: Int = 0,
+)
+
+data class ServersDto(
+    val free: List<ServerDto> = emptyList(),
+    val paid: List<ServerDto> = emptyList(),
+    @Json(name = "free_subscriptions") val freeSubscriptions: List<FreeSubscriptionDto> = emptyList(),
+)
 
 data class ProfileDto(
     @Json(name = "user_id") val userId: Int = 0,
@@ -148,6 +164,18 @@ object ApiFactory {
         .addConverterFactory(MoshiConverterFactory.create(moshi))
         .build()
         .create(AirVpnApi::class.java)
+
+    fun absoluteUrl(path: String): String {
+        val t = path.trim()
+        if (t.isEmpty()) return t
+        if (t.startsWith("http://", ignoreCase = true) ||
+            t.startsWith("https://", ignoreCase = true)
+        ) {
+            return t
+        }
+        val base = BuildConfig.API_BASE_URL.trimEnd('/')
+        return if (t.startsWith("/")) "$base$t" else "$base/$t"
+    }
 }
 
 fun AppConfigDto.toModel() = AppConfig(
@@ -179,17 +207,30 @@ fun AdDto.toModel() = AdCreative(
     id = id,
     placement = placement.ifBlank { "banner" },
     title = title,
-    imageUrl = imageUrl,
+    imageUrl = ApiFactory.absoluteUrl(imageUrl),
     clickUrl = clickUrl,
     width = width,
     height = height,
 )
 
 fun PlanDto.toModel() = ServerPlan(title, priceKs, dataGb, durationDays)
+fun FreeSubscriptionDto.toModel() = com.airvpn.app.data.model.SubscriptionInfo(
+    url = "catalog://$id",
+    name = name,
+    uploadBytes = upload,
+    downloadBytes = download,
+    totalBytes = total,
+    expireAt = expire,
+    nodeCount = nodeCount,
+    lastFetchedAt = System.currentTimeMillis() / 1000,
+)
+
 fun ServerDto.toModel(): VpnServerItem {
     val mappedPlans = plans.map { it.toModel() }.ifEmpty {
         listOfNotNull(plan?.toModel())
     }
+    val parent = parentId.trim()
+    val isSub = fromSubscription || parent.isNotBlank()
     return VpnServerItem(
         id = id,
         name = name,
@@ -203,9 +244,15 @@ fun ServerDto.toModel(): VpnServerItem {
         online = online,
         host = host?.takeIf { it.isNotBlank() },
         port = if (port > 0) port else 0,
+        fromSubscription = isSub,
+        subscriptionUrl = if (isSub && parent.isNotBlank()) "catalog://$parent" else null,
     )
 }
-fun ServersDto.toModel() = ServerCatalog(free.map { it.toModel() }, paid.map { it.toModel() })
+fun ServersDto.toModel() = ServerCatalog(
+    free = free.map { it.toModel() },
+    paid = paid.map { it.toModel() },
+    freeSubscriptions = freeSubscriptions.map { it.toModel() },
+)
 fun ProfileDto.toModel() = UserProfile(userId, hasPaid, dataUsedGb, dataLimitGb, expiresAt)
 fun ConnectDto.toModel() = ConnectResponse(
     serverId,

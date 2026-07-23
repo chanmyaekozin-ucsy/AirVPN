@@ -99,6 +99,8 @@ data class VpnServerItem(
 data class ServerCatalog(
     val free: List<VpnServerItem> = emptyList(),
     val paid: List<VpnServerItem> = emptyList(),
+    /** Free catalog http(s) subscription parents (usage from API). */
+    val freeSubscriptions: List<SubscriptionInfo> = emptyList(),
 )
 
 data class UserProfile(
@@ -112,6 +114,8 @@ data class UserProfile(
 /** Parsed from subscription HTTP response (subscription-userinfo). */
 data class SubscriptionInfo(
     val url: String = "",
+    /** Optional display title (catalog free sub name). */
+    val name: String = "",
     val uploadBytes: Long = 0,
     val downloadBytes: Long = 0,
     val totalBytes: Long = 0,
@@ -120,6 +124,8 @@ data class SubscriptionInfo(
     val nodeCount: Int = 0,
     val lastFetchedAt: Long = 0,
 ) {
+    /** True when this sub is managed by the free server catalog (not user-imported). */
+    val isCatalogManaged: Boolean get() = url.startsWith("catalog://", ignoreCase = true)
     val usedBytes: Long get() = (uploadBytes + downloadBytes).coerceAtLeast(0)
     val usedGb: Double get() = usedBytes / (1024.0 * 1024.0 * 1024.0)
     val totalGb: Double get() = if (totalBytes > 0) totalBytes / (1024.0 * 1024.0 * 1024.0) else 0.0

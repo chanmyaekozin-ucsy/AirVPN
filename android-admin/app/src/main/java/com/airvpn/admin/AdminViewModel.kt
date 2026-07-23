@@ -805,11 +805,12 @@ class AdminViewModel(app: Application) : AndroidViewModel(app) {
         refreshAds()
     }
 
-    fun uploadAdImage(file: File, onUrl: (String) -> Unit) = launch("upload") {
-        val res = api.uploadAd(auth(), ApiFactory.imagePart(file))
-        onUrl(res.imageUrl)
-        _state.update { it.copy(message = "Image uploaded") }
-    }
+    fun uploadAdImage(file: File, onDone: (url: String, width: Int, height: Int) -> Unit) =
+        launch("upload") {
+            val res = api.uploadAd(auth(), ApiFactory.imagePart(file))
+            onDone(res.imageUrl, res.imageWidth, res.imageHeight)
+            _state.update { it.copy(message = "Image uploaded") }
+        }
 
     fun setNotifyAudience(audience: String) {
         _state.update { it.copy(notifyAudience = audience) }

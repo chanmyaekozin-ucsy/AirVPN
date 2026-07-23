@@ -223,6 +223,7 @@ class SessionStore(context: Context) {
     private fun subscriptionToJson(info: SubscriptionInfo): JSONObject =
         JSONObject()
             .put("url", info.url)
+            .put("name", info.name)
             .put("upload", info.uploadBytes)
             .put("download", info.downloadBytes)
             .put("total", info.totalBytes)
@@ -233,6 +234,7 @@ class SessionStore(context: Context) {
     private fun subscriptionFromJson(o: JSONObject): SubscriptionInfo =
         SubscriptionInfo(
             url = o.optString("url", ""),
+            name = o.optString("name", ""),
             uploadBytes = o.optLong("upload", 0),
             downloadBytes = o.optLong("download", 0),
             totalBytes = o.optLong("total", 0),

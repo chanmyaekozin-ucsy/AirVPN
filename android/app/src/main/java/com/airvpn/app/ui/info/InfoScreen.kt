@@ -63,20 +63,23 @@ fun InfoScreen(
                 .padding(horizontal = 20.dp, vertical = 16.dp),
         ) {
             if (subscriptions.isNotEmpty()) {
+                val importedSubs = subscriptions.filter { !it.isCatalogManaged }
                 subscriptions.forEachIndexed { index, subscription ->
-                    SettingsGroup(
-                        title = if (subscriptions.size > 1) {
-                            "Subscription ${index + 1}"
-                        } else {
-                            "Subscription"
-                        },
-                    ) {
-                        InfoLine(
-                            "URL",
-                            subscription.url.take(48) +
-                                if (subscription.url.length > 48) "…" else "",
-                        )
-                        HorizontalDivider(color = Hairline)
+                    val title = when {
+                        subscription.name.isNotBlank() -> subscription.name
+                        subscription.isCatalogManaged -> "Free subscription"
+                        subscriptions.size > 1 -> "Subscription ${index + 1}"
+                        else -> "Subscription"
+                    }
+                    SettingsGroup(title = title) {
+                        if (!subscription.isCatalogManaged) {
+                            InfoLine(
+                                "URL",
+                                subscription.url.take(48) +
+                                    if (subscription.url.length > 48) "…" else "",
+                            )
+                            HorizontalDivider(color = Hairline)
+                        }
                         val usage = if (subscription.totalBytes > 0) {
                             "%.2f / %.2f GB".format(subscription.usedGb, subscription.totalGb)
                         } else {
@@ -116,17 +119,19 @@ fun InfoScreen(
                         InfoLine("Expires", expValue)
                         HorizontalDivider(color = Hairline)
                         InfoLine("Nodes", "${subscription.nodeCount}")
-                        HorizontalDivider(color = Hairline)
-                        AirTextAction(
-                            text = "Remove this subscription",
-                            onClick = { onRemoveSubscription(subscription.url) },
-                            color = Danger,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        )
+                        if (!subscription.isCatalogManaged) {
+                            HorizontalDivider(color = Hairline)
+                            AirTextAction(
+                                text = "Remove this subscription",
+                                onClick = { onRemoveSubscription(subscription.url) },
+                                color = Danger,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                        }
                     }
                     Spacer(Modifier.height(16.dp))
                 }
-                if (subscriptions.size > 1) {
+                if (importedSubs.size > 1) {
                     SettingsGroup(title = "All subscriptions") {
                         AirTextAction(
                             text = "Remove all subscriptions",

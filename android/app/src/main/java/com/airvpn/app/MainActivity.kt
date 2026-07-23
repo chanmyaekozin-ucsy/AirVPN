@@ -43,6 +43,7 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.airvpn.app.ui.components.AirDialog
 import com.airvpn.app.ui.components.ConnectAdDialog
+import com.airvpn.app.ui.components.PrefetchAdImages
 import com.airvpn.app.data.model.AdCreative
 import com.airvpn.app.ui.info.InfoScreen
 import com.airvpn.app.ui.main.MainScreen
@@ -125,6 +126,11 @@ fun AirVpnRoot(initialImportCode: String?, vm: AirVpnViewModel = viewModel()) {
                 vm.importPaste(initialImportCode)
             }
         }
+    }
+
+    // Prefetch banner + dialog images on home so connect does not wait on download
+    if (ui.showAds) {
+        PrefetchAdImages(ui.appConfig.ads)
     }
 
     LaunchedEffect(vpnState) {

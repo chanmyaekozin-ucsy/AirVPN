@@ -1,5 +1,6 @@
 package com.airvpn.app
 
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -18,10 +19,12 @@ import com.airvpn.app.data.model.ServerCatalog
 import com.airvpn.app.data.model.SubscriptionInfo
 import com.airvpn.app.data.model.UserProfile
 import com.airvpn.app.data.model.VpnServerItem
+import com.airvpn.app.util.AdImagePrefetcher
 import com.airvpn.app.util.ConfigCrypto
 import com.airvpn.app.util.GeoIpLookup
 import com.airvpn.app.util.ServerPinger
 import com.airvpn.app.util.SubscriptionFetcher
+import com.airvpn.app.util.TelegramLinks
 import com.airvpn.app.util.VpnKeyImport
 import com.airvpn.app.vpn.AirVpnService
 import kotlinx.coroutines.Job
@@ -171,6 +174,13 @@ class AirVpnViewModel : ViewModel() {
                 pendingAnnouncement = if (showUpdate && force) null else pending,
             )
         }
+        // Prefetch banner + dialog creatives so connect doesn't wait on download
+        val ctx = appContext
+        if (ctx != null && cfg.ads.isNotEmpty()) {
+            viewModelScope.launch {
+                AdImagePrefetcher.prefetch(ctx, cfg.ads)
+            }
+        }
     }
 
     fun refreshServers() {
@@ -180,7 +190,13 @@ class AirVpnViewModel : ViewModel() {
             runCatching { ApiFactory.api.servers().toModel() }
                 .onSuccess { remote ->
                     val free = mergeFree(remote.free, imported)
-                    applyCatalog(ServerCatalog(free = free, paid = remote.paid))
+                    applyCatalog(
+                        ServerCatalog(
+                            free = free,
+                            paid = remote.paid,
+                            freeSubscriptions = remote.freeSubscriptions,
+                        ),
+                    )
                 }
                 .onFailure {
                     if (imported.isNotEmpty()) {
@@ -188,6 +204,7 @@ class AirVpnViewModel : ViewModel() {
                             ServerCatalog(
                                 free = imported,
                                 paid = _ui.value.catalog.paid,
+                                freeSubscriptions = _ui.value.catalog.freeSubscriptions,
                             ),
                         )
                     } else {
@@ -202,6 +219,14 @@ class AirVpnViewModel : ViewModel() {
         }
     }
 
+    private fun combinedSubscriptions(
+        catalogSubs: List<SubscriptionInfo> = _ui.value.catalog.freeSubscriptions,
+    ): List<SubscriptionInfo> {
+        val imported = session?.getSubscriptions().orEmpty()
+            .filter { !it.isCatalogManaged }
+        return imported + catalogSubs
+    }
+
     private fun applyCatalog(catalog: ServerCatalog) {
         val all = catalog.free
         val preferredId = session?.selectedServerId ?: session?.lastConnectedServerId
@@ -214,6 +239,7 @@ class AirVpnViewModel : ViewModel() {
                 catalog = catalog,
                 selectedServer = selected,
                 loadingServers = false,
+                subscriptions = combinedSubscriptions(catalog.freeSubscriptions),
                 statusMessage = when {
                     selected == null -> "Choose a server"
                     !selected.online -> "Server is down"
@@ -293,6 +319,7 @@ class AirVpnViewModel : ViewModel() {
         val store = session ?: return
         val remoteOnly = _ui.value.catalog.free.filter { !it.isImported }
         val paid = _ui.value.catalog.paid
+        val catalogSubs = _ui.value.catalog.freeSubscriptions
         val merged = mergeFree(remoteOnly, store.getImportedServers())
         val pick = selected
             ?: selectedId?.let { id -> merged.firstOrNull { it.id == id } }
@@ -300,11 +327,15 @@ class AirVpnViewModel : ViewModel() {
         if (pick != null) store.selectedServerId = pick.id
         _ui.update {
             it.copy(
-                catalog = ServerCatalog(free = merged, paid = paid),
+                catalog = ServerCatalog(
+                    free = merged,
+                    paid = paid,
+                    freeSubscriptions = catalogSubs,
+                ),
                 selectedServer = pick,
                 importError = null,
                 statusMessage = status ?: it.statusMessage,
-                subscriptions = store.getSubscriptions(),
+                subscriptions = combinedSubscriptions(catalogSubs),
             )
         }
         pingServers(merged + paid)
@@ -330,14 +361,19 @@ class AirVpnViewModel : ViewModel() {
                     }
                     val remoteOnly = _ui.value.catalog.free.filter { !it.isImported }
                     val paid = _ui.value.catalog.paid
+                    val catalogSubs = _ui.value.catalog.freeSubscriptions
                     val merged = mergeFree(remoteOnly, store.getImportedServers())
                     val selected = pickServer(merged, store.selectedServerId)
-                    val subCount = store.getSubscriptions().size
+                    val subCount = combinedSubscriptions(catalogSubs).size
                     _ui.update {
                         it.copy(
-                            catalog = ServerCatalog(free = merged, paid = paid),
+                            catalog = ServerCatalog(
+                                free = merged,
+                                paid = paid,
+                                freeSubscriptions = catalogSubs,
+                            ),
                             selectedServer = selected,
-                            subscriptions = store.getSubscriptions(),
+                            subscriptions = combinedSubscriptions(catalogSubs),
                             importing = false,
                             importError = null,
                             statusMessage = if (silent) {
@@ -367,9 +403,15 @@ class AirVpnViewModel : ViewModel() {
     }
 
     fun refreshAllSubscriptions(silent: Boolean) {
-        val urls = session?.getSubscriptions()?.map { it.url }?.filter { it.isNotBlank() }
+        val urls = session?.getSubscriptions()
+            ?.map { it.url }
+            ?.filter { it.isNotBlank() && !it.startsWith("catalog://", ignoreCase = true) }
             .orEmpty()
-        if (urls.isEmpty()) return
+        val hasCatalogSubs = _ui.value.catalog.freeSubscriptions.isNotEmpty()
+        if (urls.isEmpty() && !hasCatalogSubs) {
+            refreshServers()
+            return
+        }
         viewModelScope.launch {
             _ui.update {
                 it.copy(
@@ -378,6 +420,8 @@ class AirVpnViewModel : ViewModel() {
                     statusMessage = if (silent) it.statusMessage else "Refreshing subscriptions…",
                 )
             }
+            // Refresh free catalog sub usage/expiry from API
+            val remoteCatalog = runCatching { ApiFactory.api.servers().toModel() }.getOrNull()
             var added = 0
             var failed = 0
             for (url in urls) {
@@ -391,17 +435,27 @@ class AirVpnViewModel : ViewModel() {
                     .onFailure { failed++ }
             }
             val store = session ?: return@launch
-            val remoteOnly = _ui.value.catalog.free.filter { !it.isImported }
-            val paid = _ui.value.catalog.paid
-            val merged = mergeFree(remoteOnly, store.getImportedServers())
+            val remoteFree = remoteCatalog?.free ?: _ui.value.catalog.free.filter { !it.isImported }
+            val paid = remoteCatalog?.paid ?: _ui.value.catalog.paid
+            val catalogSubs = remoteCatalog?.freeSubscriptions
+                ?: _ui.value.catalog.freeSubscriptions
+            val merged = mergeFree(remoteFree, store.getImportedServers())
             val selected = pickServer(merged, store.selectedServerId)
             _ui.update {
                 it.copy(
-                    catalog = ServerCatalog(free = merged, paid = paid),
+                    catalog = ServerCatalog(
+                        free = merged,
+                        paid = paid,
+                        freeSubscriptions = catalogSubs,
+                    ),
                     selectedServer = selected,
-                    subscriptions = store.getSubscriptions(),
+                    subscriptions = combinedSubscriptions(catalogSubs),
                     importing = false,
-                    importError = if (failed > 0 && added == 0) "Subscription refresh failed" else null,
+                    importError = if (failed > 0 && added == 0 && urls.isNotEmpty()) {
+                        "Subscription refresh failed"
+                    } else {
+                        null
+                    },
                     statusMessage = if (silent) {
                         it.statusMessage
                     } else if (failed > 0) {
@@ -418,15 +472,18 @@ class AirVpnViewModel : ViewModel() {
 
     fun clearSubscription() {
         session?.clearSubscription()
-        _ui.update { it.copy(subscriptions = emptyList()) }
+        _ui.update {
+            it.copy(subscriptions = combinedSubscriptions())
+        }
         refreshServers()
     }
 
     fun removeSubscription(url: String) {
+        if (url.startsWith("catalog://", ignoreCase = true)) return
         session?.removeSubscription(url)
         val store = session ?: return
         rebuildCatalogFromStore(status = "Subscription removed")
-        _ui.update { it.copy(subscriptions = store.getSubscriptions()) }
+        _ui.update { it.copy(subscriptions = combinedSubscriptions()) }
     }
 
     fun dismissAnnouncement() {
@@ -466,7 +523,21 @@ class AirVpnViewModel : ViewModel() {
 
     fun openUrl(context: Context, url: String) {
         if (url.isBlank()) return
-        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        val target = TelegramLinks.toOpenUri(url)
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(target))
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (_: ActivityNotFoundException) {
+            val fallback = TelegramLinks.toHttpsFallback(url)
+                ?: TelegramLinks.toHttpsFallback(target)
+            if (!fallback.isNullOrBlank()) {
+                context.startActivity(
+                    Intent(Intent.ACTION_VIEW, Uri.parse(fallback))
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        }
     }
 
     fun disconnect(context: Context) {

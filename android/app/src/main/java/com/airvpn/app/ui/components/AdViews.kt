@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
@@ -19,12 +20,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -37,6 +40,7 @@ import com.airvpn.app.ui.theme.Hairline
 import com.airvpn.app.ui.theme.Ink
 import com.airvpn.app.ui.theme.InkMuted
 import com.airvpn.app.ui.theme.Navy
+import com.airvpn.app.util.AdImagePrefetcher
 import kotlinx.coroutines.delay
 
 /**
@@ -74,7 +78,29 @@ fun AdBanner(
 }
 
 /**
- * Connect interstitial: shows ad image sized by its aspect ratio, mandatory ~3s wait.
+ * Warm Coil cache for banner + dialog creatives as soon as config is available
+ * (home / splash), so connect interstitial does not wait on network.
+ */
+@Composable
+fun PrefetchAdImages(ads: List<AdCreative>) {
+    val context = LocalContext.current
+    val key = remember(ads) { ads.joinToString("|") { "${it.id}:${it.imageUrl}" } }
+    LaunchedEffect(key) {
+        AdImagePrefetcher.prefetch(context, ads)
+    }
+    // Keep a 1px decode in composition so Coil also warms from UI path
+    ads.take(8).forEach { ad ->
+        AsyncImage(
+            model = ad.imageUrl,
+            contentDescription = null,
+            modifier = Modifier.size(1.dp),
+        )
+    }
+}
+
+/**
+ * Connect interstitial: shows ad image sized by its aspect ratio, mandatory ~3s wait
+ * after the image is ready (or a short load timeout).
  */
 @Composable
 fun ConnectAdDialog(
@@ -84,8 +110,18 @@ fun ConnectAdDialog(
     seconds: Int = 3,
 ) {
     var remaining by remember(ad.id) { mutableIntStateOf(seconds) }
+    var imageReady by remember(ad.id) { mutableStateOf(false) }
+    var countdownStarted by remember(ad.id) { mutableStateOf(false) }
 
+    // If image is slow, start countdown after a short grace so connect is not blocked forever
     LaunchedEffect(ad.id) {
+        delay(2_500)
+        if (!imageReady) imageReady = true
+    }
+
+    LaunchedEffect(ad.id, imageReady) {
+        if (!imageReady || countdownStarted) return@LaunchedEffect
+        countdownStarted = true
         remaining = seconds
         while (remaining > 0) {
             delay(1_000)
@@ -134,6 +170,8 @@ fun ConnectAdDialog(
                     .aspectRatio(ratio)
                     .clip(RoundedCornerShape(10.dp))
                     .clickable(enabled = ad.clickUrl.isNotBlank(), onClick = onClickAd),
+                onSuccess = { imageReady = true },
+                onError = { imageReady = true },
                 loading = {
                     Box(
                         Modifier
@@ -147,10 +185,10 @@ fun ConnectAdDialog(
             )
             Spacer(Modifier.height(14.dp))
             Text(
-                text = if (remaining > 0) {
-                    "Connecting in ${remaining}s…"
-                } else {
-                    "Connecting…"
+                text = when {
+                    !countdownStarted -> "Loading…"
+                    remaining > 0 -> "Connecting in ${remaining}s…"
+                    else -> "Connecting…"
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = InkMuted,

@@ -309,37 +309,46 @@ def _endpoint_from_row(row: dict[str, Any]) -> tuple[str, int] | None:
     return None
 
 
-async def _cached_free_sub_nodes(row: dict[str, Any]) -> list[dict[str, Any]]:
+async def _cached_free_sub(
+    row: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     """Expand a free catalog row whose config_uri is an http(s) subscription."""
     from services.sub_link import (
-        fetch_subscription_nodes,
-        get_cached_subscription_nodes,
+        fetch_subscription,
+        get_cached_subscription,
         is_subscription_url,
-        put_cached_subscription_nodes,
+        put_cached_subscription,
     )
 
     parent_id = row["public_id"]
     uri = (row.get("config_uri") or "").strip()
     if not is_subscription_url(uri):
-        return []
+        return [], {}
 
-    cached = get_cached_subscription_nodes(parent_id)
+    cached = get_cached_subscription(parent_id)
     if cached is not None:
         return cached
 
     try:
-        nodes = await fetch_subscription_nodes(
+        nodes, userinfo = await fetch_subscription(
             uri,
             parent_id=parent_id,
             parent_name=row.get("name") or parent_id,
             parent_region=row.get("region") or "",
         )
-        put_cached_subscription_nodes(parent_id, nodes)
-        return nodes
+        put_cached_subscription(parent_id, nodes, userinfo)
+        return nodes, userinfo
     except Exception as exc:
         logger.warning("free sub fetch failed for %s: %s", parent_id, exc)
-        stale = get_cached_subscription_nodes(parent_id, allow_stale=True)
-        return stale or []
+        stale = get_cached_subscription(parent_id, allow_stale=True)
+        if stale:
+            return stale
+        return [], {}
+
+
+async def _cached_free_sub_nodes(row: dict[str, Any]) -> list[dict[str, Any]]:
+    nodes, _info = await _cached_free_sub(row)
+    return nodes
 
 
 def _public_from_sub_node(node: dict[str, Any], *, online: bool) -> dict[str, Any]:
@@ -351,6 +360,8 @@ def _public_from_sub_node(node: dict[str, Any], *, online: bool) -> dict[str, An
         "tag": node.get("tag") or "Vless",
         "tier": "free",
         "online": online,
+        "parent_id": node.get("parent_id") or "",
+        "from_subscription": True,
     }
     host = node.get("host")
     port = int(node.get("port") or 0)
@@ -361,19 +372,39 @@ def _public_from_sub_node(node: dict[str, Any], *, online: bool) -> dict[str, An
     return out
 
 
-async def _free_publics_for_row(row: dict[str, Any]) -> list[dict[str, Any]]:
-    """One share URI → one server; subscription URL → one server per node."""
+def _free_sub_meta(
+    row: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    userinfo: dict[str, Any],
+) -> dict[str, Any]:
+    parent_id = row["public_id"]
+    return {
+        "id": parent_id,
+        "name": row.get("name") or parent_id,
+        "upload": int(userinfo.get("upload") or 0),
+        "download": int(userinfo.get("download") or 0),
+        "total": int(userinfo.get("total") or 0),
+        "expire": int(userinfo.get("expire") or 0),
+        "node_count": len(nodes),
+    }
+
+
+async def _free_publics_for_row(
+    row: dict[str, Any],
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    """One share URI → one server; subscription URL → nodes + usage meta."""
     from services.sub_link import is_subscription_url
 
     uri = (row.get("config_uri") or "").strip()
     if is_subscription_url(uri):
-        nodes = await _cached_free_sub_nodes(row)
+        nodes, userinfo = await _cached_free_sub(row)
+        meta = _free_sub_meta(row, nodes, userinfo)
         if not nodes:
-            # Keep a placeholder so admins know the entry exists but is empty/down.
             base = await _server_public(row, online=False)
             base["name"] = f"{row.get('name') or row['public_id']} (sub empty)"
-            return [base]
-        # Probe a sample of nodes in parallel (capped)
+            base["parent_id"] = row["public_id"]
+            base["from_subscription"] = True
+            return [base], meta
         sample = nodes[:12]
 
         async def _online_node(n: dict[str, Any]) -> bool:
@@ -385,11 +416,12 @@ async def _free_publics_for_row(row: dict[str, Any]) -> list[dict[str, Any]]:
 
         flags = await asyncio.gather(*[_online_node(n) for n in sample])
         online_map = {sample[i]["id"]: flags[i] for i in range(len(sample))}
-        return [
+        publics = [
             _public_from_sub_node(n, online=online_map.get(n["id"], True))
             for n in nodes
         ]
-    return [await _server_public(row)]
+        return publics, meta
+    return [await _server_public(row)], None
 
 
 async def _resolve_free_share_uri(server_id: str) -> tuple[str, str]:
@@ -727,8 +759,13 @@ async def servers() -> dict[str, Any]:
     free_rows = [r for r in rows if (r.get("tier") or "") == "free"]
     paid_rows = [r for r in rows if (r.get("tier") or "") == "paid"]
 
-    free_lists = await asyncio.gather(*[_free_publics_for_row(r) for r in free_rows])
-    free: list[dict[str, Any]] = [p for group in free_lists for p in group]
+    free_results = await asyncio.gather(*[_free_publics_for_row(r) for r in free_rows])
+    free: list[dict[str, Any]] = []
+    free_subscriptions: list[dict[str, Any]] = []
+    for publics, meta in free_results:
+        free.extend(publics)
+        if meta is not None:
+            free_subscriptions.append(meta)
 
     paid_db = await asyncio.gather(*[_server_public(r) for r in paid_rows])
     # Bot .env catalog is the source of truth for paid locations + price lists
@@ -736,7 +773,11 @@ async def servers() -> dict[str, Any]:
     bot_ids = {p["id"] for p in paid_bot}
     # Keep any admin ms-paid rows that aren't already covered by bot servers
     paid_extra = [p for p in paid_db if p["id"] not in bot_ids]
-    return {"free": free, "paid": paid_bot + paid_extra}
+    return {
+        "free": free,
+        "paid": paid_bot + paid_extra,
+        "free_subscriptions": free_subscriptions,
+    }
 
 
 @app.post("/v1/import")

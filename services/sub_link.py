@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 _NODE_SEP = "::"
 _UA = "AirVPN/1.0 (MobileAPI)"
 _CACHE_TTL_SEC = 300.0
-_sub_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
+# parent_id -> (fetched_at, nodes, userinfo)
+_sub_cache: dict[str, tuple[float, list[dict[str, Any]], dict[str, Any]]] = {}
 
 
 def invalidate_subscription_cache(parent_id: str | None = None) -> None:
@@ -30,21 +31,38 @@ def get_cached_subscription_nodes(
     *,
     allow_stale: bool = False,
 ) -> list[dict[str, Any]] | None:
+    entry = get_cached_subscription(parent_id, allow_stale=allow_stale)
+    return None if entry is None else entry[0]
+
+
+def get_cached_subscription(
+    parent_id: str,
+    *,
+    allow_stale: bool = False,
+) -> tuple[list[dict[str, Any]], dict[str, Any]] | None:
     import time
 
     cached = _sub_cache.get(parent_id)
     if not cached:
         return None
-    fetched_at, nodes = cached
+    fetched_at, nodes, userinfo = cached
     if time.time() - fetched_at >= _CACHE_TTL_SEC and not allow_stale:
         return None
-    return nodes
+    return nodes, userinfo
+
+
+def put_cached_subscription(
+    parent_id: str,
+    nodes: list[dict[str, Any]],
+    userinfo: dict[str, Any] | None = None,
+) -> None:
+    import time
+
+    _sub_cache[parent_id] = (time.time(), nodes, userinfo or {})
 
 
 def put_cached_subscription_nodes(parent_id: str, nodes: list[dict[str, Any]]) -> None:
-    import time
-
-    _sub_cache[parent_id] = (time.time(), nodes)
+    put_cached_subscription(parent_id, nodes, {})
 
 
 def is_subscription_url(uri: str | None) -> bool:
@@ -69,6 +87,42 @@ def split_node_public_id(server_id: str) -> tuple[str, str | None]:
         return sid, None
     parent, key = sid.split(_NODE_SEP, 1)
     return parent, key or None
+
+
+def parse_subscription_userinfo(header: str | None) -> dict[str, Any]:
+    """
+    Parse subscription-userinfo: upload=; download=; total=; expire=
+    Bytes are integers; expire is unix seconds.
+    """
+    if not (header or "").strip():
+        return {
+            "upload": 0,
+            "download": 0,
+            "total": 0,
+            "expire": 0,
+        }
+    parts = {}
+    for chunk in header.split(";"):
+        chunk = chunk.strip()
+        if "=" not in chunk:
+            continue
+        key, value = chunk.split("=", 1)
+        parts[key.strip().lower()] = value.strip()
+    return {
+        "upload": _as_int(parts.get("upload")),
+        "download": _as_int(parts.get("download")),
+        "total": _as_int(parts.get("total")),
+        "expire": _as_int(parts.get("expire")),
+    }
+
+
+def _as_int(value: str | None) -> int:
+    if value is None:
+        return 0
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
 
 
 def _decode_body(raw: bytes) -> str:
@@ -105,9 +159,6 @@ def _endpoint(uri: str) -> tuple[str | None, int]:
         p = urlparse(uri.strip())
         host = p.hostname
         port = int(p.port) if p.port else 0
-        if not port and p.scheme.lower() == "ss":
-            # ss://method:pass@host:port — port on netloc
-            pass
         return host, port
     except Exception:
         return None, 0
@@ -130,7 +181,6 @@ def parse_subscription_nodes(
     )
     if nodes:
         return nodes
-    # Body may still be base64 even if it lacked obvious URI markers
     decoded = _decode_body(raw.encode("utf-8", errors="ignore"))
     if decoded != raw:
         return _parse_share_lines(
@@ -167,7 +217,6 @@ def _parse_share_lines(
                 or low.startswith("vmess://")
             ):
                 continue
-            # Skip vmess for connect (same as app)
             if low.startswith("vmess://"):
                 continue
             host, port = _endpoint(c)
@@ -190,14 +239,15 @@ def _parse_share_lines(
     return list(out.values())
 
 
-async def fetch_subscription_nodes(
+async def fetch_subscription(
     url: str,
     *,
     parent_id: str,
     parent_name: str,
     parent_region: str = "",
     timeout: float = 25.0,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Fetch nodes + subscription-userinfo for a free catalog sub link."""
     clean = (url or "").strip()
     if not is_subscription_url(clean):
         raise ValueError("Not an http(s) subscription URL")
@@ -209,6 +259,12 @@ async def fetch_subscription_nodes(
         resp = await client.get(clean)
         resp.raise_for_status()
         text = _decode_body(resp.content)
+        header = (
+            resp.headers.get("subscription-userinfo")
+            or resp.headers.get("Subscription-Userinfo")
+            or ""
+        )
+        userinfo = parse_subscription_userinfo(header)
     nodes = parse_subscription_nodes(
         text,
         parent_id=parent_id,
@@ -217,4 +273,22 @@ async def fetch_subscription_nodes(
     )
     if not nodes:
         raise ValueError("No vless:// or ss:// nodes in subscription")
+    return nodes, userinfo
+
+
+async def fetch_subscription_nodes(
+    url: str,
+    *,
+    parent_id: str,
+    parent_name: str,
+    parent_region: str = "",
+    timeout: float = 25.0,
+) -> list[dict[str, Any]]:
+    nodes, _userinfo = await fetch_subscription(
+        url,
+        parent_id=parent_id,
+        parent_name=parent_name,
+        parent_region=parent_region,
+        timeout=timeout,
+    )
     return nodes

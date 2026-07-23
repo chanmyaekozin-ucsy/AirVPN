@@ -80,7 +80,7 @@ fun AdsScreen(
     ) -> Unit,
     onToggle: (String, Boolean) -> Unit,
     onDelete: (String) -> Unit,
-    onUpload: (File, (String) -> Unit) -> Unit,
+    onUpload: (File, (url: String, width: Int, height: Int) -> Unit) -> Unit,
     onLoadMore: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
@@ -233,7 +233,7 @@ fun AdsScreen(
 private fun AdDialog(
     initial: AdItem?,
     onDismiss: () -> Unit,
-    onUpload: (File, (String) -> Unit) -> Unit,
+    onUpload: (File, (url: String, width: Int, height: Int) -> Unit) -> Unit,
     onSave: (String, String, String, String, String, Int, Int, Boolean, Int) -> Unit,
 ) {
     val context = LocalContext.current
@@ -249,11 +249,46 @@ private fun AdDialog(
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri == null) return@rememberLauncherForActivityResult
-        val tmp = File(context.cacheDir, "ad-upload-${System.currentTimeMillis()}.bin")
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            tmp.outputStream().use { output -> input.copyTo(output) }
+        val resolver = context.contentResolver
+        val mime = resolver.getType(uri).orEmpty().lowercase()
+        val ext = when {
+            mime.contains("png") -> ".png"
+            mime.contains("webp") -> ".webp"
+            mime.contains("gif") -> ".gif"
+            mime.contains("jpeg") || mime.contains("jpg") -> ".jpg"
+            else -> {
+                // Peek magic bytes for extension
+                resolver.openInputStream(uri)?.use { input ->
+                    val head = ByteArray(12)
+                    val n = input.read(head)
+                    when {
+                        n >= 8 && head[0] == 0x89.toByte() && head[1] == 0x50.toByte() -> ".png"
+                        n >= 3 && head[0] == 0xFF.toByte() && head[1] == 0xD8.toByte() -> ".jpg"
+                        n >= 6 && head[0] == 'G'.code.toByte() && head[1] == 'I'.code.toByte() -> ".gif"
+                        n >= 12 && head[0] == 'R'.code.toByte() && head[8] == 'W'.code.toByte() -> ".webp"
+                        else -> ".jpg"
+                    }
+                } ?: ".jpg"
+            }
         }
-        onUpload(tmp) { url -> imageUrl = url }
+        // Local bounds for instant W×H fill (API also returns size)
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, bounds) }
+        val localW = bounds.outWidth.takeIf { it > 0 }
+        val localH = bounds.outHeight.takeIf { it > 0 }
+        if (localW != null && localH != null) {
+            width = localW.toString()
+            height = localH.toString()
+        }
+        val tmp = File(context.cacheDir, "ad-upload-${System.currentTimeMillis()}$ext")
+        resolver.openInputStream(uri)?.use { input ->
+            tmp.outputStream().use { output -> input.copyTo(output) }
+        } ?: return@rememberLauncherForActivityResult
+        onUpload(tmp) { url, w, h ->
+            imageUrl = url
+            if (w > 0) width = w.toString()
+            if (h > 0) height = h.toString()
+        }
     }
 
     AdminDialog(
@@ -319,7 +354,7 @@ private fun AdDialog(
         }
         OutlinedTextField(
             clickUrl, { clickUrl = it },
-            label = { Text("Click URL") },
+            label = { Text("Click URL (@bot or t.me/…)") },
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
             colors = adminFieldColors(),
@@ -334,17 +369,19 @@ private fun AdDialog(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 width, { width = it },
-                label = { Text("W") },
+                label = { Text("W (auto)") },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(12.dp),
                 colors = adminFieldColors(),
+                readOnly = true,
             )
             OutlinedTextField(
                 height, { height = it },
-                label = { Text("H") },
+                label = { Text("H (auto)") },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(12.dp),
                 colors = adminFieldColors(),
+                readOnly = true,
             )
             OutlinedTextField(
                 sort, { sort = it },
@@ -352,6 +389,13 @@ private fun AdDialog(
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(12.dp),
                 colors = adminFieldColors(),
+            )
+        }
+        if (width.isNotBlank() && height.isNotBlank()) {
+            Text(
+                "Size ${width}×${height} (from image)",
+                style = MaterialTheme.typography.bodySmall,
+                color = InkMuted,
             )
         }
         Row(verticalAlignment = Alignment.CenterVertically) {

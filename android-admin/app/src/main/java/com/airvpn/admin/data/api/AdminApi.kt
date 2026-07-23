@@ -678,6 +678,8 @@ data class AdPatchBody(
 data class UploadDto(
     @Json(name = "image_url") val imageUrl: String,
     val filename: String? = null,
+    @Json(name = "image_width") val imageWidth: Int = 0,
+    @Json(name = "image_height") val imageHeight: Int = 0,
 )
 
 data class BroadcastBody(
@@ -744,7 +746,15 @@ object ApiFactory {
     fun auth(token: String) = "Bearer $token"
 
     fun imagePart(file: File): MultipartBody.Part {
-        val body = file.asRequestBody("image/*".toMediaTypeOrNull())
+        val name = file.name.lowercase()
+        val mime = when {
+            name.endsWith(".png") -> "image/png"
+            name.endsWith(".webp") -> "image/webp"
+            name.endsWith(".gif") -> "image/gif"
+            name.endsWith(".jpg") || name.endsWith(".jpeg") -> "image/jpeg"
+            else -> "image/*"
+        }
+        val body = file.asRequestBody(mime.toMediaTypeOrNull())
         return MultipartBody.Part.createFormData("file", file.name, body)
     }
 

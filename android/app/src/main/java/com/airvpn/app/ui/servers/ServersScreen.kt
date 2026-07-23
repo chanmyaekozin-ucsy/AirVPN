@@ -96,9 +96,11 @@ fun ServersScreen(
     val paidServers = catalog.paid
     val imported = freeServers.filter { it.isImported }
     val freeRemote = freeServers.filter { !it.isImported }
-    val subNodes = imported.filter { it.fromSubscription }
+    val catalogSubNodes = freeRemote.filter { it.fromSubscription }
+    val plainFree = freeRemote.filter { !it.fromSubscription }
+    val subNodes = imported.filter { it.fromSubscription } + catalogSubNodes
     val manualImported = imported.filter { !it.fromSubscription }
-    val hasSubs = subscriptions.isNotEmpty()
+    val hasSubs = subscriptions.isNotEmpty() || catalogSubNodes.isNotEmpty()
 
     Column(modifier = modifier.fillMaxSize()) {
         AirTopBar(
@@ -141,7 +143,11 @@ fun ServersScreen(
                     items(subscriptions, key = { "sub-${it.url}" }) { info ->
                         SubscriptionCard(
                             info = info,
-                            onRemove = { onRemoveSubscription(info.url) },
+                            onRemove = if (info.isCatalogManaged) {
+                                null
+                            } else {
+                                { onRemoveSubscription(info.url) }
+                            },
                         )
                     }
                 }
@@ -155,7 +161,11 @@ fun ServersScreen(
                             pingMs = pings[server.id],
                             pingKnown = pings.containsKey(server.id),
                             onClick = { onSelect(server) },
-                            onDelete = { onDeleteImported(server.id) },
+                            onDelete = if (server.isImported) {
+                                { onDeleteImported(server.id) }
+                            } else {
+                                null
+                            },
                         )
                         HorizontalDivider(
                             thickness = 1.dp,
@@ -183,9 +193,9 @@ fun ServersScreen(
                         )
                     }
                 }
-                if (freeRemote.isNotEmpty()) {
+                if (plainFree.isNotEmpty()) {
                     item { SectionHeader("Free") }
-                    items(freeRemote, key = { it.id }) { server ->
+                    items(plainFree, key = { it.id }) { server ->
                         ServerRow(
                             server = server,
                             selected = server.id == selectedId,
@@ -315,7 +325,7 @@ fun ServersScreen(
 @Composable
 private fun SubscriptionCard(
     info: SubscriptionInfo,
-    onRemove: () -> Unit,
+    onRemove: (() -> Unit)?,
 ) {
     Column(
         modifier = Modifier
@@ -330,17 +340,20 @@ private fun SubscriptionCard(
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(
-                text = "Subscription",
+                text = info.name.takeIf { it.isNotBlank() }
+                    ?: if (info.isCatalogManaged) "Free subscription" else "Subscription",
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = InkMuted,
                 modifier = Modifier.weight(1f),
             )
-            IconButton(onClick = onRemove, modifier = Modifier.padding(0.dp)) {
-                Icon(
-                    Icons.Outlined.DeleteOutline,
-                    contentDescription = "Remove subscription",
-                    tint = InkMuted,
-                )
+            if (onRemove != null) {
+                IconButton(onClick = onRemove, modifier = Modifier.padding(0.dp)) {
+                    Icon(
+                        Icons.Outlined.DeleteOutline,
+                        contentDescription = "Remove subscription",
+                        tint = InkMuted,
+                    )
+                }
             }
         }
         Spacer(Modifier.height(8.dp))

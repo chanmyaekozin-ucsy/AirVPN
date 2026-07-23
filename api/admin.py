@@ -970,19 +970,49 @@ async def admin_delete_ad(
 async def admin_upload_ad_image(
     file: UploadFile = File(...),
     _admin_id: int = Depends(require_admin),
-) -> dict[str, str]:
-    raw_name = file.filename or "ad.bin"
-    ext = Path(raw_name).suffix.lower()
-    if ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
-        raise HTTPException(status_code=400, detail="Unsupported image type")
-    stem = _SAFE_NAME.sub("-", Path(raw_name).stem)[:40] or "ad"
-    filename = f"{stem}-{uuid.uuid4().hex[:8]}{ext}"
-    dest = _ADS_DIR / filename
+) -> dict[str, Any]:
+    from utils.image_meta import describe_image, sniff_image_ext
+
     data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
     if len(data) > 5 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 5MB)")
+
+    raw_name = file.filename or "ad.bin"
+    ext = Path(raw_name).suffix.lower()
+    sniffed = sniff_image_ext(data)
+    if sniffed:
+        ext = sniffed
+    elif ext not in (".png", ".jpg", ".jpeg", ".webp", ".gif"):
+        # Also accept content-type when filename has no/wrong extension
+        ctype = (file.content_type or "").lower()
+        ctype_map = {
+            "image/png": ".png",
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/webp": ".webp",
+            "image/gif": ".gif",
+        }
+        ext = ctype_map.get(ctype, "")
+    if ext == ".jpeg":
+        ext = ".jpg"
+    if ext not in (".png", ".jpg", ".webp", ".gif"):
+        raise HTTPException(status_code=400, detail="Unsupported image type")
+
+    meta = describe_image(data)
+    stem = _SAFE_NAME.sub("-", Path(raw_name).stem)[:40] or "ad"
+    if stem.endswith(".bin") or stem.startswith("ad-upload"):
+        stem = "ad"
+    filename = f"{stem}-{uuid.uuid4().hex[:8]}{ext}"
+    dest = _ADS_DIR / filename
     dest.write_bytes(data)
-    return {"image_url": f"/ads/{filename}", "filename": filename}
+    return {
+        "image_url": f"/ads/{filename}",
+        "filename": filename,
+        "image_width": int(meta.get("width") or 0),
+        "image_height": int(meta.get("height") or 0),
+    }
 
 
 # ─── Telegram broadcast notifications ────────────────────────────────────────
