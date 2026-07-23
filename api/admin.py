@@ -1013,7 +1013,7 @@ async def admin_upsert_catalog(
     ssh_user = (body.ssh_user or "").strip()
     ssh_sni = (body.ssh_sni or "").strip()
     ssh_port = int(body.ssh_port or 443)
-    ssh_tls = True if body.ssh_tls is None else bool(body.ssh_tls)
+    ssh_tls = False if body.ssh_tls is None else bool(body.ssh_tls)
     ssh_allow_insecure = bool(body.ssh_allow_insecure) if body.ssh_allow_insecure is not None else False
     ssh_password = body.ssh_password  # None vs "" — None/blank means keep on update
     keep_ssh_password = False
@@ -1021,16 +1021,15 @@ async def admin_upsert_catalog(
 
     if protocol == "ssh":
         nodes_text = None
-        if tier == "free" and ssh_allow_insecure:
-            raise HTTPException(
-                status_code=400,
-                detail="allowInsecure is not allowed on free SSH servers",
-            )
         if not ssh_host or not ssh_user:
             raise HTTPException(
                 status_code=400,
                 detail="SSH servers need ssh_host and ssh_user",
             )
+        # Stunnel + custom SNI almost always uses a non-matching / self-signed cert
+        # (HTTP Injector style). Default allow_insecure on when TLS is enabled.
+        if body.ssh_allow_insecure is None and ssh_tls:
+            ssh_allow_insecure = True
         existing = await db.get_mobile_server(body.public_id)
         pwd = (ssh_password or "").strip() if ssh_password is not None else ""
         if pwd:

@@ -11,6 +11,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
@@ -278,12 +280,14 @@ private fun CatalogDialog(
     var uri by remember { mutableStateOf(initial?.configUri ?: "") }
     var nodes by remember { mutableStateOf(initial?.nodesText ?: "") }
     var sshHost by remember { mutableStateOf(initial?.sshHost ?: "") }
-    var sshPort by remember { mutableStateOf((initial?.sshPort ?: 443).toString()) }
+    var sshPort by remember { mutableStateOf((initial?.sshPort ?: 9443).toString()) }
     var sshUser by remember { mutableStateOf(initial?.sshUser ?: "") }
     var sshPassword by remember { mutableStateOf("") }
     var sshSni by remember { mutableStateOf(initial?.sshSni ?: "") }
     var sshTls by remember { mutableStateOf(initial?.sshTls ?: true) }
-    var sshAllowInsecure by remember { mutableStateOf(initial?.sshAllowInsecure ?: false) }
+    var sshAllowInsecure by remember {
+        mutableStateOf(initial?.sshAllowInsecure ?: (initial?.sshTls != false))
+    }
     var dataGb by remember {
         mutableStateOf(initial?.manualDataGb?.let { trimGb(it) } ?: "50")
     }
@@ -394,20 +398,40 @@ private fun CatalogDialog(
             shape = RoundedCornerShape(12.dp),
             colors = adminFieldColors(),
         )
-        OutlinedTextField(
-            protocol, { protocol = it },
-            label = { Text("Protocol (vless/ss/ssh)") },
+        Text("Protocol", style = MaterialTheme.typography.labelMedium, color = InkMuted)
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = adminFieldColors(),
-        )
-        OutlinedTextField(
-            tier, { tier = it },
-            label = { Text("Tier (free/paid)") },
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf("vless" to "VLESS", "ss" to "SS", "ssh" to "SSH").forEach { (value, label) ->
+                FilterChip(
+                    selected = protocol.equals(value, ignoreCase = true),
+                    onClick = { protocol = value },
+                    label = { Text(label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Cyan.copy(alpha = 0.25f),
+                        selectedLabelColor = Ink,
+                    ),
+                )
+            }
+        }
+        Text("Tier", style = MaterialTheme.typography.labelMedium, color = InkMuted)
+        Row(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = adminFieldColors(),
-        )
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            listOf("free" to "Free", "paid" to "Paid").forEach { (value, label) ->
+                FilterChip(
+                    selected = tier.equals(value, ignoreCase = true),
+                    onClick = { tier = value },
+                    label = { Text(label) },
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = Cyan.copy(alpha = 0.25f),
+                        selectedLabelColor = Ink,
+                    ),
+                )
+            }
+        }
 
         if (isSsh) {
             OutlinedTextField(
@@ -461,11 +485,19 @@ private fun CatalogDialog(
                 Text("TLS wrap (stunnel)", color = Ink)
                 Switch(
                     checked = sshTls,
-                    onCheckedChange = { sshTls = it },
+                    onCheckedChange = {
+                        sshTls = it
+                        if (it) sshAllowInsecure = true
+                    },
                     colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
                 )
             }
-            if (!tier.equals("free", ignoreCase = true)) {
+            if (sshTls) {
+                Text(
+                    "HTTP Injector style: custom SNI + stunnel. Self-signed certs need Allow insecure ON.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = InkMuted,
+                )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
@@ -478,6 +510,13 @@ private fun CatalogDialog(
                         colors = SwitchDefaults.colors(checkedTrackColor = Cyan),
                     )
                 }
+            }
+            if (!sshTls) {
+                Text(
+                    "Plain SSH — use sshd port (usually 22).",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = InkMuted,
+                )
             }
             Text(
                 "Use a tunnel-only SSH user (no shell/root). See docs/SSH_STUNNEL.md.",

@@ -83,5 +83,6 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     // Real SSH client (password auth over TLS-wrapped socket)
     implementation("com.hierynomus:sshj:0.38.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

@@ -104,11 +104,16 @@ class SshTunnel private constructor(
             val tls = parsed.getQueryParameter("tls")
                 ?.let { it == "1" || it.equals("true", true) }
                 ?: true
-            val allowInsecure = parsed.getQueryParameter("allowInsecure")
+            val sni = parsed.getQueryParameter("sni")?.takeIf { it.isNotBlank() } ?: host
+            // Stunnel + custom SNI (HTTP Injector): self-signed / non-matching cert
+            var allowInsecure = parsed.getQueryParameter("allowInsecure")
                 ?.let { it == "1" || it.equals("true", true) }
                 ?: (parsed.getQueryParameter("allow_insecure")
-                    ?.let { it == "1" || it.equals("true", true) } ?: false)
-            val sni = parsed.getQueryParameter("sni")?.takeIf { it.isNotBlank() } ?: host
+                    ?.let { it == "1" || it.equals("true", true) }
+                    ?: tls)
+            if (tls && sni.isNotBlank() && !sni.equals(host, ignoreCase = true)) {
+                allowInsecure = true
+            }
             val name = parsed.fragment?.let { urlDecode(it) }.orEmpty()
             return Params(
                 host = host,
@@ -123,7 +128,12 @@ class SshTunnel private constructor(
         }
 
         fun start(uri: String): SshTunnel {
+            ensureSecurityProviders()
             val p = parse(uri)
+            Log.i(
+                TAG,
+                "starting host=${p.host} port=${p.port} tls=${p.tls} sni=${p.sni} user=${p.username}",
+            )
             val tlsBridge = if (p.tls) {
                 TlsBridge.start(p.host, p.port, p.sni, p.allowInsecure)
             } else {
@@ -136,18 +146,21 @@ class SshTunnel private constructor(
             ssh.timeout = CONNECT_TIMEOUT_MS
             try {
                 if (tlsBridge != null) {
+                    // Brief wait so the accept loop is scheduled
+                    Thread.sleep(50)
                     ssh.connect("127.0.0.1", tlsBridge.localPort)
                 } else {
                     ssh.connect(p.host, p.port)
                 }
                 ssh.authPassword(p.username, p.password.toCharArray())
             } catch (e: Exception) {
+                Log.e(TAG, "SSH start failed host=${p.host}:${p.port} tls=${p.tls}", e)
                 try {
                     ssh.close()
                 } catch (_: Exception) {
                 }
                 tlsBridge?.stop()
-                throw IllegalStateException(humanSshError(e), e)
+                throw IllegalStateException(humanSshError(e, p), e)
             }
 
             val socks = ServerSocket()
@@ -298,19 +311,51 @@ class SshTunnel private constructor(
             }
         }
 
-        private fun humanSshError(e: Exception): String {
-            val msg = e.message.orEmpty()
-            return when {
-                msg.contains("Auth fail", true) ||
-                    msg.contains("authentication", true) -> "SSH auth failed"
-                msg.contains("handshake", true) ||
-                    msg.contains("SSL", true) ||
-                    msg.contains("certificate", true) -> "TLS handshake failed"
-                msg.contains("timed out", true) ||
-                    msg.contains("Timeout", true) -> "SSH connect timed out"
-                msg.contains("Connection refused", true) -> "SSH connection refused"
+        private fun ensureSecurityProviders() {
+            try {
+                val bc = org.bouncycastle.jce.provider.BouncyCastleProvider()
+                val existing = java.security.Security.getProvider(bc.name)
+                if (existing == null) {
+                    java.security.Security.insertProviderAt(bc, 1)
+                } else if (existing.javaClass != bc.javaClass) {
+                    java.security.Security.removeProvider(bc.name)
+                    java.security.Security.insertProviderAt(bc, 1)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "BouncyCastle provider", e)
+            }
+        }
+
+        private fun humanSshError(e: Exception, p: Params? = null): String {
+            val chain = generateSequence(e as Throwable) { it.cause }
+                .mapNotNull { it.message?.takeIf { m -> m.isNotBlank() } }
+                .joinToString(" | ")
+                .take(160)
+            val tip = when {
+                chain.contains("Auth fail", true) ||
+                    chain.contains("authentication", true) -> "SSH auth failed"
+                chain.contains("handshake", true) ||
+                    chain.contains("SSL", true) ||
+                    chain.contains("certificate", true) ||
+                    chain.contains("Trust anchor", true) ->
+                    "TLS handshake failed — turn off TLS wrap unless stunnel is running"
+                chain.contains("Connection reset", true) ->
+                    "Connection reset — wrong port or TLS/stunnel mismatch"
+                chain.contains("timed out", true) ||
+                    chain.contains("Timeout", true) -> "SSH connect timed out"
+                chain.contains("Connection refused", true) -> "SSH connection refused"
+                chain.contains("Network is unreachable", true) ||
+                    chain.contains("Failed to connect", true) -> "SSH host unreachable"
+                chain.contains("Unable to reach a settlement", true) ||
+                    chain.contains("algorithm", true) -> "SSH algorithm negotiation failed"
                 else -> "SSH connect failed"
             }
+            val where = if (p != null) {
+                " (${p.host}:${p.port} tls=${if (p.tls) "on" else "off"})"
+            } else {
+                ""
+            }
+            return tip + where
         }
 
         private fun urlDecode(s: String): String =

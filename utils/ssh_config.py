@@ -157,11 +157,10 @@ def connect_uri_from_row(row: dict[str, Any], password: str) -> str:
         raise ValueError("SSH server incomplete")
     if not (password or "").strip():
         raise ValueError("SSH password missing")
-    # Free tier: refuse allowInsecure
-    tier = (row.get("tier") or "free").lower()
     allow_insecure = bool(fields["allow_insecure"])
-    if tier == "free":
-        allow_insecure = False
+    # HTTP Injector–style stunnel: custom SNI + self-signed cert → must skip verify
+    if fields["tls"] and not allow_insecure and fields["sni"] and fields["sni"] != fields["host"]:
+        allow_insecure = True
     return build_ssh_uri(
         host=fields["host"],
         port=int(fields["port"]),
