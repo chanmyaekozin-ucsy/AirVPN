@@ -21,7 +21,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -355,7 +355,7 @@ private fun SubscriptionCard(
             if (onRemove != null) {
                 IconButton(onClick = onRemove, modifier = Modifier.padding(0.dp)) {
                     Icon(
-                        Icons.Outlined.DeleteOutline,
+                        Icons.Outlined.Delete,
                         contentDescription = "Remove subscription",
                         tint = InkMuted,
                     )
@@ -605,7 +605,7 @@ private fun ServerRow(
         if (onDelete != null) {
             IconButton(onClick = onDelete) {
                 Icon(
-                    Icons.Outlined.DeleteOutline,
+                    Icons.Outlined.Delete,
                     contentDescription = "Delete",
                     tint = InkMuted,
                 )

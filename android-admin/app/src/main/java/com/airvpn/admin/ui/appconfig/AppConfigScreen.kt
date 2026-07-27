@@ -138,7 +138,7 @@ fun AppConfigScreen(
             OutlinedTextField(
                 value = updateUrl,
                 onValueChange = { updateUrl = it.take(512) },
-                label = { Text("Update / APK download URL (Telegram)") },
+                label = { Text("Update / APK download URL (Telegram post)") },
                 supportingText = { Text("Opened when user taps Update — prefer TG channel/file") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,

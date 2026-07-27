@@ -28,6 +28,7 @@ import com.airvpn.app.util.TelegramLinks
 import com.airvpn.app.util.VpnKeyImport
 import com.airvpn.app.vpn.AirVpnService
 import com.airvpn.app.vpn.VpnConfigHandoff
+import com.airvpn.app.vpn.VpnState
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,13 +63,12 @@ data class AirUiState(
 ) {
     val subscription: SubscriptionInfo? get() = subscriptions.firstOrNull()
 
-    /** Hide first-party ads for paid profile or live *imported* subs — not free catalog subs. */
+    /**
+     * First-party ads from airnetwork.flash-myanmar.com.
+     * Hide only for AirVPN paid accounts — third-party imported subscriptions do not hide ads.
+     */
     val showAds: Boolean
-        get() {
-            if (profile?.hasPaid == true) return false
-            if (subscriptions.any { !it.isCatalogManaged && !it.isExpired }) return false
-            return true
-        }
+        get() = profile?.hasPaid != true
 
     val bannerAds: List<AdCreative>
         get() = if (showAds) {
@@ -215,6 +215,7 @@ class AirVpnViewModel : ViewModel() {
                     )
                 }
                 .onFailure { e ->
+                    android.util.Log.e("AirVpn", "refreshServers failed", e)
                     val msg = when {
                         e is HttpException && e.code() == 429 ->
                             "Too many refreshes — wait a minute"
@@ -708,8 +709,9 @@ class AirVpnViewModel : ViewModel() {
                 context.startService(i)
             }
             session?.saveLastConnected(server)
-            _ui.update { it.copy(statusMessage = "Connected") }
-            startConnectedPing(server)
+            // Stay on "Connecting…" until AirVpnService reports VpnState.Connected.
+            // Do NOT TCP-ping the node yet — for SSH that probes the stunnel port and
+            // can drop the live session within the first few seconds.
         } catch (e: Exception) {
             VpnConfigHandoff.clear()
             _ui.update {
@@ -721,6 +723,7 @@ class AirVpnViewModel : ViewModel() {
     /** Called when VPN state becomes Connected (e.g. from service observer). */
     fun onVpnConnected() {
         val server = _ui.value.selectedServer ?: return
+        _ui.update { it.copy(statusMessage = "Connected") }
         startConnectedPing(server)
     }
 
@@ -730,6 +733,15 @@ class AirVpnViewModel : ViewModel() {
 
     private fun startConnectedPing(server: VpnServerItem) {
         stopConnectedPing()
+        // SSH-over-TLS: never open parallel TCP to host:port while the tunnel is up.
+        // That is the stunnel listen port; extra connects destabilize the session
+        // (Injector keeps a single TLS path).
+        if (server.protocol.equals("ssh", ignoreCase = true)) return
+        val uri = server.configUri.orEmpty()
+        if (uri.startsWith("ssh://", ignoreCase = true)) return
+        if (AirVpnService.activeConfigUri?.startsWith("ssh://", ignoreCase = true) == true) {
+            return
+        }
         connectedPingJob = viewModelScope.launch {
             while (isActive) {
                 pingOne(server)
@@ -773,12 +785,22 @@ class AirVpnViewModel : ViewModel() {
     }
 
     /**
-     * For subscription (and imported) nodes: resolve host → public IP → country code,
-     * then set [VpnServerItem.region] so flags match the real IP location.
+     * For imported / subscription nodes: resolve host → public IP → country code,
+     * then set [VpnServerItem.region] so flags match the real IP (not the display name).
      */
     fun resolveFlagsFromIp(servers: List<VpnServerItem> = _ui.value.catalog.free) {
         val ctx = appContext ?: return
-        val targets = servers.filter { it.fromSubscription || it.isImported }
+        // Prefer IP geo for anything the user imported or any subscription node.
+        // Skip AirVPN API catalog rows that already have a 2-letter region from the server.
+        val targets = servers.filter { s ->
+            val hasCc = s.region.trim().length == 2 && s.region.all { it.isLetter() }
+            when {
+                s.fromSubscription -> true
+                s.isImported -> true
+                !hasCc && !s.host.isNullOrBlank() -> true
+                else -> false
+            }
+        }
         if (targets.isEmpty()) return
         geoJob?.cancel()
         geoJob = viewModelScope.launch {
@@ -804,11 +826,14 @@ class AirVpnViewModel : ViewModel() {
                 val updatedFree = state.catalog.free.map { s ->
                     idToCc[s.id]?.let { s.copy(region = it) } ?: s
                 }
+                val updatedPaid = state.catalog.paid.map { s ->
+                    idToCc[s.id]?.let { s.copy(region = it) } ?: s
+                }
                 val selected = state.selectedServer?.let { sel ->
                     idToCc[sel.id]?.let { sel.copy(region = it) } ?: sel
                 }
                 state.copy(
-                    catalog = state.catalog.copy(free = updatedFree),
+                    catalog = state.catalog.copy(free = updatedFree, paid = updatedPaid),
                     selectedServer = selected,
                 )
             }
@@ -816,6 +841,16 @@ class AirVpnViewModel : ViewModel() {
     }
 
     private suspend fun pingOne(server: VpnServerItem) {
+        // While an SSH tunnel is connected, do not probe any SSH stunnel endpoints.
+        val vpnUp = AirVpnService.state.value == VpnState.Connected ||
+            AirVpnService.state.value == VpnState.Connecting
+        if (vpnUp && (
+                server.protocol.equals("ssh", ignoreCase = true) ||
+                    AirVpnService.activeConfigUri?.startsWith("ssh://", ignoreCase = true) == true
+                )
+        ) {
+            if (server.protocol.equals("ssh", ignoreCase = true)) return
+        }
         val host = server.host?.takeIf { it.isNotBlank() }
             ?: VpnKeyImport.hostFromUri(server.configUri)
             ?: return

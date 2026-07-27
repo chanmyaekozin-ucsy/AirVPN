@@ -42,12 +42,13 @@ object VpnKeyImport {
                 return Result.failure(IllegalArgumentException("Invalid VLESS UUID"))
             }
             val name = fragmentName(parsed) ?: "Imported VLESS"
-            val region = guessRegion(name, host)
             Result.success(
                 VpnServerItem(
                     id = stableId("vless", uri),
                     name = name,
-                    region = region,
+                    // Leave empty — FlagIcon waits for GeoIP from the real host IP
+                    region = "",
+
                     protocol = "vless",
                     tag = "Vless",
                     tier = "free",
@@ -88,7 +89,8 @@ object VpnKeyImport {
                 VpnServerItem(
                     id = stableId("ss", trimmed),
                     name = name,
-                    region = guessRegion(name, host),
+                    // Leave empty — FlagIcon waits for GeoIP from the real host IP
+                    region = "",
                     protocol = "ss",
                     tag = "SS",
                     tier = "free",
@@ -109,21 +111,6 @@ object VpnKeyImport {
             URLDecoder.decode(f, StandardCharsets.UTF_8.name()).trim().ifBlank { null }
         } catch (_: Exception) {
             f.trim().ifBlank { null }
-        }
-    }
-
-    private fun guessRegion(name: String, host: String): String {
-        val blob = "$name $host".lowercase()
-        return when {
-            "sg" in blob || "singapore" in blob -> "SG"
-            "us" in blob || "america" in blob || "united states" in blob -> "US"
-            "jp" in blob || "japan" in blob || "tokyo" in blob -> "JP"
-            "hk" in blob || "hong kong" in blob -> "HK"
-            "my" in blob || "malaysia" in blob -> "MY"
-            "th" in blob || "thailand" in blob -> "TH"
-            "de" in blob || "germany" in blob -> "DE"
-            "gb" in blob || "uk" in blob || "london" in blob -> "GB"
-            else -> ""
         }
     }
 

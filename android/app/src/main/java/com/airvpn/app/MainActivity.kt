@@ -22,9 +22,9 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Dns
+import androidx.compose.material.icons.automirrored.outlined.List
 import androidx.compose.material.icons.outlined.Info
-import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -69,13 +69,16 @@ import com.airvpn.app.vpn.AirVpnService
 import com.airvpn.app.vpn.VpnState
 
 class MainActivity : ComponentActivity() {
+    private val pendingImport = kotlinx.coroutines.flow.MutableSharedFlow<String>(
+        extraBufferCapacity = 1,
+    )
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val importCode = intent?.data?.getQueryParameter("code")
-            ?: intent?.data?.getQueryParameter("url")
+        consumeImportIntent(intent)?.let { pendingImport.tryEmit(it) }
         setContent {
             AirVpnTheme {
-                AirVpnRoot(initialImportCode = importCode)
+                AirVpnRoot(pendingImport = pendingImport)
             }
         }
     }
@@ -83,6 +86,16 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: android.content.Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        consumeImportIntent(intent)?.let { pendingImport.tryEmit(it) }
+    }
+
+    private fun consumeImportIntent(intent: android.content.Intent?): String? {
+        val data = intent?.data ?: return null
+        val raw = data.getQueryParameter("url")
+            ?: data.getQueryParameter("code")
+            ?: return null
+        val trimmed = raw.trim()
+        return trimmed.takeIf { it.contains("://") }
     }
 }
 
@@ -93,7 +106,10 @@ private enum class Tab(val label: String) {
 }
 
 @Composable
-fun AirVpnRoot(initialImportCode: String?, vm: AirVpnViewModel = viewModel()) {
+fun AirVpnRoot(
+    pendingImport: kotlinx.coroutines.flow.SharedFlow<String>,
+    vm: AirVpnViewModel = viewModel(),
+) {
     var current by remember { mutableStateOf(Tab.Main) }
     val ui by vm.ui.collectAsState()
     val vpnState by AirVpnService.state.collectAsState()
@@ -140,10 +156,10 @@ fun AirVpnRoot(initialImportCode: String?, vm: AirVpnViewModel = viewModel()) {
 
     LaunchedEffect(Unit) {
         vm.bootstrap(app.session, context)
-        if (!initialImportCode.isNullOrBlank()) {
-            if (initialImportCode.contains("://")) {
-                vm.importPaste(initialImportCode)
-            }
+        pendingImport.collect { payload ->
+            vm.importPaste(payload)
+            current = Tab.Servers
+            toastMessage = "Imported from link"
         }
     }
 
@@ -332,8 +348,8 @@ fun AirVpnRoot(initialImportCode: String?, vm: AirVpnViewModel = viewModel()) {
                                 icon = {
                                     Icon(
                                         when (tab) {
-                                            Tab.Main -> Icons.Outlined.Shield
-                                            Tab.Servers -> Icons.Outlined.Dns
+                                            Tab.Main -> Icons.Outlined.Lock
+                                            Tab.Servers -> Icons.AutoMirrored.Outlined.List
                                             Tab.Info -> Icons.Outlined.Info
                                         },
                                         contentDescription = tab.label,

@@ -7,7 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material3.Icon
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
@@ -75,7 +75,7 @@ fun FlagIcon(
 @Composable
 private fun FlagPlaceholder() {
     Icon(
-        imageVector = Icons.Outlined.Public,
+        imageVector = Icons.Outlined.Place,
         contentDescription = null,
         tint = InkMuted.copy(alpha = 0.55f),
         modifier = Modifier.size(18.dp),
@@ -90,8 +90,8 @@ fun flagImageUrl(countryCode: String, widthPx: Int = 80): String {
 }
 
 /**
- * Resolve ISO country code from region / name / id heuristics.
- * Returns null when unknown (shows globe placeholder).
+ * Prefer explicit ISO [region] (from GeoIP / API). Name/id heuristics only as
+ * a last resort for AirVPN catalog labels — imported nodes should get region from IP.
  */
 fun countryCodeFor(
     region: String = "",
@@ -103,49 +103,56 @@ fun countryCodeFor(
         return normalizeCountryCode(code)
     }
 
-    val blob = listOf(region, name, serverId)
+    val blob = listOf(name, serverId)
         .joinToString(" ")
         .lowercase(Locale.US)
         .trim()
     if (blob.isBlank()) return null
 
     val matchers: List<Pair<Regex, String>> = listOf(
-        Regex("""\b(sg|singapore|စင်္ကာပူ)\b""") to "SG",
-        Regex("""\b(us|usa|united\s*states|america|california|new\s*york|los\s*angeles)\b""") to "US",
-        Regex("""\b(jp|japan|tokyo|osaka)\b""") to "JP",
-        Regex("""\b(kr|korea|seoul)\b""") to "KR",
-        Regex("""\b(hk|hong\s*kong)\b""") to "HK",
-        Regex("""\b(tw|taiwan|taipei)\b""") to "TW",
-        Regex("""\b(mm|myanmar|burma|yangon|mandalay)\b""") to "MM",
-        Regex("""\b(my|malaysia|kuala)\b""") to "MY",
-        Regex("""\b(th|thailand|bangkok)\b""") to "TH",
-        Regex("""\b(vn|vietnam|hanoi|saigon|ho\s*chi)\b""") to "VN",
-        Regex("""\b(indonesia|jakarta|\bid\b)\b""") to "ID",
-        Regex("""\b(ph|philippines|manila)\b""") to "PH",
-        Regex("""\b(india|mumbai|delhi|\bin\b)\b""") to "IN",
-        Regex("""\b(cn|china|beijing|shanghai)\b""") to "CN",
-        Regex("""\b(de|germany|frankfurt|berlin)\b""") to "DE",
-        Regex("""\b(nl|netherlands|amsterdam)\b""") to "NL",
-        Regex("""\b(gb|uk|united\s*kingdom|london|england)\b""") to "GB",
-        Regex("""\b(fr|france|paris)\b""") to "FR",
-        Regex("""\b(au|australia|sydney|melbourne)\b""") to "AU",
-        Regex("""\b(ca|canada|toronto|vancouver)\b""") to "CA",
-        Regex("""\b(ae|uae|dubai|emirates)\b""") to "AE",
-        Regex("""\b(tr|turkey|türkiye|istanbul)\b""") to "TR",
-        Regex("""\b(ru|russia|moscow)\b""") to "RU",
-        Regex("""\b(br|brazil|sao\s*paulo)\b""") to "BR",
-        Regex("""\b(fi|finland|helsinki)\b""") to "FI",
-        Regex("""\b(se|sweden|stockholm)\b""") to "SE",
-        Regex("""\b(no|norway|oslo)\b""") to "NO",
-        Regex("""\b(pl|poland|warsaw)\b""") to "PL",
-        Regex("""\b(it|italy|milan|rome)\b""") to "IT",
-        Regex("""\b(es|spain|madrid)\b""") to "ES",
-        Regex("""\b(ch|switzerland|zurich)\b""") to "CH",
-        Regex("""\b(ie|ireland|dublin)\b""") to "IE",
-        Regex("""\b(nz|new\s*zealand)\b""") to "NZ",
+        Regex("""\b(singapore|စင်္ကာပူ)\b""") to "SG",
+        Regex("""\b(united\s*states|america|california|new\s*york|los\s*angeles)\b""") to "US",
+        Regex("""\b(japan|tokyo|osaka)\b""") to "JP",
+        Regex("""\b(korea|seoul)\b""") to "KR",
+        Regex("""\b(hong\s*kong)\b""") to "HK",
+        Regex("""\b(taiwan|taipei)\b""") to "TW",
+        Regex("""\b(myanmar|burma|yangon|mandalay)\b""") to "MM",
+        Regex("""\b(malaysia|kuala)\b""") to "MY",
+        Regex("""\b(thailand|bangkok)\b""") to "TH",
+        Regex("""\b(vietnam|hanoi|saigon|ho\s*chi)\b""") to "VN",
+        Regex("""\b(indonesia|jakarta)\b""") to "ID",
+        Regex("""\b(philippines|manila)\b""") to "PH",
+        Regex("""\b(india|mumbai|delhi)\b""") to "IN",
+        Regex("""\b(china|beijing|shanghai)\b""") to "CN",
+        Regex("""\b(germany|frankfurt|berlin)\b""") to "DE",
+        Regex("""\b(netherlands|amsterdam)\b""") to "NL",
+        Regex("""\b(united\s*kingdom|london|england)\b""") to "GB",
+        Regex("""\b(france|paris)\b""") to "FR",
+        Regex("""\b(australia|sydney|melbourne)\b""") to "AU",
+        Regex("""\b(canada|toronto|vancouver)\b""") to "CA",
+        Regex("""\b(uae|dubai|emirates)\b""") to "AE",
+        Regex("""\b(turkey|türkiye|istanbul)\b""") to "TR",
+        Regex("""\b(russia|moscow)\b""") to "RU",
+        Regex("""\b(brazil|sao\s*paulo)\b""") to "BR",
+        Regex("""\b(finland|helsinki)\b""") to "FI",
+        Regex("""\b(sweden|stockholm)\b""") to "SE",
+        Regex("""\b(norway|oslo)\b""") to "NO",
+        Regex("""\b(poland|warsaw)\b""") to "PL",
+        Regex("""\b(italy|milan|rome)\b""") to "IT",
+        Regex("""\b(spain|madrid)\b""") to "ES",
+        Regex("""\b(switzerland|zurich)\b""") to "CH",
+        Regex("""\b(ireland|dublin)\b""") to "IE",
+        Regex("""\b(new\s*zealand)\b""") to "NZ",
+        // Short codes only when they appear as a token (e.g. "SG-01"), not inside words
+        Regex("""(?:^|[\s\-_/])(sg|us|jp|kr|hk|tw|mm|my|th|vn|id|ph|in|cn|de|nl|gb|uk|fr|au|ca|ae|tr|ru|br)(?:$|[\s\-_/0-9])""") to "",
     )
     for ((re, cc) in matchers) {
-        if (re.containsMatchIn(blob)) return normalizeCountryCode(cc)
+        if (cc.isNotEmpty() && re.containsMatchIn(blob)) return normalizeCountryCode(cc)
+        if (cc.isEmpty()) {
+            val m = re.find(blob) ?: continue
+            val token = m.groupValues.getOrNull(1)?.uppercase(Locale.US) ?: continue
+            return normalizeCountryCode(token)
+        }
     }
     return null
 }

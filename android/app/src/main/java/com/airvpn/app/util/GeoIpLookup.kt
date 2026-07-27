@@ -110,26 +110,58 @@ object GeoIpLookup {
     }
 
     private suspend fun lookupCountryCode(ip: String): String? = withContext(Dispatchers.IO) {
-        // HTTPS, no API key — returns {"ip":"...","country":"SG"}
-        val url = "https://api.country.is/$ip"
-        runCatching {
-            val req = Request.Builder()
-                .url(url)
-                .header("Accept", "application/json")
-                .header("User-Agent", "AirVPN/1.0 (Android)")
-                .get()
-                .build()
-            client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) {
-                    Log.d(TAG, "geo $ip HTTP ${resp.code}")
-                    return@runCatching null
-                }
-                val body = resp.body?.string().orEmpty()
-                val cc = JSONObject(body).optString("country", "").trim().uppercase()
-                if (cc.length == 2 && cc.all { it in 'A'..'Z' }) cc else null
-            }
-        }.onFailure { Log.d(TAG, "geo $ip: ${it.message}") }.getOrNull()
+        // Try multiple providers — some are blocked or rate-limited in-region.
+        lookupCountryIs(ip)
+            ?: lookupIpWho(ip)
+            ?: lookupIpApi(ip)
     }
+
+    private fun parseCc(raw: String?): String? {
+        val cc = raw?.trim()?.uppercase().orEmpty()
+        return if (cc.length == 2 && cc.all { it in 'A'..'Z' }) cc else null
+    }
+
+    private fun lookupCountryIs(ip: String): String? = runCatching {
+        val req = Request.Builder()
+            .url("https://api.country.is/$ip")
+            .header("Accept", "application/json")
+            .header("User-Agent", "AirVPN/1.0 (Android)")
+            .get()
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return@use null
+            parseCc(JSONObject(resp.body?.string().orEmpty()).optString("country"))
+        }
+    }.onFailure { Log.d(TAG, "country.is $ip: ${it.message}") }.getOrNull()
+
+    private fun lookupIpWho(ip: String): String? = runCatching {
+        val req = Request.Builder()
+            .url("https://ipwho.is/$ip")
+            .header("Accept", "application/json")
+            .header("User-Agent", "AirVPN/1.0 (Android)")
+            .get()
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return@use null
+            val json = JSONObject(resp.body?.string().orEmpty())
+            if (!json.optBoolean("success", true)) return@use null
+            parseCc(json.optString("country_code"))
+        }
+    }.onFailure { Log.d(TAG, "ipwho.is $ip: ${it.message}") }.getOrNull()
+
+    private fun lookupIpApi(ip: String): String? = runCatching {
+        // HTTPS fallback (plain text country code)
+        val req = Request.Builder()
+            .url("https://ipapi.co/$ip/country/")
+            .header("Accept", "text/plain")
+            .header("User-Agent", "AirVPN/1.0 (Android)")
+            .get()
+            .build()
+        client.newCall(req).execute().use { resp ->
+            if (!resp.isSuccessful) return@use null
+            parseCc(resp.body?.string())
+        }
+    }.onFailure { Log.d(TAG, "ipapi.co $ip: ${it.message}") }.getOrNull()
 
     private fun isIpv4(s: String): Boolean {
         val parts = s.split('.')

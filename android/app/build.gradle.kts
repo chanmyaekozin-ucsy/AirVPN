@@ -4,6 +4,14 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+import java.util.Properties
+
+val keystorePropertiesFile = rootProject.file("keystore.properties")
+val keystoreProperties = Properties()
+if (keystorePropertiesFile.exists()) {
+    keystorePropertiesFile.inputStream().use { keystoreProperties.load(it) }
+}
+
 android {
     namespace = "com.airvpn.app"
     compileSdk = 35
@@ -12,11 +20,11 @@ android {
         applicationId = "com.airvpn.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.2.0"
+        versionCode = 6
+        versionName = "1.2.2"
         ndk {
-            // Match libv2ray.aar ABIs
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+            // Single APK, phones only — drops ~70MB of unused ABI copies (no Play splits)
+            abiFilters += listOf("arm64-v8a")
         }
         buildConfigField("String", "API_BASE_URL", "\"https://airnetwork.flash-myanmar.com/\"")
         // Must match server MOBILE_CONFIG_KEY (sha256 of secret is used for AES)
@@ -27,6 +35,37 @@ android {
         )
         buildConfigField("String", "TELEGRAM_URL", "\"https://t.me/airvpn_myanmar_bot\"")
         buildConfigField("String", "PRIVACY_URL", "\"https://airvpn.app/privacy\"")
+    }
+
+    signingConfigs {
+        create("release") {
+            if (keystorePropertiesFile.exists()) {
+                storeFile = file(keystoreProperties["storeFile"] as String)
+                storePassword = keystoreProperties["storePassword"] as String
+                keyAlias = keystoreProperties["keyAlias"] as String
+                keyPassword = keystoreProperties["keyPassword"] as String
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+            ndk {
+                debugSymbolLevel = "NONE"
+            }
+            if (keystorePropertiesFile.exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+        debug {
+            isMinifyEnabled = false
+        }
     }
 
     buildFeatures {
@@ -45,17 +84,24 @@ android {
     packaging {
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
+            excludes += "META-INF/versions/**"
+            excludes += "META-INF/*.SF"
+            excludes += "META-INF/*.RSA"
+            excludes += "META-INF/*.DSA"
+            excludes += "META-INF/LICENSE*"
+            excludes += "META-INF/NOTICE*"
+            excludes += "META-INF/DEPENDENCIES"
+            excludes += "META-INF/INDEX.LIST"
+            excludes += "**/mozilla/public-suffix-list.txt"
+            // libv2ray.aar ships ~28MB of geo DBs we do not use (hardcoded private CIDRs)
+            excludes += "assets/geoip.dat"
+            excludes += "assets/geosite.dat"
+            excludes += "assets/geoip-only-cn-private.dat"
         }
         jniLibs {
-            // libv2ray ships prebuilt .so per ABI
+            // Compress .so in the APK (smaller download). Extracted on install;
+            // VPN runtime performance is unchanged vs uncompressed packaging.
             useLegacyPackaging = true
-        }
-    }
-
-    // Keep APK lean for debug if needed — full ABIs for release
-    splits {
-        abi {
-            isEnable = false
         }
     }
 }
@@ -69,11 +115,11 @@ dependencies {
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
+    // Core icons only — extended added MBs for a handful of glyphs
+    implementation("androidx.compose.material:material-icons-core")
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
-    implementation("androidx.navigation:navigation-compose:2.8.5")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
@@ -85,4 +131,19 @@ dependencies {
     implementation("com.hierynomus:sshj:0.38.0")
     implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
+}
+
+// libv2ray.aar merges ~28MB geo DBs into assets — strip after merge (unused by our routes)
+listOf("mergeDebugAssets", "mergeReleaseAssets").forEach { taskName ->
+    tasks.matching { it.name == taskName }.configureEach {
+        doLast {
+            val outDir = outputs.files.files.firstOrNull { it.isDirectory } ?: return@doLast
+            listOf("geoip.dat", "geosite.dat", "geoip-only-cn-private.dat").forEach { asset ->
+                val f = outDir.resolve(asset)
+                if (f.exists() && f.delete()) {
+                    logger.lifecycle("Stripped unused asset $asset")
+                }
+            }
+        }
+    }
 }

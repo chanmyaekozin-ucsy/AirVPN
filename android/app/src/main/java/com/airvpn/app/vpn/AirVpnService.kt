@@ -6,6 +6,10 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.IpPrefix
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -13,15 +17,22 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import com.airvpn.app.MainActivity
 import com.airvpn.app.R
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
+import java.net.Socket
 
 enum class VpnState {
     Idle,
@@ -40,6 +51,10 @@ class AirVpnService : VpnService() {
     private var sshTunnel: SshTunnel? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var connectJob: Job? = null
+    private var sshWatchJob: Job? = null
+    /** Full SSH URI kept only while the VPN session is live (reconnect). */
+    private var liveSshUri: String? = null
+    private var liveServerName: String? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
@@ -62,6 +77,7 @@ class AirVpnService : VpnService() {
 
     private fun connect(configUri: String, serverName: String) {
         connectJob?.cancel()
+        sshWatchJob?.cancel()
         connectJob = scope.launch {
             _state.value = VpnState.Connecting
             _errorMessage.value = null
@@ -70,13 +86,28 @@ class AirVpnService : VpnService() {
 
                 val isSsh = configUri.trim().startsWith("ssh://", ignoreCase = true)
                 val configJson: String
+                val sshParams = if (isSsh) {
+                    runCatching { SshTunnel.parse(configUri) }.getOrNull()
+                } else {
+                    null
+                }
                 if (isSsh) {
                     // Establish SSH (+ TLS/SNI) before TUN so dialing is outside the VPN.
                     cleanupSshOnly()
-                    val tunnel = SshTunnel.start(configUri)
+                    val underlying = underlyingNetwork()
+                    Log.i(TAG, "SSH dial via network=${underlying?.toString() ?: "default"}")
+                    val tunnel = SshTunnel.start(
+                        uri = configUri,
+                        underlyingNetwork = underlying,
+                        protect = { socket -> protectSocketLogged(socket) },
+                    )
                     sshTunnel = tunnel
+                    liveSshUri = configUri
+                    liveServerName = serverName
                     configJson = SshTunnel.buildXraySocksConfig(tunnel.localSocksPort)
                 } else {
+                    liveSshUri = null
+                    liveServerName = null
                     configJson = VlessConfigBuilder.build(configUri)
                 }
 
@@ -92,6 +123,11 @@ class AirVpnService : VpnService() {
                     builder.addDisallowedApplication(packageName)
                 } catch (e: Exception) {
                     Log.w(TAG, "addDisallowedApplication", e)
+                }
+                // Critical on Samsung: keep stunnel/SSH IP off the TUN so the TLS
+                // path cannot be black-holed after establish() (API 33+).
+                if (isSsh && sshParams != null && Build.VERSION.SDK_INT >= 33) {
+                    excludeHostFromVpn(builder, sshParams.host)
                 }
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     builder.setMetered(false)
@@ -122,6 +158,12 @@ class AirVpnService : VpnService() {
                     return@launch
                 }
 
+                // Re-bind/protect SSH/TLS sockets now that the TUN owns default routes
+                val underlyingAfter = underlyingNetwork()
+                sshTunnel?.protectSockets(underlyingAfter) { socket ->
+                    protectSocketLogged(socket)
+                }
+
                 XrayCore.start(
                     context = applicationContext,
                     configJson = configJson,
@@ -150,6 +192,12 @@ class AirVpnService : VpnService() {
                 _errorMessage.value = null
                 startVpnForeground(buildNotification(serverName, connecting = false))
                 Log.i(TAG, "tunnel up")
+                if (isSsh) {
+                    startSshWatchdog(serverName)
+                }
+            } catch (e: CancellationException) {
+                // New connect / destroy cancelled us — do not fail or tear down the replacement.
+                throw e
             } catch (e: Exception) {
                 Log.e(TAG, "connect failed", e)
                 fail(humanError(e))
@@ -157,6 +205,153 @@ class AirVpnService : VpnService() {
                 stopForegroundSafe()
                 stopSelf()
             }
+        }
+    }
+
+    private fun startSshWatchdog(serverName: String) {
+        sshWatchJob?.cancel()
+        sshWatchJob = scope.launch {
+            var failures = 0
+            var reconnects = 0
+            while (isActive && _state.value == VpnState.Connected) {
+                delay(12_000)
+                val tunnel = sshTunnel
+                if (tunnel == null || !tunnel.isHealthy()) {
+                    failures++
+                    Log.w(TAG, "SSH health check failed ($failures)")
+                    if (failures >= 2) {
+                        val uri = liveSshUri
+                        if (uri != null && reconnects < 3) {
+                            reconnects++
+                            Log.w(TAG, "SSH dead — reconnect attempt $reconnects")
+                            startVpnForeground(buildNotification(serverName, connecting = true))
+                            if (reconnectSsh(uri)) {
+                                failures = 0
+                                startVpnForeground(buildNotification(serverName, connecting = false))
+                                continue
+                            }
+                        }
+                        fail("SSH tunnel disconnected")
+                        cleanupAll()
+                        stopForegroundSafe()
+                        stopSelf()
+                        break
+                    }
+                } else {
+                    failures = 0
+                    val net = underlyingNetwork()
+                    tunnel.protectSockets(net) { socket ->
+                        protectSocketLogged(socket)
+                    }
+                }
+            }
+            Log.d(TAG, "SSH watchdog end for $serverName")
+        }
+    }
+
+    /** Rebuild SSH+TLS and reattach Xray to the existing TUN. */
+    private fun reconnectSsh(uri: String): Boolean {
+        return try {
+            try {
+                XrayCore.stop()
+            } catch (e: Exception) {
+                Log.w(TAG, "xray stop for reconnect", e)
+            }
+            cleanupSshOnly()
+            val underlying = underlyingNetwork()
+            val tunnel = SshTunnel.start(
+                uri = uri,
+                underlyingNetwork = underlying,
+                protect = { socket -> protectSocketLogged(socket) },
+            )
+            sshTunnel = tunnel
+            liveSshUri = uri
+            tunnel.protectSockets(underlying) { socket ->
+                protectSocketLogged(socket)
+            }
+            val fd = tun?.fd ?: return false
+            if (fd < 3) return false
+            val configJson = SshTunnel.buildXraySocksConfig(tunnel.localSocksPort)
+            XrayCore.start(
+                context = applicationContext,
+                configJson = configJson,
+                tunFd = fd,
+                onStopped = {
+                    scope.launch {
+                        if (_state.value == VpnState.Connected) {
+                            fail("VPN core stopped unexpectedly")
+                            cleanupAll()
+                            stopForegroundSafe()
+                            stopSelf()
+                        }
+                    }
+                },
+            )
+            Log.i(TAG, "SSH reconnected socks=${tunnel.localSocksPort}")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "SSH reconnect failed", e)
+            false
+        }
+    }
+
+    private fun protectSocketLogged(socket: Socket): Boolean {
+        val ok = try {
+            protect(socket)
+        } catch (e: Exception) {
+            Log.w(TAG, "protect() threw", e)
+            false
+        }
+        if (!ok) {
+            Log.w(TAG, "protect() returned false for $socket")
+        }
+        return ok
+    }
+
+    /** Prefer Wi‑Fi/cellular, never the VPN network itself. */
+    private fun underlyingNetwork(): Network? {
+        return try {
+            val cm = getSystemService(ConnectivityManager::class.java) ?: return null
+            val networks = cm.allNetworks
+            for (n in networks) {
+                val caps = cm.getNetworkCapabilities(n) ?: continue
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) continue
+                if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) continue
+                if (Build.VERSION.SDK_INT >= 28 &&
+                    !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                ) {
+                    continue
+                }
+                return n
+            }
+            cm.activeNetwork
+        } catch (e: SecurityException) {
+            Log.w(TAG, "underlyingNetwork unavailable", e)
+            null
+        } catch (e: Exception) {
+            Log.w(TAG, "underlyingNetwork", e)
+            null
+        }
+    }
+
+    private fun excludeHostFromVpn(builder: Builder, host: String) {
+        if (Build.VERSION.SDK_INT < 33) return
+        try {
+            val addrs = InetAddress.getAllByName(host)
+            for (addr in addrs) {
+                when (addr) {
+                    is Inet4Address -> {
+                        builder.excludeRoute(IpPrefix(addr, 32))
+                        Log.i(TAG, "excludeRoute ${addr.hostAddress}/32")
+                    }
+                    is Inet6Address -> {
+                        builder.excludeRoute(IpPrefix(addr, 128))
+                        Log.i(TAG, "excludeRoute ${addr.hostAddress}/128")
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "excludeHostFromVpn $host", e)
         }
     }
 
@@ -187,6 +382,8 @@ class AirVpnService : VpnService() {
     }
 
     private fun disconnect() {
+        sshWatchJob?.cancel()
+        sshWatchJob = null
         _state.value = VpnState.Disconnecting
         cleanupAll()
         stopForegroundSafe()
@@ -202,15 +399,19 @@ class AirVpnService : VpnService() {
             Log.w(TAG, "ssh stop", e)
         }
         sshTunnel = null
+        liveSshUri = null
     }
 
     private fun cleanupAll() {
+        sshWatchJob?.cancel()
+        sshWatchJob = null
         try {
             XrayCore.stop()
         } catch (e: Exception) {
             Log.w(TAG, "xray stop", e)
         }
         cleanupSshOnly()
+        liveServerName = null
         try {
             tun?.close()
         } catch (_: Exception) {

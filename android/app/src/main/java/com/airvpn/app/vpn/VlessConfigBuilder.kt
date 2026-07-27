@@ -41,7 +41,8 @@ object VlessConfigBuilder {
                         ),
                     ),
             )
-        return rootConfig(outbound)
+        // SSH carries TCP only. UDP/QUIC (TikTok) + DoH bypass so they don't kill stunnel.
+        return rootConfig(outbound, sshTcpOnly = true)
     }
 
     private fun buildShadowsocks(raw: String): String {
@@ -99,7 +100,11 @@ object VlessConfigBuilder {
         return decoded.substring(0, colon) to decoded.substring(colon + 1)
     }
 
-    private fun rootConfig(proxyOutbound: JSONObject): String {
+    private fun rootConfig(
+        proxyOutbound: JSONObject,
+        blockQuicUdp: Boolean = false,
+        sshTcpOnly: Boolean = false,
+    ): String {
         val tunInbound = JSONObject()
             .put("tag", "tun-in")
             .put("protocol", "tun")
@@ -120,6 +125,86 @@ object VlessConfigBuilder {
                     )
                     .put("routeOnly", false),
             )
+        val rules = JSONArray()
+            .put(
+                JSONObject()
+                    .put("type", "field")
+                    .put(
+                        "ip",
+                        JSONArray()
+                            .put("0.0.0.0/8")
+                            .put("10.0.0.0/8")
+                            .put("127.0.0.0/8")
+                            .put("169.254.0.0/16")
+                            .put("172.16.0.0/12")
+                            .put("192.168.0.0/16")
+                            .put("224.0.0.0/4")
+                            .put("240.0.0.0/4")
+                            .put("::1/128")
+                            .put("fc00::/7")
+                            .put("fe80::/10"),
+                    )
+                    .put("outboundTag", "direct"),
+            )
+        when {
+            sshTcpOnly -> {
+                // DoH/DoT through SSH opens many short channels and drops stunnel.
+                rules.put(
+                    JSONObject()
+                        .put("type", "field")
+                        .put("port", "853")
+                        .put("outboundTag", "direct"),
+                )
+                rules.put(
+                    JSONObject()
+                        .put("type", "field")
+                        .put("port", "53")
+                        .put("outboundTag", "direct"),
+                )
+                // TikTok live/CDN uses QUIC/UDP — cannot ride SSH DirectTCPIP.
+                rules.put(
+                    JSONObject()
+                        .put("type", "field")
+                        .put("network", "udp")
+                        .put("outboundTag", "direct"),
+                )
+            }
+            blockQuicUdp -> {
+                // Force TCP fallback for Chrome QUIC when using TCP-only proxies
+                rules.put(
+                    JSONObject()
+                        .put("type", "field")
+                        .put("protocol", JSONArray().put("quic"))
+                        .put("outboundTag", "block"),
+                )
+                rules.put(
+                    JSONObject()
+                        .put("type", "field")
+                        .put("port", "443")
+                        .put("network", "udp")
+                        .put("outboundTag", "block"),
+                )
+                rules.put(
+                    JSONObject()
+                        .put("type", "field")
+                        .put("port", "53")
+                        .put("network", "udp")
+                        .put("outboundTag", "direct"),
+                )
+                rules.put(
+                    JSONObject()
+                        .put("type", "field")
+                        .put("network", "udp")
+                        .put("outboundTag", "block"),
+                )
+            }
+        }
+        rules.put(
+            JSONObject()
+                .put("type", "field")
+                .put("network", "tcp,udp")
+                .put("outboundTag", "proxy"),
+        )
         return JSONObject()
             .put(
                 "log",
@@ -146,36 +231,7 @@ object VlessConfigBuilder {
                 "routing",
                 JSONObject()
                     .put("domainStrategy", "AsIs")
-                    .put(
-                        "rules",
-                        JSONArray()
-                            .put(
-                                JSONObject()
-                                    .put("type", "field")
-                                    .put(
-                                        "ip",
-                                        JSONArray()
-                                            .put("0.0.0.0/8")
-                                            .put("10.0.0.0/8")
-                                            .put("127.0.0.0/8")
-                                            .put("169.254.0.0/16")
-                                            .put("172.16.0.0/12")
-                                            .put("192.168.0.0/16")
-                                            .put("224.0.0.0/4")
-                                            .put("240.0.0.0/4")
-                                            .put("::1/128")
-                                            .put("fc00::/7")
-                                            .put("fe80::/10"),
-                                    )
-                                    .put("outboundTag", "direct"),
-                            )
-                            .put(
-                                JSONObject()
-                                    .put("type", "field")
-                                    .put("network", "tcp,udp")
-                                    .put("outboundTag", "proxy"),
-                            ),
-                    ),
+                    .put("rules", rules),
             )
             .put(
                 "policy",

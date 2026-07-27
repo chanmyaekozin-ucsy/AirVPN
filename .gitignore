@@ -10,6 +10,11 @@ android/.gradle/
 android/app/build/
 android/build/
 android/local.properties
+android/keystore.properties
+android/keystore.properties.local
+android/app/*.jks
+android/app/*.keystore
+android/release/
 android-admin/.gradle/
 android-admin/app/build/
 android-admin/build/

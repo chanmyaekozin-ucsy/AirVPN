@@ -1,7 +1,9 @@
 package com.airvpn.app.vpn
 
+import android.net.Network
 import android.net.Uri
 import android.util.Log
+import com.airvpn.app.BuildConfig
 import net.schmizz.sshj.SSHClient
 import net.schmizz.sshj.connection.channel.direct.DirectConnection
 import net.schmizz.sshj.transport.verification.PromiscuousVerifier
@@ -17,7 +19,10 @@ import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.security.SecureRandom
 import java.util.concurrent.Executors
+import java.util.concurrent.Semaphore
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SNIHostName
 import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocket
@@ -36,6 +41,30 @@ class SshTunnel private constructor(
     val localSocksPort: Int,
 ) {
     private val stopped = AtomicBoolean(false)
+    /** Cap parallel DirectTCPIP — high enough for browsers; still guards runaway opens. */
+    private val channelGate = Semaphore(MAX_CONCURRENT_CHANNELS)
+    private val openChannels = AtomicInteger(0)
+
+    fun isHealthy(): Boolean {
+        if (stopped.get()) return false
+        return try {
+            ssh.isConnected && ssh.isAuthenticated
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** Keep SSH/TLS sockets off the VPN routing table after TUN is up. */
+    fun protectSockets(network: Network?, protect: (Socket) -> Boolean) {
+        try {
+            ssh.socket?.let { sock ->
+                bindAndProtect(network, sock, protect)
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "protect ssh.socket", e)
+        }
+        tlsBridge?.protectRemote(network, protect)
+    }
 
     fun stop() {
         if (!stopped.compareAndSet(false, true)) return
@@ -80,6 +109,27 @@ class SshTunnel private constructor(
     companion object {
         private const val TAG = "SshTunnel"
         private const val CONNECT_TIMEOUT_MS = 20_000
+        /** Browsers/TikTok open many parallel TCP streams. */
+        private const val MAX_CONCURRENT_CHANNELS = 48
+        private const val SOCKS_POOL_SIZE = 16
+        private const val PIPE_BUF = 32 * 1024
+        private const val FLUSH_EVERY = 64 * 1024
+
+        fun bindAndProtect(
+            network: Network?,
+            socket: Socket,
+            protect: ((Socket) -> Boolean)?,
+        ) {
+            // bindSocket only works before connect — skip once the TLS/SSH socket is live
+            if (!socket.isConnected) {
+                try {
+                    network?.bindSocket(socket)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Network.bindSocket", e)
+                }
+            }
+            protect?.invoke(socket)
+        }
 
         fun parse(uri: String): Params {
             val raw = uri.trim()
@@ -127,7 +177,11 @@ class SshTunnel private constructor(
             )
         }
 
-        fun start(uri: String): SshTunnel {
+        fun start(
+            uri: String,
+            underlyingNetwork: Network? = null,
+            protect: ((Socket) -> Boolean)? = null,
+        ): SshTunnel {
             ensureSecurityProviders()
             val p = parse(uri)
             Log.i(
@@ -135,7 +189,7 @@ class SshTunnel private constructor(
                 "starting host=${p.host} port=${p.port} tls=${p.tls} sni=${p.sni} user=${p.username}",
             )
             val tlsBridge = if (p.tls) {
-                TlsBridge.start(p.host, p.port, p.sni, p.allowInsecure)
+                TlsBridge.start(p.host, p.port, p.sni, p.allowInsecure, underlyingNetwork, protect)
             } else {
                 null
             }
@@ -143,6 +197,8 @@ class SshTunnel private constructor(
             // Outer TLS authenticates the path; sshd host key is behind stunnel.
             ssh.addHostKeyVerifier(PromiscuousVerifier())
             ssh.connectTimeout = CONNECT_TIMEOUT_MS
+            // Only for handshake — do NOT leave a read timeout on the live session
+            // (that causes idle drops; HTTP Injector keeps the socket blocking).
             ssh.timeout = CONNECT_TIMEOUT_MS
             try {
                 if (tlsBridge != null) {
@@ -151,8 +207,25 @@ class SshTunnel private constructor(
                     ssh.connect("127.0.0.1", tlsBridge.localPort)
                 } else {
                     ssh.connect(p.host, p.port)
+                    bindAndProtect(underlyingNetwork, ssh.socket, protect)
                 }
                 ssh.authPassword(p.username, p.password.toCharArray())
+                // Infinite socket read timeout + SSH keepalive (mobile NAT ~30–60s)
+                ssh.timeout = 0
+                try {
+                    ssh.socket?.apply {
+                        keepAlive = true
+                        tcpNoDelay = true
+                    }
+                } catch (_: Exception) {
+                }
+                // Keepalive ~20s — enough for mobile NAT, less wakeups/heat than 10s
+                ssh.connection.keepAlive.keepAliveInterval = 20
+                try {
+                    ssh.connection.windowSize = (2 * 1024 * 1024).toLong() // 2 MiB
+                    ssh.connection.maxPacketSize = 32 * 1024
+                } catch (_: Exception) {
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "SSH start failed host=${p.host}:${p.port} tls=${p.tls}", e)
                 try {
@@ -167,15 +240,16 @@ class SshTunnel private constructor(
             socks.reuseAddress = true
             socks.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
             val localPort = socks.localPort
-            val pool = Executors.newCachedThreadPool { r ->
-                Thread(r, "ssh-socks").apply { isDaemon = true }
+            // Bounded pool — unlimited cached threads were a heat source under TikTok
+            val pool = Executors.newFixedThreadPool(SOCKS_POOL_SIZE) { r ->
+                Thread(r, "ssh-socks").apply { isDaemon = false }
             }
             val tunnel = SshTunnel(ssh, tlsBridge, socks, pool, localPort)
             pool.execute {
                 while (!socks.isClosed && !tunnel.stopped.get()) {
                     try {
                         val client = socks.accept()
-                        pool.execute { handleSocksClient(ssh, client) }
+                        pool.execute { tunnel.handleSocksClient(client) }
                     } catch (_: Exception) {
                         break
                     }
@@ -188,97 +262,6 @@ class SshTunnel private constructor(
         fun buildXraySocksConfig(localPort: Int): String =
             VlessConfigBuilder.buildLocalSocks(localPort)
 
-        private fun handleSocksClient(ssh: SSHClient, client: Socket) {
-            try {
-                client.tcpNoDelay = true
-                val input = DataInputStream(client.getInputStream())
-                val output = DataOutputStream(client.getOutputStream())
-                // greeting
-                val ver = input.readUnsignedByte()
-                if (ver != 5) {
-                    client.close()
-                    return
-                }
-                val nMethods = input.readUnsignedByte()
-                input.skipBytes(nMethods)
-                output.write(byteArrayOf(0x05, 0x00))
-                output.flush()
-                // request
-                val reqVer = input.readUnsignedByte()
-                val cmd = input.readUnsignedByte()
-                input.readUnsignedByte() // rsv
-                val atyp = input.readUnsignedByte()
-                if (reqVer != 5 || cmd != 1) {
-                    replySocks(output, 0x07)
-                    client.close()
-                    return
-                }
-                val destHost: String
-                val destPort: Int
-                when (atyp) {
-                    0x01 -> {
-                        val addr = ByteArray(4)
-                        input.readFully(addr)
-                        destHost = InetAddress.getByAddress(addr).hostAddress ?: ""
-                        destPort = input.readUnsignedShort()
-                    }
-                    0x03 -> {
-                        val len = input.readUnsignedByte()
-                        val name = ByteArray(len)
-                        input.readFully(name)
-                        destHost = String(name, StandardCharsets.UTF_8)
-                        destPort = input.readUnsignedShort()
-                    }
-                    0x04 -> {
-                        val addr = ByteArray(16)
-                        input.readFully(addr)
-                        destHost = InetAddress.getByAddress(addr).hostAddress ?: ""
-                        destPort = input.readUnsignedShort()
-                    }
-                    else -> {
-                        replySocks(output, 0x08)
-                        client.close()
-                        return
-                    }
-                }
-                if (destHost.isBlank() || destPort <= 0) {
-                    replySocks(output, 0x01)
-                    client.close()
-                    return
-                }
-                val channel: DirectConnection = try {
-                    ssh.newDirectConnection(destHost, destPort)
-                } catch (e: Exception) {
-                    Log.d(TAG, "direct-tcpip failed", e)
-                    replySocks(output, 0x05)
-                    client.close()
-                    return
-                }
-                replySocks(output, 0x00)
-                val t1 = Thread({
-                    pipe(client.getInputStream(), channel.outputStream)
-                }, "ssh-up").apply { isDaemon = true }
-                val t2 = Thread({
-                    pipe(channel.inputStream, client.getOutputStream())
-                }, "ssh-down").apply { isDaemon = true }
-                t1.start()
-                t2.start()
-                t1.join()
-                t2.join()
-                try {
-                    channel.close()
-                } catch (_: Exception) {
-                }
-            } catch (e: Exception) {
-                Log.d(TAG, "socks client", e)
-            } finally {
-                try {
-                    client.close()
-                } catch (_: Exception) {
-                }
-            }
-        }
-
         private fun replySocks(out: DataOutputStream, rep: Int) {
             out.write(
                 byteArrayOf(
@@ -290,14 +273,21 @@ class SshTunnel private constructor(
         }
 
         private fun pipe(input: InputStream, output: OutputStream) {
-            val buf = ByteArray(16 * 1024)
+            val buf = ByteArray(PIPE_BUF)
+            var pending = 0
             try {
                 while (true) {
                     val n = input.read(buf)
                     if (n < 0) break
                     output.write(buf, 0, n)
-                    output.flush()
+                    pending += n
+                    // Flush in batches — per-chunk flush burns CPU/heat
+                    if (pending >= FLUSH_EVERY) {
+                        output.flush()
+                        pending = 0
+                    }
                 }
+                if (pending > 0) output.flush()
             } catch (_: Exception) {
             } finally {
                 try {
@@ -366,6 +356,116 @@ class SshTunnel private constructor(
             }
     }
 
+    private fun handleSocksClient(client: Socket) {
+        var acquired = false
+        try {
+            client.tcpNoDelay = true
+            val input = DataInputStream(client.getInputStream())
+            val output = DataOutputStream(client.getOutputStream())
+            // greeting
+            val ver = input.readUnsignedByte()
+            if (ver != 5) {
+                client.close()
+                return
+            }
+            val nMethods = input.readUnsignedByte()
+            input.skipBytes(nMethods)
+            output.write(byteArrayOf(0x05, 0x00))
+            output.flush()
+            // request
+            val reqVer = input.readUnsignedByte()
+            val cmd = input.readUnsignedByte()
+            input.readUnsignedByte() // rsv
+            val atyp = input.readUnsignedByte()
+            if (reqVer != 5 || cmd != 1) {
+                replySocks(output, 0x07)
+                client.close()
+                return
+            }
+            val destHost: String
+            val destPort: Int
+            when (atyp) {
+                0x01 -> {
+                    val addr = ByteArray(4)
+                    input.readFully(addr)
+                    destHost = InetAddress.getByAddress(addr).hostAddress ?: ""
+                    destPort = input.readUnsignedShort()
+                }
+                0x03 -> {
+                    val len = input.readUnsignedByte()
+                    val name = ByteArray(len)
+                    input.readFully(name)
+                    destHost = String(name, StandardCharsets.UTF_8)
+                    destPort = input.readUnsignedShort()
+                }
+                0x04 -> {
+                    val addr = ByteArray(16)
+                    input.readFully(addr)
+                    destHost = InetAddress.getByAddress(addr).hostAddress ?: ""
+                    destPort = input.readUnsignedShort()
+                }
+                else -> {
+                    replySocks(output, 0x08)
+                    client.close()
+                    return
+                }
+            }
+            if (destHost.isBlank() || destPort <= 0) {
+                replySocks(output, 0x01)
+                client.close()
+                return
+            }
+            if (!channelGate.tryAcquire(45, TimeUnit.SECONDS)) {
+                Log.w(TAG, "channel limit reached ($MAX_CONCURRENT_CHANNELS) open=${openChannels.get()}")
+                replySocks(output, 0x05)
+                client.close()
+                return
+            }
+            acquired = true
+            openChannels.incrementAndGet()
+            val channel: DirectConnection = try {
+                ssh.newDirectConnection(destHost, destPort)
+            } catch (e: Exception) {
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "direct-tcpip failed dest=$destHost:$destPort", e)
+                }
+                replySocks(output, 0x05)
+                client.close()
+                return
+            }
+            replySocks(output, 0x00)
+            // Relay on the bounded pool (caller already runs on pool thread) —
+            // use inline pipes with two short-lived join threads still, but daemon.
+            val t1 = Thread({
+                pipe(client.getInputStream(), channel.outputStream)
+            }, "ssh-up").apply { isDaemon = true }
+            val t2 = Thread({
+                pipe(channel.inputStream, client.getOutputStream())
+            }, "ssh-down").apply { isDaemon = true }
+            t1.start()
+            t2.start()
+            t1.join()
+            t2.join()
+            try {
+                channel.close()
+            } catch (_: Exception) {
+            }
+        } catch (e: Exception) {
+            if (BuildConfig.DEBUG) {
+                Log.d(TAG, "socks client", e)
+            }
+        } finally {
+            if (acquired) {
+                openChannels.decrementAndGet()
+                channelGate.release()
+            }
+            try {
+                client.close()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     /** Local TCP → TLS+SNI to remote (stunnel client role). */
     private class TlsBridge private constructor(
         private val serverSocket: ServerSocket,
@@ -373,6 +473,14 @@ class SshTunnel private constructor(
     ) {
         val localPort: Int = serverSocket.localPort
         private val stopped = AtomicBoolean(false)
+        @Volatile
+        private var remoteSocket: SSLSocket? = null
+
+        fun protectRemote(network: Network?, protect: (Socket) -> Boolean) {
+            remoteSocket?.let { sock ->
+                bindAndProtect(network, sock, protect)
+            }
+        }
 
         fun stop() {
             if (!stopped.compareAndSet(false, true)) return
@@ -381,8 +489,59 @@ class SshTunnel private constructor(
             } catch (_: Exception) {
             }
             try {
+                remoteSocket?.close()
+            } catch (_: Exception) {
+            }
+            remoteSocket = null
+            try {
                 pool.shutdownNow()
             } catch (_: Exception) {
+            }
+        }
+
+        private fun relay(
+            local: Socket,
+            host: String,
+            port: Int,
+            sni: String,
+            allowInsecure: Boolean,
+            network: Network?,
+            protect: ((Socket) -> Boolean)?,
+        ) {
+            var remote: SSLSocket? = null
+            try {
+                local.tcpNoDelay = true
+                local.keepAlive = true
+                remote = openTlsSocket(host, port, sni, allowInsecure, network, protect)
+                remoteSocket = remote
+                remote.keepAlive = true
+                remote.tcpNoDelay = true
+                remote.soTimeout = 0
+                local.soTimeout = 0
+                Log.i(TAG, "tls bridge up → $host:$port sni=$sni")
+                val t1 = Thread({
+                    pipeQuiet(local.getInputStream(), remote.getOutputStream())
+                }, "tls-up").apply { isDaemon = true }
+                val t2 = Thread({
+                    pipeQuiet(remote.getInputStream(), local.getOutputStream())
+                }, "tls-down").apply { isDaemon = true }
+                t1.start()
+                t2.start()
+                t1.join()
+                t2.join()
+                Log.w(TAG, "tls bridge closed → $host:$port")
+            } catch (e: Exception) {
+                Log.w(TAG, "tls bridge error → $host:$port", e)
+            } finally {
+                if (remoteSocket === remote) remoteSocket = null
+                try {
+                    local.close()
+                } catch (_: Exception) {
+                }
+                try {
+                    remote?.close()
+                } catch (_: Exception) {
+                }
             }
         }
 
@@ -392,12 +551,14 @@ class SshTunnel private constructor(
                 port: Int,
                 sni: String,
                 allowInsecure: Boolean,
+                network: Network?,
+                protect: ((Socket) -> Boolean)?,
             ): TlsBridge {
                 val ss = ServerSocket()
                 ss.reuseAddress = true
                 ss.bind(InetSocketAddress(InetAddress.getByName("127.0.0.1"), 0))
-                val pool = Executors.newCachedThreadPool { r ->
-                    Thread(r, "ssh-tls-bridge").apply { isDaemon = true }
+                val pool = Executors.newFixedThreadPool(2) { r ->
+                    Thread(r, "ssh-tls-bridge").apply { isDaemon = false }
                 }
                 val bridge = TlsBridge(ss, pool)
                 pool.execute {
@@ -405,7 +566,7 @@ class SshTunnel private constructor(
                         try {
                             val local = ss.accept()
                             pool.execute {
-                                relay(local, host, port, sni, allowInsecure)
+                                bridge.relay(local, host, port, sni, allowInsecure, network, protect)
                             }
                         } catch (_: Exception) {
                             break
@@ -415,50 +576,21 @@ class SshTunnel private constructor(
                 return bridge
             }
 
-            private fun relay(
-                local: Socket,
-                host: String,
-                port: Int,
-                sni: String,
-                allowInsecure: Boolean,
-            ) {
-                var remote: SSLSocket? = null
-                try {
-                    local.tcpNoDelay = true
-                    remote = openTlsSocket(host, port, sni, allowInsecure)
-                    val t1 = Thread({
-                        pipeQuiet(local.getInputStream(), remote!!.getOutputStream())
-                    }, "tls-up").apply { isDaemon = true }
-                    val t2 = Thread({
-                        pipeQuiet(remote!!.getInputStream(), local.getOutputStream())
-                    }, "tls-down").apply { isDaemon = true }
-                    t1.start()
-                    t2.start()
-                    t1.join()
-                    t2.join()
-                } catch (e: Exception) {
-                    Log.d(TAG, "tls bridge", e)
-                } finally {
-                    try {
-                        local.close()
-                    } catch (_: Exception) {
-                    }
-                    try {
-                        remote?.close()
-                    } catch (_: Exception) {
-                    }
-                }
-            }
-
             private fun pipeQuiet(input: InputStream, output: OutputStream) {
-                val buf = ByteArray(16 * 1024)
+                val buf = ByteArray(PIPE_BUF)
+                var pending = 0
                 try {
                     while (true) {
                         val n = input.read(buf)
                         if (n < 0) break
                         output.write(buf, 0, n)
-                        output.flush()
+                        pending += n
+                        if (pending >= FLUSH_EVERY) {
+                            output.flush()
+                            pending = 0
+                        }
                     }
+                    if (pending > 0) output.flush()
                 } catch (_: Exception) {
                 }
             }
@@ -468,6 +600,8 @@ class SshTunnel private constructor(
                 port: Int,
                 sni: String,
                 allowInsecure: Boolean,
+                network: Network?,
+                protect: ((Socket) -> Boolean)?,
             ): SSLSocket {
                 val ctx = if (allowInsecure) {
                     insecureSslContext()
@@ -479,6 +613,8 @@ class SshTunnel private constructor(
                 val params = socket.sslParameters
                 params.serverNames = listOf(SNIHostName(sni))
                 socket.sslParameters = params
+                // Bind to Wi‑Fi/cell + protect before connect so path never enters TUN
+                bindAndProtect(network, socket, protect)
                 socket.connect(InetSocketAddress(host, port), CONNECT_TIMEOUT_MS)
                 socket.startHandshake()
                 return socket

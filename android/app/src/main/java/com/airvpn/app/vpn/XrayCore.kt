@@ -2,19 +2,22 @@ package com.airvpn.app.vpn
 
 import android.content.Context
 import android.util.Log
+import com.airvpn.app.BuildConfig
 import libv2ray.CoreCallbackHandler
 import libv2ray.CoreController
 import libv2ray.Libv2ray
 import java.io.File
-import java.io.FileOutputStream
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Thin wrapper around AndroidLibXrayLite (libv2ray).
+ * Routing uses hardcoded private CIDRs — no geoip/geosite.dat bundled.
  */
 object XrayCore {
     private const val TAG = "XrayCore"
     private val ready = AtomicBoolean(false)
+    /** True while we are intentionally stopping — ignore shutdown callback. */
+    private val intentionalStop = AtomicBoolean(false)
     private var controller: CoreController? = null
 
     @Synchronized
@@ -22,10 +25,9 @@ object XrayCore {
         if (ready.get()) return
         val assetDir = File(context.filesDir, "xray")
         if (!assetDir.exists()) assetDir.mkdirs()
-        // geoip needed for geoip:private routing rule
-        copyAssetIfNeeded(context, "geoip.dat", File(assetDir, "geoip.dat"))
-        // geosite optional — copy if present
-        runCatching { copyAssetIfNeeded(context, "geosite.dat", File(assetDir, "geosite.dat")) }
+        // Drop leftover geo DBs from older installs (were ~27MB on disk).
+        File(assetDir, "geoip.dat").delete()
+        File(assetDir, "geosite.dat").delete()
         Libv2ray.initCoreEnv(assetDir.absolutePath, "")
         ready.set(true)
         Log.i(TAG, "init ok version=${Libv2ray.checkVersionX()}")
@@ -38,11 +40,16 @@ object XrayCore {
         val cb = object : CoreCallbackHandler {
             override fun startup(): Long = 0
             override fun shutdown(): Long {
-                onStopped?.invoke()
+                // stopLoop() always fires this — only treat unexpected exits as failures
+                if (!intentionalStop.get()) {
+                    onStopped?.invoke()
+                }
                 return 0
             }
             override fun onEmitStatus(l: Long, s: String?): Long {
-                Log.d(TAG, "status[$l]: $s")
+                if (BuildConfig.DEBUG) {
+                    Log.d(TAG, "status[$l]: $s")
+                }
                 return 0
             }
         }
@@ -61,22 +68,18 @@ object XrayCore {
     fun stop() {
         val core = controller ?: return
         controller = null
+        intentionalStop.set(true)
         try {
             if (core.isRunning) {
                 core.stopLoop()
             }
         } catch (e: Exception) {
             Log.w(TAG, "stopLoop", e)
+        } finally {
+            intentionalStop.set(false)
         }
     }
 
     val isRunning: Boolean
         get() = controller?.isRunning == true
-
-    private fun copyAssetIfNeeded(context: Context, name: String, dest: File) {
-        if (dest.exists() && dest.length() > 0) return
-        context.assets.open(name).use { input ->
-            FileOutputStream(dest).use { output -> input.copyTo(output) }
-        }
-    }
 }
