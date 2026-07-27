@@ -152,6 +152,18 @@ def payment_methods(
     return InlineKeyboardMarkup(rows)
 
 
+def payment_methods_reply(
+    lang: str,
+    *,
+    methods: list[str] | None = None,
+) -> ReplyKeyboardMarkup:
+    """Reply-keyboard payment picker (more reliable than inline on some clients)."""
+    allowed = methods or ["KBZPay", "WavePay"]
+    rows: list[list[KeyboardButton]] = [[KeyboardButton(m)] for m in allowed]
+    rows.append([KeyboardButton(t(lang, "back"))])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
+
+
 def payment_accounts(lang: str, plan_id: int, method: str, accounts: list) -> InlineKeyboardMarkup:
     buttons = [
         [

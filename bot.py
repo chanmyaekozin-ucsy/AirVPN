@@ -116,7 +116,10 @@ def main() -> None:
         app.add_handler(handler, group=0)
 
     logger.info("AirVPN bot starting…")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(
+        drop_pending_updates=True,
+        allowed_updates=["message", "callback_query", "chat_member", "my_chat_member"],
+    )
 
 
 if __name__ == "__main__":

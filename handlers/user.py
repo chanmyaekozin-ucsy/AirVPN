@@ -24,7 +24,7 @@ from handlers.keyboards import (
     lang_reply_keyboard,
     main_menu,
     main_menu_for,
-    payment_methods,
+    payment_methods_reply,
     plans_reply_keyboard,
     restore_main_menu,
     servers_reply_keyboard,
@@ -69,11 +69,13 @@ def _clear_payment_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("pending_payment_id", None)
     context.user_data.pop("payment_state", None)
     context.user_data.pop("buy_server_id", None)
+    context.user_data.pop("awaiting_pay_method_plan_id", None)
 
 
 def _clear_buy_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
     context.user_data.pop("buy_flow", None)
     context.user_data.pop("buy_server_id", None)
+    context.user_data.pop("awaiting_pay_method_plan_id", None)
 
 
 def _start_buy_flow(context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -763,21 +765,57 @@ async def _start_kbzpayout(
     await message.reply_text(t(lang, "tx_digits_prompt"), parse_mode=PARSE_MODE)
 
 
-async def _show_payment_method_picker(message, lang: str, plan_id: int) -> None:
+async def _show_payment_method_picker(
+    message, lang: str, plan_id: int, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     from services import shop_payment_catalog
 
     methods = shop_payment_catalog.enabled_methods()
     if not methods:
+        context.user_data.pop("awaiting_pay_method_plan_id", None)
         await message.reply_text(
             t(lang, "pay_unavailable"),
             parse_mode=PARSE_MODE,
             **admin_contact_reply_kwargs(lang),
         )
         return
+    context.user_data["awaiting_pay_method_plan_id"] = int(plan_id)
+    context.user_data["buy_flow"] = True
     await message.reply_text(
         t(lang, "pay_choose_method"),
         parse_mode=PARSE_MODE,
-        reply_markup=payment_methods(lang, plan_id, methods=methods),
+        reply_markup=payment_methods_reply(lang, methods=methods),
+    )
+
+
+async def _start_payout_for_method(
+    message,
+    from_user,
+    context: ContextTypes.DEFAULT_TYPE,
+    user_row,
+    lang: str,
+    plan_id: int,
+    method: str,
+) -> None:
+    from services import shop_payment_catalog
+
+    plan = await db.get_plan(plan_id)
+    if not plan or not plan.get("is_active"):
+        await message.reply_text(
+            t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
+        )
+        return
+    account = shop_payment_catalog.account_for_method(method)
+    if not account:
+        await message.reply_text(
+            t(lang, "pay_unavailable"),
+            parse_mode=PARSE_MODE,
+            **admin_contact_reply_kwargs(lang),
+        )
+        return
+    context.user_data.pop("awaiting_pay_method_plan_id", None)
+    await _start_kbzpayout(
+        message, from_user, context, user_row, lang, plan, account
     )
 
 
@@ -841,11 +879,11 @@ async def _handle_plan_callback(
             await _show_plans_for_server(query.message, lang, server_id, context)
             return True
 
-        await _show_payment_method_picker(query.message, lang, plan_id)
+        await _show_payment_method_picker(query.message, lang, plan_id, context)
         return True
 
     if data.startswith("method_"):
-        # method_kbz_12 / method_wave_12
+        # Legacy inline callbacks (method_kbz_12 / method_wave_12)
         parts = data.split("_")
         if len(parts) != 3:
             return True
@@ -855,24 +893,8 @@ async def _handle_plan_callback(
         except ValueError:
             return True
         method = "WavePay" if method_key == "wave" else "KBZPay"
-        plan = await db.get_plan(plan_id)
-        if not plan or not plan.get("is_active"):
-            await query.message.reply_text(
-                t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
-            )
-            return True
-        from services import shop_payment_catalog
-
-        account = shop_payment_catalog.account_for_method(method)
-        if not account:
-            await query.message.reply_text(
-                t(lang, "pay_unavailable"),
-                parse_mode=PARSE_MODE,
-                **admin_contact_reply_kwargs(lang),
-            )
-            return True
-        await _start_kbzpayout(
-            query.message, query.from_user, context, row, lang, plan, account
+        await _start_payout_for_method(
+            query.message, query.from_user, context, row, lang, plan_id, method
         )
         return True
 
@@ -888,7 +910,7 @@ async def _handle_plan_callback(
         plan = await db.get_plan(plan_id)
         if not plan:
             return True
-        await _show_payment_method_picker(query.message, lang, plan_id)
+        await _show_payment_method_picker(query.message, lang, plan_id, context)
         return True
 
     return False
@@ -1331,6 +1353,22 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     lang = await _lang(update, context)
+    # Reply-keyboard payment method (KBZPay / WavePay)
+    pending_plan_id = context.user_data.get("awaiting_pay_method_plan_id")
+    if pending_plan_id and text in ("KBZPay", "WavePay"):
+        user = update.effective_user
+        row = await db.get_or_create_user(user.id, user.username, user.first_name)
+        await _start_payout_for_method(
+            update.message,
+            user,
+            context,
+            row,
+            lang,
+            int(pending_plan_id),
+            text,
+        )
+        return
+
     server_id = context.user_data.get("buy_server_id")
     plan = await _match_plan_choice(text, server_id)
 
@@ -1339,6 +1377,16 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
         # Payment in progress: ignore non-plan text so last-5 digits reach receipt_last5.
         if context.user_data.get("payment_state"):
+            return
+        if context.user_data.get("awaiting_pay_method_plan_id"):
+            from services import shop_payment_catalog
+
+            methods = shop_payment_catalog.enabled_methods()
+            await update.message.reply_text(
+                t(lang, "pay_choose_method"),
+                parse_mode=PARSE_MODE,
+                reply_markup=payment_methods_reply(lang, methods=methods),
+            )
             return
         if context.user_data.get("buy_flow") and server_id:
             await _show_plans_for_server(
@@ -1356,7 +1404,7 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     context.user_data["buy_flow"] = True
     context.user_data["buy_server_id"] = plan.get("server_id") or server_id or "sg"
-    await _show_payment_method_picker(update.message, lang, plan["id"])
+    await _show_payment_method_picker(update.message, lang, plan["id"], context)
 
 
 def menu_text_filter(text_key: str):
