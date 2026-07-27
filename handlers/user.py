@@ -24,6 +24,7 @@ from handlers.keyboards import (
     lang_reply_keyboard,
     main_menu,
     main_menu_for,
+    payment_methods,
     plans_reply_keyboard,
     restore_main_menu,
     servers_reply_keyboard,
@@ -37,6 +38,7 @@ from services.kbz_payment import verify_last5_digits
 from services.payment_approve import approve_and_deliver
 from services.payment_proofs import post_payment_proof, update_payment_proof
 from services.usage_sync import sync_subscriptions_usage
+from services.wave_payment import verify_last5_digits as verify_wave_last5_digits
 from utils.formatting import PARSE_MODE, md2, md2_code
 from utils.rate_limit import allow as rate_allow
 from utils.security import validate_language
@@ -59,7 +61,7 @@ TX_SUFFIX_RE = re.compile(r"^\d{5}$")
 USER_CALLBACK_PATTERN = (
     r"^(buy_plan|back_main|cancel|copy_vless_key|"
     r"dl_menu|dl_android|dl_ios|dl_android_key|dl_ios_key|"
-    r"plan_\d+|acct_\d+_\d+|vk_\d+|sub_\d+)$"
+    r"plan_\d+|method_(kbz|wave)_\d+|acct_\d+_\d+|vk_\d+|sub_\d+)$"
 )
 
 
@@ -236,6 +238,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user = update.effective_user
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = row["language"]
+
+    # Deep link from AirVPN app Buy: /start buy_<serverId>
+    args = context.args or []
+    payload = (args[0] if args else "").strip()
+    if payload.lower().startswith("buy_"):
+        server_id = payload[4:].strip().lower()
+        from vpn_servers import ensure_servers_fresh, get_server
+
+        await ensure_servers_fresh(max_age_sec=0)
+        server = get_server(server_id) if server_id else None
+        if server:
+            _start_buy_flow(context)
+            context.user_data["buy_server_id"] = server.id
+            await update.message.reply_text(
+                t(lang, "welcome"),
+                parse_mode=PARSE_MODE,
+                reply_markup=await main_menu_for(user.id, lang),
+            )
+            await _show_plans_for_server(update.message, lang, server.id, context)
+            return
+
     await update.message.reply_text(
         t(lang, "welcome"),
         parse_mode=PARSE_MODE,
@@ -336,10 +359,13 @@ async def download_apps_menu(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not await _guard(update, context):
         return
     lang = await _lang(update, context)
+    from utils.airvpn_links import resolve_app_download_url
+
+    download_url = await resolve_app_download_url()
     await update.message.reply_text(
         t(lang, "download_title"),
         parse_mode=PARSE_MODE,
-        reply_markup=vpn_app_links_keyboard(lang),
+        reply_markup=vpn_app_links_keyboard(lang, download_url=download_url),
     )
 
 
@@ -669,7 +695,7 @@ async def _start_kbzpayout(
     plan,
     account,
 ) -> None:
-    """Show payment instructions and ask for last 5 digits of the KBZ tx ID."""
+    """Show payment instructions and ask for last 5 digits of the tx ID."""
     if from_user and not rate_allow(
         f"pay:{from_user.id}",
         max_calls=config.RATE_PAYMENT_PER_HOUR,
@@ -717,8 +743,14 @@ async def _start_kbzpayout(
             parse_mode=PARSE_MODE,
         )
 
-    sample = config.KBZ_SAMPLE_TX_IMAGE
-    caption = t(lang, "tx_example_caption", example=md2(config.KBZ_TX_EXAMPLE))
+    method = str(account.get("method") or "KBZPay")
+    if method == "WavePay":
+        sample = config.WAVE_SAMPLE_TX_IMAGE
+        example = config.WAVE_TX_EXAMPLE
+    else:
+        sample = config.KBZ_SAMPLE_TX_IMAGE
+        example = config.KBZ_TX_EXAMPLE
+    caption = t(lang, "tx_example_caption", example=md2(example))
     try:
         if sample.is_file():
             await message.reply_photo(photo=str(sample), caption=caption, parse_mode=PARSE_MODE)
@@ -729,6 +761,24 @@ async def _start_kbzpayout(
         await message.reply_text(caption, parse_mode=PARSE_MODE)
 
     await message.reply_text(t(lang, "tx_digits_prompt"), parse_mode=PARSE_MODE)
+
+
+async def _show_payment_method_picker(message, lang: str, plan_id: int) -> None:
+    methods: list[str] = []
+    for method in ("KBZPay", "WavePay"):
+        accounts = await db.get_payment_accounts(method)
+        if accounts:
+            methods.append(method)
+    if not methods:
+        await message.reply_text(
+            t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
+        )
+        return
+    await message.reply_text(
+        t(lang, "pay_choose_method"),
+        parse_mode=PARSE_MODE,
+        reply_markup=payment_methods(lang, plan_id, methods=methods),
+    )
 
 
 async def _match_plan_choice(
@@ -791,13 +841,32 @@ async def _handle_plan_callback(
             await _show_plans_for_server(query.message, lang, server_id, context)
             return True
 
-        accounts = await db.get_payment_accounts("KBZPay")
+        await _show_payment_method_picker(query.message, lang, plan_id)
+        return True
+
+    if data.startswith("method_"):
+        # method_kbz_12 / method_wave_12
+        parts = data.split("_")
+        if len(parts) != 3:
+            return True
+        method_key, plan_s = parts[1], parts[2]
+        try:
+            plan_id = int(plan_s)
+        except ValueError:
+            return True
+        method = "WavePay" if method_key == "wave" else "KBZPay"
+        plan = await db.get_plan(plan_id)
+        if not plan or not plan.get("is_active"):
+            await query.message.reply_text(
+                t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
+            )
+            return True
+        accounts = await db.get_payment_accounts(method)
         if not accounts:
             await query.message.reply_text(
                 t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
             )
             return True
-
         await _start_kbzpayout(
             query.message, query.from_user, context, row, lang, plan, accounts[0]
         )
@@ -882,8 +951,12 @@ async def callback_router(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             text = t(lang, "download_ios_apps")
             markup = download_apps_keyboard(lang, "ios")
         else:
+            from utils.airvpn_links import resolve_app_download_url
+
             text = t(lang, "download_title")
-            markup = vpn_app_links_keyboard(lang)
+            markup = vpn_app_links_keyboard(
+                lang, download_url=await resolve_app_download_url()
+            )
         await query.message.reply_text(
             text, parse_mode=PARSE_MODE, reply_markup=markup
         )
@@ -1150,8 +1223,13 @@ async def receipt_last5(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     note = f"Last5: {digits}"
     payment = await db.get_payment(payment_id) or payment
+    method = str(payment.get("method") or "KBZPay")
 
-    if payment.get("method") != "KBZPay" or not config.KBZ_AUTO_VERIFY:
+    auto_ok = (
+        (method == "KBZPay" and config.KBZ_AUTO_VERIFY)
+        or (method == "WavePay" and config.WAVE_AUTO_VERIFY)
+    )
+    if not auto_ok:
         await post_payment_proof(
             context.bot,
             payment_id,
@@ -1187,7 +1265,10 @@ async def receipt_last5(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
 
     await update.message.reply_text(t(lang, "pay_verifying"))
     try:
-        result = await verify_last5_digits(digits, payment["amount_ks"])
+        if method == "WavePay":
+            result = await verify_wave_last5_digits(digits, payment["amount_ks"])
+        else:
+            result = await verify_last5_digits(digits, payment["amount_ks"])
     except Exception:
         logger.exception("Last5 verify failed for payment %s", payment_id)
         await _reply_and_restore_menu(
@@ -1269,17 +1350,7 @@ async def plan_text_select(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     context.user_data["buy_flow"] = True
     context.user_data["buy_server_id"] = plan.get("server_id") or server_id or "sg"
-    user = update.effective_user
-    row = await db.get_or_create_user(user.id, user.username, user.first_name)
-    accounts = await db.get_payment_accounts("KBZPay")
-    if not accounts:
-        await update.message.reply_text(
-            t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
-        )
-        return
-    await _start_kbzpayout(
-        update.message, user, context, row, lang, plan, accounts[0]
-    )
+    await _show_payment_method_picker(update.message, lang, plan["id"])
 
 
 def menu_text_filter(text_key: str):

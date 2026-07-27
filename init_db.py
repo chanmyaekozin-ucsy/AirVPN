@@ -25,7 +25,11 @@ async def seed() -> None:
             """INSERT INTO payment_accounts (method, account_number, account_name, is_active)
             VALUES ('KBZPay', '09948999939', 'Si Thu Maung', 1)"""
         )
-        print("Payment account: 09948999939 (Si Thu Maung)")
+        await conn.execute(
+            """INSERT INTO payment_accounts (method, account_number, account_name, is_active)
+            VALUES ('WavePay', '09792600272', 'Chan Myae Ko Zin', 1)"""
+        )
+        print("Payment accounts: KBZPay 09948999939 | WavePay 09792600272")
 
         await conn.commit()
         print("Done.")

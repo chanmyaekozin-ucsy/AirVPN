@@ -3,9 +3,9 @@ from __future__ import annotations
 
 from telegram import Bot, Message
 
-import config
 from locales import t_plain
 from services.subscription import user_subscription_url
+from utils.airvpn_links import resolve_app_download_url
 from utils.formatting import PARSE_MODE
 
 
@@ -19,13 +19,19 @@ async def deliver_subscription_link(
     prefix_text: str | None = None,
     user_id: int | None = None,
 ) -> None:
-    """Send subscription URL with copy button (shows data/expiry in VPN apps)."""
+    """Send subscription URL with copy + Open In AirVPN (auto-import)."""
     if message is None and (bot is None or chat_id is None):
         raise ValueError("Provide message or bot+chat_id")
 
     from handlers.keyboards import subscription_link_keyboard
 
-    markup = subscription_link_keyboard(lang, sub_url, user_id=user_id)
+    download_url = await resolve_app_download_url()
+    markup = subscription_link_keyboard(
+        lang,
+        sub_url,
+        user_id=user_id,
+        download_url=download_url,
+    )
     body = prefix_text or t_plain(lang, "sub_link_header")
 
     if message:
@@ -96,7 +102,17 @@ async def deliver_vless_key(
     from handlers.keyboards import MAX_COPY_TEXT, vless_key_keyboard
 
     can_copy = len(vless_key) <= MAX_COPY_TEXT
-    markup = vless_key_keyboard(lang, vless_key, sub_id=sub_id) if can_copy else None
+    download_url = await resolve_app_download_url()
+    markup = (
+        vless_key_keyboard(
+            lang,
+            vless_key,
+            sub_id=sub_id,
+            download_url=download_url,
+        )
+        if can_copy
+        else None
+    )
 
     if can_copy:
         body = prefix_text or t_plain(lang, "key_copy_plain")
@@ -111,9 +127,19 @@ async def deliver_vless_key(
         return
 
     # Reality keys exceed Telegram's 256-char copy limit — show key to long-press copy.
+    # Still offer Open In AirVPN when the bridge URL fits Telegram's URL limit.
     header = prefix_text or t_plain(lang, "key_copy_plain")
     body = f"{header}\n\n{vless_key}"
+    from handlers.keyboards import vpn_app_links_keyboard
+
+    markup = vpn_app_links_keyboard(
+        lang,
+        import_payload=vless_key,
+        download_url=download_url,
+    )
     if message:
-        await message.reply_text(body, parse_mode=PARSE_MODE)
+        await message.reply_text(body, parse_mode=PARSE_MODE, reply_markup=markup)
     else:
-        await bot.send_message(chat_id, body, parse_mode=PARSE_MODE)
+        await bot.send_message(
+            chat_id, body, parse_mode=PARSE_MODE, reply_markup=markup
+        )

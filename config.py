@@ -101,12 +101,17 @@ SUB_SERVER_PORT: int = int(os.getenv("SUB_SERVER_PORT", "9090"))
 SUB_ENABLED: bool = bool(SUB_PUBLIC_BASE_URL)
 
 # ─── AirVPN Android app ───────────────────────────────────────────────────────
+# Default APK / release post (admin can override via App Config → update_url)
+AIRVPN_DEFAULT_APP_LINK: str = "https://t.me/worldcup2026_myanmarLive/1222"
 AIRVPN_TELEGRAM_URL: str = os.getenv(
     "AIRVPN_TELEGRAM_URL", "https://t.me/airvpn_myanmar_bot"
 ).strip()
+AIRVPN_UPDATE_URL: str = os.getenv(
+    "AIRVPN_UPDATE_URL", AIRVPN_DEFAULT_APP_LINK
+).strip()
 AIRVPN_PLAY_URL: str = os.getenv(
     "AIRVPN_PLAY_URL",
-    "https://play.google.com/store/apps/details?id=com.airvpn.app",
+    AIRVPN_UPDATE_URL or AIRVPN_DEFAULT_APP_LINK,
 ).strip()
 AIRVPN_APP_DEEP_LINK: str = os.getenv(
     "AIRVPN_APP_DEEP_LINK", "airvpn://open"
@@ -143,6 +148,31 @@ _default_sample_tx = Path(__file__).resolve().parent / "data" / "sample_txid.jpg
 _env_sample_tx = os.getenv("KBZ_SAMPLE_TX_IMAGE", "").strip()
 KBZ_SAMPLE_TX_IMAGE: Path = Path(
     _env_sample_tx if _env_sample_tx else str(_default_sample_tx)
+)
+
+# ─── WavePay auto-verify (shared session from Payment Manager) ────────────────
+WAVE_AUTO_VERIFY: bool = os.getenv("WAVE_AUTO_VERIFY", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+_default_wave_session = Path(__file__).resolve().parent / "wave_session.json"
+_env_wave_session = os.getenv("WAVE_SESSION_PATH", "").strip()
+WAVE_SESSION_PATH: str = (
+    _env_wave_session if _env_wave_session else str(_default_wave_session)
+)
+WAVE_MERCHANT_NAME: str = os.getenv("WAVE_MERCHANT_NAME", "").strip()
+WAVE_MERCHANT_PHONE: str = os.getenv("WAVE_MERCHANT_PHONE", "").strip()
+WAVE_TX_EXAMPLE: str = os.getenv("WAVE_TX_EXAMPLE", KBZ_TX_EXAMPLE).strip()
+_env_wave_sample = os.getenv("WAVE_SAMPLE_TX_IMAGE", "").strip()
+WAVE_SAMPLE_TX_IMAGE: Path = Path(
+    _env_wave_sample if _env_wave_sample else str(KBZ_SAMPLE_TX_IMAGE)
+)
+WAVE_HTTP_PROXY: str | None = os.getenv("WAVE_HTTP_PROXY", "").strip() or None
+WAVE_VERIFY_SSL: bool = os.getenv("WAVE_VERIFY_SSL", "true").strip().lower() in (
+    "1",
+    "true",
+    "yes",
 )
 
 # Hourly KBZ session health check removed — Donimate Payment Manager owns that.

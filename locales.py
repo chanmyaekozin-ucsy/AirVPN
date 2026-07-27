@@ -44,10 +44,15 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "download_title": {
         "my": (
-            "<b>VPN App ဒေါင်းလုတ်ဆွဲရန်</b>\n\n"
-            "မိမိအသုံးပြုတဲ့ ဖုန်းအမျိုးအစားအလိုက် အောက်က Link မှာ ဒေါင်းလုတ်လုပ်နိုင်ပါတယ်ခင်ဗျာ "
+            "<b>AirVPN App ဒေါင်းလုတ်</b>\n\n"
+            "အောက်က <b>AirVPN Download</b> မှ APK ထည့်သွင်းပါ။\n"
+            "Key ရပြီးသားဆိုရင် <b>AirVPN App ဖွင့်မည်</b> ဖြင့် အလိုအလျောက် Import လုပ်နိုင်ပါတယ်။"
         ),
-        "en": "<b>Download VPN Apps</b>\n\nTap a link below to install ",
+        "en": (
+            "<b>Download AirVPN</b>\n\n"
+            "Tap <b>Download AirVPN</b> for the APK.\n"
+            "Already have a key? Tap <b>Open In AirVPN App</b> to import automatically."
+        ),
     },
     "download_android": {"my": "Android ဖုန်းအတွက်", "en": "Android"},
     "download_ios": {"my": "iOS (iPhone) အတွက်", "en": "iOS"},
@@ -116,8 +121,14 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Tap to copy key",
     },
     "key_copy_plain": {
-        "my": "အောက်က Key လေးကို တစ်ချက်နှိပ်ပြီး ကော်ပီ (Copy) ယူလိုက်ပါနော်။",
-        "en": "Tap and hold below to copy your key",
+        "my": (
+            "အောက်က <b>AirVPN App ဖွင့်မည်</b> ကို နှိပ်ပါ — App ထဲ Key အလိုအလျောက် ထည့်သွင်းပါမည်။\n"
+            "သို့မဟုတ် Copy ခလုတ်ဖြင့် ကူးယူနိုင်ပါတယ်။"
+        ),
+        "en": (
+            "Tap <b>Open In AirVPN App</b> to import automatically,\n"
+            "or use the copy button."
+        ),
     },
     "account_copy_hint": {
         "my": "ဖုန်းနံပါတ်ကို Copy ကူးမည်။",
@@ -129,15 +140,14 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "sub_link_header": {
         "my": (
-            "<b>VPN Subscription Link</b>\n\n"
-            "အောက်က <b>Subscription Link ကူးမည်</b> ခလုတ်ကို နှိပ်ပြီး Link ကို Copy ယူပါ။\n"
-            "v2rayNG / Hiddify မှာ <b>Subscription</b> အဖြစ် ထည့်သွင်းနိုင်ပါတယ်။\n"
-            "ဒေတာလက်ကျန်နဲ့ သက်တမ်းကို App ထဲမှာ တိုက်ရိုက် ကြည့်နိုင်ပါတယ်။"
+            "<b>AirVPN Subscription</b>\n\n"
+            "အောက်က <b>AirVPN App ဖွင့်မည်</b> ကို နှိပ်ပါ — App ဖွင့်ပြီး Key အလိုအလျောက် ထည့်သွင်းပါမည်။\n"
+            "App မရှိသေးရင် <b>AirVPN Download</b> မှ ထည့်သွင်းပါ။"
         ),
         "en": (
-            "<b>VPN Subscription Link</b>\n\n"
-            "Tap <b>Copy subscription link</b> below, then add it in v2rayNG / Hiddify.\n"
-            "Your app will show remaining data and expiry automatically."
+            "<b>AirVPN Subscription</b>\n\n"
+            "Tap <b>Open In AirVPN App</b> to open the app and import automatically.\n"
+            "No app yet? Use <b>Download AirVPN</b> below."
         ),
     },
     "sub_copy_hint": {
@@ -147,6 +157,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "open_airvpn_app": {
         "my": "AirVPN App ဖွင့်မည်",
         "en": "Open In AirVPN App",
+    },
+    "download_airvpn_app": {
+        "my": "AirVPN Download",
+        "en": "Download AirVPN",
     },
     "restore_code_msg": {
         "my": (
@@ -312,11 +326,13 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "No plans available. Contact admin.",
     },
     "pay_choose_method": {
-        "my": "KBZPay နဲ့ ငွေလွှဲပေးပါရန် -",
-        "en": "Pay via KBZPay:",
+        "my": "ငွေပေးချေမည့်နည်းလမ်းရွေးချယ်ပါ။",
+        "en": "Choose a payment method.",
     },
     "pay_instructions": {
         "my": (
+            "<b>Note တွင် VPN လုံးဝ လုံးဝ မရေးပါနဲ့ခင်ဗျာ\n"
+            "တောင်းဆိုပါတယ်။</b>\n\n"
             "<b>ငွေပေးချေမှု လမ်းညွှန်လေးပါ</b>\n\n"
             "ဆာဗာ: <b>{server}</b>\n"
             "ရွေးချယ်ထားတဲ့ ပလန်: <b>{plan}</b>\n"
@@ -331,6 +347,8 @@ STRINGS: dict[str, dict[str, str]] = {
             "မလုပ်တော့ပါဆိုရင် /cancel နှိပ်ပါ။"
         ),
         "en": (
+            "<b>Please do NOT write VPN in the transfer Note at all.\n"
+            "Thank you.</b>\n\n"
             "<b>Payment Instructions</b>\n\n"
             "Server: <b>{server}</b>\n"
             "Plan: <b>{plan}</b>\n"

@@ -133,11 +133,23 @@ def replace_adjust_keyboard(lang: str, labels: list[str]) -> ReplyKeyboardMarkup
     return ReplyKeyboardMarkup(rows, resize_keyboard=True, one_time_keyboard=True)
 
 
-def payment_methods(lang: str, plan_id: int) -> InlineKeyboardMarkup:
-    """Single KBZPay account — kept for back-navigation only."""
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton(t(lang, "back"), callback_data="buy_plan")]]
-    )
+def payment_methods(
+    lang: str,
+    plan_id: int,
+    *,
+    methods: list[str] | None = None,
+) -> InlineKeyboardMarkup:
+    """KBZPay | WavePay picker (only methods that have active accounts)."""
+    allowed = methods or ["KBZPay", "WavePay"]
+    row: list[InlineKeyboardButton] = []
+    for method in allowed:
+        key = "wave" if method == "WavePay" else "kbz"
+        row.append(
+            InlineKeyboardButton(method, callback_data=f"method_{key}_{plan_id}")
+        )
+    rows: list[list[InlineKeyboardButton]] = [row] if row else []
+    rows.append([InlineKeyboardButton(t(lang, "back"), callback_data="buy_plan")])
+    return InlineKeyboardMarkup(rows)
 
 
 def payment_accounts(lang: str, plan_id: int, method: str, accounts: list) -> InlineKeyboardMarkup:
@@ -156,49 +168,53 @@ def payment_accounts(lang: str, plan_id: int, method: str, accounts: list) -> In
     return InlineKeyboardMarkup(buttons)
 
 
-def vpn_app_links_keyboard(lang: str) -> InlineKeyboardMarkup:
-    """Open In AirVPN first; then Play/App Store fallbacks and third-party clients."""
-    import config as cfg
+def vpn_app_links_keyboard(
+    lang: str,
+    *,
+    import_payload: str | None = None,
+    download_url: str | None = None,
+) -> InlineKeyboardMarkup:
+    """
+    AirVPN-first actions:
+    1) Open In AirVPN App → HTTPS bridge that auto-imports the key/sub
+    2) Download AirVPN → admin/update Telegram post (or fallback URL)
+    """
+    from utils.airvpn_links import (
+        DEFAULT_APP_DOWNLOAD_URL,
+        import_bridge_url,
+    )
 
-    rows: list[list[InlineKeyboardButton]] = [
-        [
-            InlineKeyboardButton(
-                t(lang, "open_airvpn_app"),
-                url=cfg.AIRVPN_PLAY_URL or cfg.AIRVPN_TELEGRAM_URL,
-            )
-        ]
-    ]
-    for name, url in cfg.VPN_APPS_ANDROID:
-        if url:
-            rows.append([InlineKeyboardButton(name, url=url)])
-    for name, url in cfg.VPN_APPS_IOS:
-        if url:
-            rows.append([InlineKeyboardButton(name, url=url)])
-    return InlineKeyboardMarkup(rows)
-
-
-def restore_code_keyboard(lang: str, code: str) -> InlineKeyboardMarkup:
-    import config as cfg
+    app_link = (download_url or "").strip() or (
+        config.AIRVPN_UPDATE_URL
+        or config.AIRVPN_PLAY_URL
+        or DEFAULT_APP_DOWNLOAD_URL
+    )
+    bridge = import_bridge_url(import_payload or "") if import_payload else None
 
     rows: list[list[InlineKeyboardButton]] = []
-    if len(code) <= MAX_COPY_TEXT:
+    if bridge:
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=t(lang, "restore_code_copy"),
-                    copy_text=CopyTextButton(text=code),
+                    t(lang, "open_airvpn_app"),
+                    url=bridge,
                 )
             ]
         )
     rows.append(
         [
             InlineKeyboardButton(
-                t(lang, "open_airvpn_app"),
-                url=cfg.AIRVPN_PLAY_URL or cfg.AIRVPN_TELEGRAM_URL,
+                t(lang, "download_airvpn_app"),
+                url=app_link,
             )
         ]
     )
     return InlineKeyboardMarkup(rows)
+
+
+def restore_code_keyboard(lang: str, code: str) -> InlineKeyboardMarkup:
+    """Deprecated — restore codes are no longer delivered. Kept for old messages."""
+    return vpn_app_links_keyboard(lang)
 
 
 def download_platform_keyboard(lang: str) -> InlineKeyboardMarkup:
@@ -451,9 +467,13 @@ def vless_download_keyboard(lang: str) -> InlineKeyboardMarkup:
 
 
 def subscription_link_keyboard(
-    lang: str, sub_url: str, user_id: int | None = None
+    lang: str,
+    sub_url: str,
+    user_id: int | None = None,
+    *,
+    download_url: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Copy subscription URL + VPN app download links (URL never shown in chat)."""
+    """Copy subscription URL + Open In AirVPN (auto-import) + download link."""
     rows: list[list[InlineKeyboardButton]] = []
     if len(sub_url) <= MAX_COPY_TEXT:
         rows.append(
@@ -475,14 +495,24 @@ def subscription_link_keyboard(
         )
     else:
         raise ValueError("subscription link exceeds copy limit; user_id is required")
-    rows.extend(vless_download_keyboard(lang).inline_keyboard)
+    rows.extend(
+        vpn_app_links_keyboard(
+            lang,
+            import_payload=sub_url,
+            download_url=download_url,
+        ).inline_keyboard
+    )
     return InlineKeyboardMarkup(rows)
 
 
 def vless_key_keyboard(
-    lang: str, vless_key: str, sub_id: int | None = None
+    lang: str,
+    vless_key: str,
+    sub_id: int | None = None,
+    *,
+    download_url: str | None = None,
 ) -> InlineKeyboardMarkup:
-    """Copy button first, then VPN app download links."""
+    """Copy button first, then Open In AirVPN (auto-import) + download."""
     rows: list[list[InlineKeyboardButton]] = []
     if len(vless_key) <= MAX_COPY_TEXT:
         rows.append(
@@ -502,7 +532,13 @@ def vless_key_keyboard(
                 )
             ]
         )
-    rows.extend(vless_download_keyboard(lang).inline_keyboard)
+    rows.extend(
+        vpn_app_links_keyboard(
+            lang,
+            import_payload=vless_key,
+            download_url=download_url,
+        ).inline_keyboard
+    )
     return InlineKeyboardMarkup(rows)
 
 

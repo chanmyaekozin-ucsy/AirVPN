@@ -148,7 +148,33 @@ async def init_db() -> None:
             """
         )
         await _migrate_columns(db)
+        await _ensure_default_payment_accounts(db)
         await db.commit()
+
+
+async def _ensure_default_payment_accounts(db: aiosqlite.Connection) -> None:
+    """Seed KBZ + Wave merchant accounts if the method has none yet."""
+    wave_phone = config.WAVE_MERCHANT_PHONE or "09792600272"
+    wave_name = config.WAVE_MERCHANT_NAME or "Chan Myae Ko Zin"
+    defaults = (
+        ("KBZPay", config.KBZ_MERCHANT_PHONE or "09948999939", config.KBZ_MERCHANT_NAME or "Si Thu Maung"),
+        ("WavePay", wave_phone, wave_name),
+    )
+    for method, number, name in defaults:
+        if not number:
+            continue
+        async with db.execute(
+            "SELECT id FROM payment_accounts WHERE method = ? LIMIT 1",
+            (method,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row:
+            continue
+        await db.execute(
+            """INSERT INTO payment_accounts (method, account_number, account_name, is_active)
+               VALUES (?, ?, ?, 1)""",
+            (method, number, name or method),
+        )
 
 
 async def _migrate_columns(db: aiosqlite.Connection) -> None:
@@ -2458,17 +2484,41 @@ async def ensure_mobile_app_settings_seeded(
     *,
     defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Insert defaults once if the settings row is missing."""
+    """Insert defaults once if missing; bump version when file/defaults are newer."""
+    current = None
     async with _db() as db:
         async with db.execute(
-            "SELECT id FROM mobile_app_settings WHERE id = 1"
+            "SELECT * FROM mobile_app_settings WHERE id = 1"
         ) as cur:
-            if await cur.fetchone():
-                return await get_mobile_app_settings()
-    seed = dict(_DEFAULT_APP_SETTINGS)
-    if defaults:
-        seed.update({k: v for k, v in defaults.items() if v is not None})
-    return await upsert_mobile_app_settings(**seed)
+            row = await cur.fetchone()
+            if row:
+                current = dict(row)
+    if not current:
+        seed = dict(_DEFAULT_APP_SETTINGS)
+        if defaults:
+            seed.update({k: v for k, v in defaults.items() if v is not None})
+        return await upsert_mobile_app_settings(**seed)
+
+    if not defaults:
+        return await get_mobile_app_settings()
+
+    file_code = int(defaults.get("latest_version_code") or 0)
+    db_code = int(current.get("latest_version_code") or 0)
+    if file_code > db_code:
+        return await upsert_mobile_app_settings(
+            latest_version_code=file_code,
+            latest_version_name=str(
+                defaults.get("latest_version_name")
+                or current.get("latest_version_name")
+                or "1.0.0"
+            ),
+            changelog=str(
+                defaults.get("changelog") or current.get("changelog") or ""
+            ),
+            update_url=defaults.get("update_url") or current.get("update_url"),
+            play_url=defaults.get("play_url") or current.get("play_url"),
+        )
+    return await get_mobile_app_settings()
 
 
 async def get_active_sub_for_vpn_server(

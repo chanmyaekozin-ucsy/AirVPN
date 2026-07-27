@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections import defaultdict
 from contextlib import asynccontextmanager
@@ -144,7 +145,7 @@ async def lifespan(_app: FastAPI):
                 in ("1", "true", "yes"),
                 "telegram_url": _telegram_url(),
                 "play_url": _play_url(),
-                "update_url": os.getenv("AIRVPN_UPDATE_URL", "").strip() or _telegram_url(),
+                "update_url": _update_url(),
                 "buy_url": _buy_bot_url(),
                 "privacy_url": os.getenv(
                     "AIRVPN_PRIVACY_URL", "https://airvpn.app/privacy"
@@ -274,6 +275,101 @@ async def admin_app_login_bridge(tid: str = "", code: str = "") -> HTMLResponse:
     )
 
 
+_USER_PACKAGE = "com.airvpn.app"
+
+
+@app.get("/app/import", response_class=HTMLResponse)
+async def airvpn_import_bridge(url: str = "", code: str = "") -> HTMLResponse:
+    """
+    HTTPS bridge for Telegram: open AirVPN and auto-import subscription/key.
+    Query: ?url=<vless|ss|https sub>  (or legacy ?code= for the same payload)
+    """
+    from urllib.parse import quote
+
+    from utils.airvpn_links import resolve_app_download_url
+
+    payload = (url or code or "").strip()
+    # Basic sanity — only allow known VPN / subscription schemes
+    lower = payload.lower()
+    allowed = (
+        lower.startswith("http://")
+        or lower.startswith("https://")
+        or lower.startswith("vless://")
+        or lower.startswith("ss://")
+        or lower.startswith("ssh://")
+    )
+    if not payload or not allowed or len(payload) > 4000:
+        return HTMLResponse(
+            content=(
+                "<!DOCTYPE html><html><body style='font-family:system-ui;padding:24px'>"
+                "<h1>Invalid import link</h1>"
+                "<p>Ask the bot to resend your AirVPN key.</p>"
+                "</body></html>"
+            ),
+            status_code=400,
+        )
+
+    q = quote(payload, safe="")
+    deep = f"airvpn://import?url={q}"
+    intent = (
+        f"intent://import?url={q}"
+        f"#Intent;scheme=airvpn;package={_USER_PACKAGE};end"
+    )
+    download = await resolve_app_download_url()
+    html = f"""<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<meta name="color-scheme" content="light"/>
+<title>Open AirVPN</title>
+<style>
+  body {{ font-family: system-ui, -apple-system, sans-serif; background:#F7F9FC; color:#1B2A3A;
+         display:flex; min-height:100vh; align-items:center; justify-content:center; margin:0; padding:16px; }}
+  .box {{ background:#fff; padding:28px 24px; border-radius:16px; max-width:360px; width:100%;
+          box-shadow:0 8px 28px rgba(26,83,155,.12); text-align:center; }}
+  a.btn {{ display:block; margin-top:16px; padding:14px 18px; background:#1A539B;
+           color:#fff !important; text-decoration:none; border-radius:12px; font-weight:600; font-size:16px; }}
+  a.btn2 {{ display:block; margin-top:10px; padding:12px 18px; background:#E8F1FB;
+           color:#1A539B !important; text-decoration:none; border-radius:12px; font-weight:600; }}
+  p {{ color:#5A6B7D; line-height:1.45; margin:8px 0 0; }}
+</style>
+</head>
+<body>
+  <div class="box">
+    <h1 style="margin:0;font-size:1.25rem;color:#1A539B">AirVPN</h1>
+    <p>Opening the app to import your key…</p>
+    <a class="btn" href="{intent}">Open AirVPN App</a>
+    <a class="btn2" href="{deep}">Try direct link</a>
+    <a class="btn2" href="{download}">Download AirVPN</a>
+    <p style="font-size:12px;margin-top:14px">If the app does not open, install AirVPN first, then tap again.</p>
+  </div>
+<script>
+(function () {{
+  var intent = {intent!r};
+  var deep = {deep!r};
+  var ua = navigator.userAgent || "";
+  function go() {{
+    if (/Android/i.test(ua)) {{
+      window.location.href = intent;
+      setTimeout(function () {{ window.location.href = deep; }}, 700);
+    }} else {{
+      window.location.href = deep;
+    }}
+  }}
+  go();
+  setTimeout(go, 400);
+}})();
+</script>
+</body></html>"""
+    return HTMLResponse(
+        content=html,
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 # Local ad creatives: put files in data/ads/ and reference as /ads/filename.png
 app.mount("/ads", StaticFiles(directory=str(_ADS_DIR)), name="ads")
 
@@ -302,12 +398,31 @@ def _telegram_url() -> str:
 def _play_url() -> str:
     return os.getenv(
         "AIRVPN_PLAY_URL",
-        "https://play.google.com/store/apps/details?id=com.airvpn.app",
+        os.getenv(
+            "AIRVPN_UPDATE_URL",
+            "https://t.me/worldcup2026_myanmarLive/1222",
+        ),
     ).strip()
 
 
-def _buy_bot_url() -> str:
-    return os.getenv("AIRVPN_BUY_DEEP_LINK", _telegram_url()).strip()
+def _update_url() -> str:
+    return os.getenv(
+        "AIRVPN_UPDATE_URL",
+        "https://t.me/worldcup2026_myanmarLive/1222",
+    ).strip()
+
+
+def _buy_bot_url(server_id: str | None = None) -> str:
+    """Telegram bot deep link; optional ?start=buy_<serverId> for app Buy buttons."""
+    base = os.getenv("AIRVPN_BUY_DEEP_LINK", _telegram_url()).strip().rstrip("/")
+    sid = re.sub(r"[^a-zA-Z0-9_-]", "", (server_id or "").strip())[:32]
+    if not sid or "start=" in base:
+        return base
+    # t.me / telegram.me deep links
+    if "t.me/" in base or "telegram.me/" in base:
+        return f"{base}?start=buy_{sid}"
+    sep = "&" if "?" in base else "?"
+    return f"{base}{sep}start=buy_{sid}"
 
 
 def _load_mobile_app_file() -> dict[str, Any]:
@@ -869,7 +984,7 @@ async def _server_public(row: dict[str, Any], *, online: bool | None = None) -> 
         }
         out["plan"] = plan
         out["plans"] = [plan] if plan.get("title") or plan.get("price_ks") else []
-        out["buy_url"] = _buy_bot_url()
+        out["buy_url"] = _buy_bot_url(str(row.get("vpn_server_id") or "") or None)
     return out
 
 
@@ -879,10 +994,12 @@ async def _paid_from_bot_catalog() -> list[dict[str, Any]]:
     One entry per configured VPN server that has plans.
     """
     try:
-        from vpn_servers import list_servers
+        from vpn_servers import ensure_servers_fresh, list_servers
     except Exception as exc:
         logger.warning("vpn_servers import failed: %s", exc)
         return []
+
+    await ensure_servers_fresh(max_age_sec=5)
 
     out: list[dict[str, Any]] = []
     for srv in list_servers():
@@ -912,7 +1029,7 @@ async def _paid_from_bot_catalog() -> list[dict[str, Any]]:
             "tag": "Vless",
             "tier": "paid",
             "online": online,
-            "buy_url": _buy_bot_url(),
+            "buy_url": _buy_bot_url(srv.id),
             "plans": plans,
             "plan": plans[0] if plans else None,
         }
@@ -1058,7 +1175,7 @@ async def app_config(request: Request) -> dict[str, Any]:
 
     telegram_url = _str_setting("telegram_url", _telegram_url()) or _telegram_url()
     play_url = _str_setting("play_url", _play_url()) or _play_url()
-    update_url = _str_setting("update_url", telegram_url) or telegram_url
+    update_url = _str_setting("update_url", _update_url()) or _update_url()
     buy_url = _str_setting("buy_url", _buy_bot_url()) or _buy_bot_url()
     privacy_url = _str_setting(
         "privacy_url", "https://airvpn.app/privacy"
