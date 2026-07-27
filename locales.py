@@ -329,6 +329,16 @@ STRINGS: dict[str, dict[str, str]] = {
         "my": "ငွေပေးချေမည့်နည်းလမ်းရွေးချယ်ပါ။",
         "en": "Choose a payment method.",
     },
+    "pay_unavailable": {
+        "my": (
+            "လက်ရှိမှာ ငွေပေးချေမှု မရနိုင်သေးပါဘူးခင်ဗျာ။\n"
+            "ကျေးဇူးပြုပြီး Admin ထံ တိုက်ရိုက် ဆက်သွယ်ပေးပါ။"
+        ),
+        "en": (
+            "Payment is not available right now.\n"
+            "Please contact Admin directly."
+        ),
+    },
     "pay_instructions": {
         "my": (
             "<b>Note တွင် VPN လုံးဝ လုံးဝ မရေးပါနဲ့ခင်ဗျာ\n"

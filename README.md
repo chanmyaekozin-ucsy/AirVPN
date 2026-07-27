@@ -48,6 +48,8 @@ For local development without a VPS, set `DEV_MOCK_VPN=true` in `.env`. **Never 
 | `VPS_HOST` | Public host/IP for `vless://` URLs |
 | `KBZ_AUTO_VERIFY` | Enable receipt QR / transaction ID verification |
 | `KBZ_SESSION_PATH` | Path to merchant session JSON (**read-only**). Coolify: `/data/kbz/kbz_session.json` — written only by Donimate Payment Manager |
+| `WAVE_SESSION_PATH` | Path to Wave session JSON (**read-only**). Coolify: `/data/wave/wave_session.json` |
+| `SHOP_PAYMENT_ACCOUNTS_PATH` | Shop payment ON/OFF catalog (**read-only**). Coolify: `/data/payments/shop_payment_accounts.json` — Payment Manager is source of truth |
 | `PAYMENTS_PROOFS_GROUP_ID` | Telegram group for receipt screenshots |
 | `DEV_MOCK_VPN` | `true` = mock keys (dev only) |
 

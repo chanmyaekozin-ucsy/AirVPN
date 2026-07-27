@@ -764,14 +764,14 @@ async def _start_kbzpayout(
 
 
 async def _show_payment_method_picker(message, lang: str, plan_id: int) -> None:
-    methods: list[str] = []
-    for method in ("KBZPay", "WavePay"):
-        accounts = await db.get_payment_accounts(method)
-        if accounts:
-            methods.append(method)
+    from services import shop_payment_catalog
+
+    methods = shop_payment_catalog.enabled_methods()
     if not methods:
         await message.reply_text(
-            t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
+            t(lang, "pay_unavailable"),
+            parse_mode=PARSE_MODE,
+            **admin_contact_reply_kwargs(lang),
         )
         return
     await message.reply_text(
@@ -861,28 +861,34 @@ async def _handle_plan_callback(
                 t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
             )
             return True
-        accounts = await db.get_payment_accounts(method)
-        if not accounts:
+        from services import shop_payment_catalog
+
+        account = shop_payment_catalog.account_for_method(method)
+        if not account:
             await query.message.reply_text(
-                t(lang, "no_plans"), **admin_contact_reply_kwargs(lang)
+                t(lang, "pay_unavailable"),
+                parse_mode=PARSE_MODE,
+                **admin_contact_reply_kwargs(lang),
             )
             return True
         await _start_kbzpayout(
-            query.message, query.from_user, context, row, lang, plan, accounts[0]
+            query.message, query.from_user, context, row, lang, plan, account
         )
         return True
 
     if data.startswith("acct_"):
+        # Legacy local SQLite account picker — redirect to catalog methods
         parts = data.split("_")
         if len(parts) < 3:
             return True
-        account_id, plan_id = int(parts[1]), int(parts[2])
-        account = await db.get_payment_account(account_id)
+        try:
+            plan_id = int(parts[2])
+        except ValueError:
+            return True
         plan = await db.get_plan(plan_id)
-        if account and plan:
-            await _start_kbzpayout(
-                query.message, query.from_user, context, row, lang, plan, account
-            )
+        if not plan:
+            return True
+        await _show_payment_method_picker(query.message, lang, plan_id)
         return True
 
     return False

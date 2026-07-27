@@ -175,6 +175,17 @@ WAVE_VERIFY_SSL: bool = os.getenv("WAVE_VERIFY_SSL", "true").strip().lower() in 
     "yes",
 )
 
+# Shared shop payment ON/OFF catalog (Payment Manager writes; AirVPN reads)
+_env_shop_pay = os.getenv("SHOP_PAYMENT_ACCOUNTS_PATH", "").strip()
+if _env_shop_pay:
+    SHOP_PAYMENT_ACCOUNTS_PATH: str = _env_shop_pay
+elif Path(KBZ_SESSION_PATH).as_posix().startswith("/data/"):
+    SHOP_PAYMENT_ACCOUNTS_PATH = "/data/payments/shop_payment_accounts.json"
+else:
+    SHOP_PAYMENT_ACCOUNTS_PATH = str(
+        Path(__file__).resolve().parent / "data" / "shop_payment_accounts.json"
+    )
+
 # Hourly KBZ session health check removed — Donimate Payment Manager owns that.
 # AirVPN posts VPN panel / server status instead.
 SERVER_STATUS_INTERVAL_SEC: int = int(
