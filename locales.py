@@ -394,8 +394,8 @@ STRINGS: dict[str, dict[str, str]] = {
         "en": "Please send the exact last 5 digits of the transaction ID.",
     },
     "tx_example_caption": {
-        "my": "ဥပမာ - {example}",
-        "en": "Eg - {example}",
+        "my": "ဥပမာ . {example}",
+        "en": "Eg . {example}",
     },
     "pay_no_pending": {
         "my": (

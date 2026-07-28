@@ -163,10 +163,11 @@ WAVE_SESSION_PATH: str = (
 )
 WAVE_MERCHANT_NAME: str = os.getenv("WAVE_MERCHANT_NAME", "").strip()
 WAVE_MERCHANT_PHONE: str = os.getenv("WAVE_MERCHANT_PHONE", "").strip()
-WAVE_TX_EXAMPLE: str = os.getenv("WAVE_TX_EXAMPLE", KBZ_TX_EXAMPLE).strip()
+WAVE_TX_EXAMPLE: str = os.getenv("WAVE_TX_EXAMPLE", "63265").strip()
+_default_wave_sample = Path(__file__).resolve().parent / "data" / "sample_wave_txid.jpg"
 _env_wave_sample = os.getenv("WAVE_SAMPLE_TX_IMAGE", "").strip()
 WAVE_SAMPLE_TX_IMAGE: Path = Path(
-    _env_wave_sample if _env_wave_sample else str(KBZ_SAMPLE_TX_IMAGE)
+    _env_wave_sample if _env_wave_sample else str(_default_wave_sample)
 )
 WAVE_HTTP_PROXY: str | None = os.getenv("WAVE_HTTP_PROXY", "").strip() or None
 WAVE_VERIFY_SSL: bool = os.getenv("WAVE_VERIFY_SSL", "true").strip().lower() in (
