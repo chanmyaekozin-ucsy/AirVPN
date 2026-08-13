@@ -1350,6 +1350,22 @@ async def receipt_last5(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if not await _guard(update, context):
         return
+    # Gateway deposits: ignore typed digits — user must tap Check payment
+    if context.user_data.get("payment_state") == WAITING_GATEWAY_CHECK:
+        lang = await _lang(update, context)
+        payment_id = context.user_data.get("pending_payment_id")
+        prompt = (
+            "No need to type digits. Pay the exact amount, then tap Check payment."
+            if lang == "en"
+            else "နံပါတ်ရိုက်စရာ မလိုပါ။ အတိအကျ ပမာဏ ပေးပြီး Check payment ကို နှိပ်ပါ။"
+        )
+        await update.message.reply_text(
+            prompt,
+            reply_markup=payment_check_keyboard(lang, int(payment_id))
+            if payment_id
+            else None,
+        )
+        return
     user = update.effective_user
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = await _lang(update, context)
