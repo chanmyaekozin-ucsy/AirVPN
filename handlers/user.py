@@ -738,7 +738,7 @@ async def _start_kbzpayout(
                 external_ref=f"airvpn-payment-{payment_id}",
             )
             context.user_data["gateway_deposit_id"] = deposit.get("id")
-            context.user_data["payment_state"] = WAITING_GATEWAY_CHECK
+            context.user_data["payment_state"] = WAITING_TX_DIGITS
             payee = deposit.get("payee") or {}
             account_number = str(payee.get("msisdn") or account_number)
             account_name = str(payee.get("display_name") or account_name)
@@ -780,15 +780,26 @@ async def _start_kbzpayout(
         )
 
     if use_gateway:
-        prompt = (
-            "After you pay the exact amount, tap Check payment."
-            if lang == "en"
-            else "အတိအကျ ပမာဏ ပေးပြီးပါက Check payment ကို နှိပ်ပါ။"
-        )
-        await message.reply_text(
-            prompt,
-            reply_markup=payment_check_keyboard(lang, payment_id),
-        )
+        # Still ask for last-5 digits — Dominate verifies amount + suffix
+        method = str(account.get("method") or "KBZPay")
+        if method == "WavePay":
+            sample = config.WAVE_SAMPLE_TX_IMAGE
+            example = config.WAVE_TX_EXAMPLE
+        else:
+            sample = config.KBZ_SAMPLE_TX_IMAGE
+            example = config.KBZ_TX_EXAMPLE
+        caption = t(lang, "pay_waiting_receipt", example=md2(example))
+        try:
+            if sample.is_file():
+                await message.reply_photo(
+                    photo=str(sample), caption=caption, parse_mode=PARSE_MODE
+                )
+            else:
+                await message.reply_text(caption, parse_mode=PARSE_MODE)
+        except Exception:
+            logger.exception("Sample tx image send failed")
+            await message.reply_text(caption, parse_mode=PARSE_MODE)
+        await message.reply_text(t(lang, "tx_digits_prompt"), parse_mode=PARSE_MODE)
         return
 
     method = str(account.get("method") or "KBZPay")
@@ -960,85 +971,16 @@ async def _handle_plan_callback(
         return True
 
     if data.startswith("paycheck_"):
-        try:
-            payment_id = int(data.split("_", 1)[1])
-        except (ValueError, IndexError):
-            return True
-        await _handle_gateway_paycheck(query, context, row, lang, payment_id)
+        # Legacy Check payment button — last-5 flow only now
+        await query.message.reply_text(
+            "Send the last 5 digits of the TrxID."
+            if lang == "en"
+            else "TrxID နောက်ဆုံး ၅ လုံး ပို့ပါ။",
+        )
         return True
 
     return False
 
-
-async def _handle_gateway_paycheck(query, context, user_row, lang, payment_id: int) -> None:
-    from services import dominate_gateway
-
-    deposit_id = context.user_data.get("gateway_deposit_id")
-    if not deposit_id:
-        await query.answer("Payment session expired. Start again.", show_alert=True)
-        return
-    payment = await _owned_pending_payment(payment_id, user_row)
-    if not payment:
-        await query.answer("Already processed.", show_alert=True)
-        return
-    await query.answer()
-    msg = query.message
-    await msg.reply_text(t(lang, "pay_verifying"))
-    try:
-        deposit = await asyncio.to_thread(dominate_gateway.get_deposit, str(deposit_id))
-    except Exception:
-        logger.exception("Gateway get_deposit failed")
-        await msg.reply_text(
-            t(lang, "pay_submitted"),
-            **admin_contact_reply_kwargs(lang),
-        )
-        return
-
-    status = str(deposit.get("status") or "")
-    if status == "paid":
-        tx_id = str(deposit.get("matched_order_id") or deposit.get("id") or "")
-        await db.set_payment_verification(
-            payment_id,
-            verify_status="ok",
-            verify_message=f"Gateway deposit {deposit_id}",
-        )
-        ok, err = await approve_and_deliver(
-            context.bot,
-            payment_id,
-            processed_by=0,
-            auto=True,
-            tx_id=tx_id,
-        )
-        if ok:
-            await update_payment_proof(
-                context.bot,
-                payment_id,
-                "auto_approved",
-                note=f"Tx: {tx_id}",
-            )
-            _clear_payment_flow(context)
-            _clear_buy_flow(context)
-        else:
-            await msg.reply_text(
-                t(lang, "pay_rejected_generic") if err else t(lang, "pay_submitted"),
-                **admin_contact_reply_kwargs(lang),
-            )
-        return
-    if status == "expired":
-        await msg.reply_text(
-            "Payment expired. Please start a new payment."
-            if lang == "en"
-            else "ငွေပေးချေမှု သက်တမ်းကုန်ပါပြီ။ အသစ်ပြန်စပါ။",
-            **admin_contact_reply_kwargs(lang),
-        )
-        _clear_payment_flow(context)
-        return
-    await msg.reply_text(
-        "Payment not found yet. Pay the exact amount, then tap Check payment again."
-        if lang == "en"
-        else "ငွေမရသေးပါ။ အတိအကျ ပမာဏ ပေးပြီး Check payment ကို ထပ်နှိပ်ပါ။",
-        reply_markup=payment_check_keyboard(lang, payment_id),
-    )
 
 class _LanguageChoiceFilter(filters.MessageFilter):
     def filter(self, message) -> bool:
@@ -1350,22 +1292,6 @@ async def receipt_last5(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         return
     if not await _guard(update, context):
         return
-    # Gateway deposits: ignore typed digits — user must tap Check payment
-    if context.user_data.get("payment_state") == WAITING_GATEWAY_CHECK:
-        lang = await _lang(update, context)
-        payment_id = context.user_data.get("pending_payment_id")
-        prompt = (
-            "No need to type digits. Pay the exact amount, then tap Check payment."
-            if lang == "en"
-            else "နံပါတ်ရိုက်စရာ မလိုပါ။ အတိအကျ ပမာဏ ပေးပြီး Check payment ကို နှိပ်ပါ။"
-        )
-        await update.message.reply_text(
-            prompt,
-            reply_markup=payment_check_keyboard(lang, int(payment_id))
-            if payment_id
-            else None,
-        )
-        return
     user = update.effective_user
     row = await db.get_or_create_user(user.id, user.username, user.first_name)
     lang = await _lang(update, context)
@@ -1392,6 +1318,84 @@ async def receipt_last5(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     note = f"Last5: {digits}"
     payment = await db.get_payment(payment_id) or payment
     method = str(payment.get("method") or "KBZPay")
+
+    # Dominate gateway: verify amount + last5 against shared history / claim TrxID
+    deposit_id = context.user_data.get("gateway_deposit_id")
+    from services import dominate_gateway as dg
+
+    if deposit_id and dg.gateway_configured():
+        await post_payment_proof(
+            context.bot,
+            payment_id,
+            payment,
+            None,
+            status="verifying",
+            note=note,
+        )
+        await update.message.reply_text(t(lang, "pay_verifying"))
+        try:
+            deposit = await asyncio.to_thread(
+                dg.verify_deposit_last5, str(deposit_id), digits
+            )
+        except Exception as exc:
+            logger.exception("Gateway last5 verify failed for payment %s", payment_id)
+            await update.message.reply_text(
+                "Payment not found yet. Pay the exact amount, then send the last 5 digits again."
+                if lang == "en"
+                else "ငွေမရသေးပါ။ အတိအကျ ပမာဏ ပေးပြီး TrxID နောက်ဆုံး ၅ လုံး ထပ်ပို့ပါ။",
+            )
+            await update_payment_proof(
+                context.bot,
+                payment_id,
+                "verifying",
+                note=f"{note}. Gateway: {exc}",
+            )
+            return
+        status = str(deposit.get("status") or "")
+        if status == "paid":
+            tx_id = str(deposit.get("matched_order_id") or deposit.get("id") or "")
+            await db.set_payment_verification(
+                payment_id,
+                verify_status="ok",
+                verify_message=f"Gateway deposit {deposit_id} last5={digits}",
+            )
+            ok, err = await approve_and_deliver(
+                context.bot,
+                payment_id,
+                processed_by=0,
+                auto=True,
+                tx_id=tx_id,
+            )
+            if ok:
+                await update_payment_proof(
+                    context.bot,
+                    payment_id,
+                    "auto_approved",
+                    note=f"Tx: {tx_id}",
+                )
+                _clear_payment_flow(context)
+                _clear_buy_flow(context)
+            else:
+                await update.message.reply_text(
+                    t(lang, "pay_rejected_generic") if err else t(lang, "pay_submitted"),
+                    **admin_contact_reply_kwargs(lang),
+                )
+            return
+        if status == "expired":
+            await update.message.reply_text(
+                "Payment expired. Please start a new payment."
+                if lang == "en"
+                else "ငွေပေးချေမှု သက်တမ်းကုန်ပါပြီ။ အသစ်ပြန်စပါ။",
+                **admin_contact_reply_kwargs(lang),
+            )
+            _clear_payment_flow(context)
+            return
+        await update.message.reply_text(
+            "Payment not found yet. Pay the exact amount, then send the last 5 digits again."
+            if lang == "en"
+            else "ငွေမရသေးပါ။ အတိအကျ ပမာဏ ပေးပြီး TrxID နောက်ဆုံး ၅ လုံး ထပ်ပို့ပါ။",
+        )
+        return
 
     auto_ok = (
         (method == "KBZPay" and config.KBZ_AUTO_VERIFY)
