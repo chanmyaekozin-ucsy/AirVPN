@@ -473,6 +473,21 @@ def account_copy_keyboard(lang: str, account_number: str) -> InlineKeyboardMarku
     )
 
 
+def payment_check_keyboard(lang: str, payment_id: int) -> InlineKeyboardMarkup:
+    """After gateway deposit: user taps when they have paid."""
+    label = "Check payment" if lang == "en" else "ေငြပေးပြီးစစ်မည်"
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton(
+                    text=label,
+                    callback_data=f"paycheck_{payment_id}",
+                )
+            ]
+        ]
+    )
+
+
 def vless_download_keyboard(lang: str) -> InlineKeyboardMarkup:
     """Store links under the copyable VLESS key message."""
     return vpn_app_links_keyboard(lang)

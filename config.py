@@ -187,7 +187,11 @@ else:
         Path(__file__).resolve().parent / "data" / "shop_payment_accounts.json"
     )
 
-# Hourly KBZ session health check removed — Donimate Payment Manager owns that.
+# Dominate Payment Gateway (preferred over shared catalog/session verify)
+DOMINATE_GATEWAY_URL: str = os.getenv("DOMINATE_GATEWAY_URL", "").strip().rstrip("/")
+DOMINATE_GATEWAY_API_KEY: str = os.getenv("DOMINATE_GATEWAY_API_KEY", "").strip()
+
+# Hourly KBZ session health check removed — Dominate Payment Manager owns that.
 # AirVPN posts VPN panel / server status instead.
 SERVER_STATUS_INTERVAL_SEC: int = int(
     os.getenv("SERVER_STATUS_INTERVAL_SEC", "3600")
