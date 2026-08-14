@@ -1,0 +1,30 @@
+{
+  "name": "airvpn-web",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev --turbopack",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "test:panel": "node scripts/test-panel.mjs",
+    "vps:install": "bash scripts/vps-one-click.sh"
+  },
+  "dependencies": {
+    "jose": "^6.2.8",
+    "next": "^15.5.9",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "ssh2": "^1.17.0"
+  },
+  "devDependencies": {
+    "@eslint/eslintrc": "^3",
+    "@types/node": "^20",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@types/ssh2": "^1.15.5",
+    "eslint": "^9",
+    "eslint-config-next": "^15.5.9",
+    "typescript": "^5"
+  }
+}

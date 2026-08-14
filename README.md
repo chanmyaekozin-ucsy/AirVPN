@@ -74,8 +74,17 @@ handlers/ # User and admin Telegram handlers
 services/ # Payment approval, KBZ verify, notifications
 payments/kbz/ # KBZPay API client and verification
 vps/panel_client.py # 3x-ui API + VLESS URL builder
+web/ # Next.js shop + admin (WathanPay + Dominate) — see web/README.md
 utils/ # Formatting, rate limits, startup validation
 ```
+
+### Web shop (Next.js)
+
+```bash
+cd web && npm install && npm run dev
+```
+
+Same checkout pattern as Cloud Game Shop: Dominate KBZ/Wave on the open web, WathanPay PIN inside the mini-app. Coolify notes: `web/COOLIFY.md`.
 
 ## Admin usage
 
