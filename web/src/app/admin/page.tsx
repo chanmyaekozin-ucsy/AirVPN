@@ -1534,7 +1534,7 @@ export default function AdminServersPage() {
             }}
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-              <h2 style={{ fontSize: 16, margin: 0 }}>Delete "{deleteModal.server.name}"</h2>
+              <h2 style={{ fontSize: 16, margin: 0 }}>Delete &ldquo;{deleteModal.server.name}&rdquo;</h2>
               {!deleteModal.running && (
                 <button
                   type="button"

@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { randomBytes } from "crypto";
 import { jsonError, requireAdmin } from "@/lib/auth";
-import { PanelClient, PanelError, buildVlessUrl } from "@/lib/panel";
+import { PanelClient, PanelError } from "@/lib/panel";
 import { readStore, updateStore } from "@/lib/store";
 
 export const runtime = "nodejs";

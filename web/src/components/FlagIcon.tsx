@@ -31,7 +31,6 @@ export function FlagIcon({
       aria-label={label}
     >
       {code && !imgFailed ? (
-        // eslint-disable-next-line @next/next/no-img-element
         <img
           src={flagImageUrl(code, Math.round(size * 2.5))}
           alt=""

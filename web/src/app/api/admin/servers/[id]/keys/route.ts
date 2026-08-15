@@ -22,7 +22,7 @@ export async function GET(
     const subs = store.subscriptions.filter((s) => s.serverId === id);
 
     // Fetch live client stats from panel (best-effort — don't fail if panel is down)
-    let statsMap = new Map<string, { up: number; down: number; total: number; enable: boolean; expiryTime: number }>();
+    const statsMap = new Map<string, { up: number; down: number; total: number; enable: boolean; expiryTime: number }>();
     try {
       const client = new PanelClient(server);
       await client.login();

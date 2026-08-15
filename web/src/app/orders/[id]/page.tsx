@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { ShopShell } from "@/components/ShopShell";
 import { useAuth } from "@/components/Auth";
@@ -59,16 +59,19 @@ export default function OrderResultPage() {
   const [copied, setCopied] = useState("");
   const autoPay = useRef(false);
 
-  const load = () =>
-    api<{ order: Order; subscription: Subscription | null }>(`/api/orders/${id}`).then((data) => {
-      setOrder(data.order);
-      setSubscription(data.subscription);
-      return data.order;
-    });
+  const load = useCallback(
+    () =>
+      api<{ order: Order; subscription: Subscription | null }>(`/api/orders/${id}`).then((data) => {
+        setOrder(data.order);
+        setSubscription(data.subscription);
+        return data.order;
+      }),
+    [id],
+  );
 
   useEffect(() => {
     load().catch((err) => setError(err instanceof Error ? err.message : "Order not found"));
-  }, [id]);
+  }, [load]);
 
   const cancel = async () => {
     setBusy(true);

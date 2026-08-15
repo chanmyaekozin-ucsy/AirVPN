@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import type { Client as SshClient, ConnectConfig } from "ssh2";
-import { jsonError, requireAdmin } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { updateStore } from "@/lib/store";
 
 export const runtime = "nodejs";

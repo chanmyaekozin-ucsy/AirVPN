@@ -30,7 +30,8 @@ export function applyProvisionedServer(store: Store, raw: Record<string, unknown
   if (!store.settings) store.settings = { subPublicBaseUrl: "", deletedPlanIds: [] };
   if (!Array.isArray(store.settings.deletedPlanIds)) store.settings.deletedPlanIds = [];
 
-  const { meta: _meta, ...rest } = raw;
+  const rest = { ...raw };
+  delete rest.meta;
   const server = normalizeServer(rest as Partial<Server> & Pick<Server, "id" | "slug" | "name">);
 
   const existingIdx = store.servers.findIndex((s) => s.id === server.id);
