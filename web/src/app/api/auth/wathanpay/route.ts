@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { jsonError, setSessionCookie } from "@/lib/auth";
-import { hashPin, hashToken } from "@/lib/hash";
+import { hashPin, wathanpaySubject } from "@/lib/hash";
 import { updateStore } from "@/lib/store";
 
 export async function POST(req: NextRequest) {
@@ -10,7 +10,10 @@ export async function POST(req: NextRequest) {
     if (!token) {
       return Response.json({ error: "Missing WathanPay token." }, { status: 401 });
     }
-    const sub = `wp_${hashToken(token)}`;
+    // accessToken is a short-lived JWT reissued every mini-app open; key the
+    // local account off its stable `sub` claim, not the raw token, so returning
+    // buyers keep their order history instead of getting a fresh account each visit.
+    const sub = `wp_${wathanpaySubject(token)}`;
     const user = await updateStore((store) => {
       let found = store.users.find((u) => u.wathanpaySub === sub || u.id === sub);
       if (!found) {

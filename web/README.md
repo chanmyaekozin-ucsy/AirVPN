@@ -15,7 +15,7 @@ npm run dev
 Open http://localhost:3000  
 Admin: http://localhost:3000/admin/login (`ADMIN_EMAIL` / `ADMIN_PIN`)
 
-Public URL (Coolify): `https://airvpn.flash-myanmar.com` (or your chosen subdomain).
+Public URL (Coolify): `https://airnetworkshop.flash-myanmar.com`.
 
 After payment, the shop provisions a real VLESS client on the server panel configured in Admin → Servers.
 

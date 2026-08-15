@@ -73,7 +73,7 @@ export function seedStore(): Store {
   return {
     settings: {
       ...DEFAULT_SETTINGS,
-      subPublicBaseUrl: "https://airnetwork.flash-myanmar.com",
+      subPublicBaseUrl: "https://airnetworkshop.flash-myanmar.com",
     },
     users: [
       {
@@ -142,7 +142,7 @@ export function mergeCatalog(store: Store) {
     store.settings.subPublicBaseUrl = "";
   }
   if (!store.settings.subPublicBaseUrl) {
-    store.settings.subPublicBaseUrl = "https://airnetwork.flash-myanmar.com";
+    store.settings.subPublicBaseUrl = "https://airnetworkshop.flash-myanmar.com";
   }
   if (!Array.isArray(store.settings.deletedPlanIds)) {
     store.settings.deletedPlanIds = [];
