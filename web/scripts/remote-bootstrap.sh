@@ -14,7 +14,7 @@ SERVER_NAME_MY="${AIRVPN_SERVER_NAME_MY:-$SERVER_NAME}"
 REGION="${AIRVPN_REGION:-US}"
 VLESS_PORT="${AIRVPN_VLESS_PORT:-}"
 PANEL_PORT="${AIRVPN_PANEL_PORT:-}"
-SNI="${AIRVPN_SNI:-www.microsoft.com}"
+SNI="${AIRVPN_SNI:-aws.amazon.com}"
 PANEL_USER="${AIRVPN_PANEL_USER:-dominate}"
 PANEL_PASS="${AIRVPN_PANEL_PASS:-}"
 PANEL_URL_OVERRIDE="${AIRVPN_PANEL_URL:-}"
@@ -213,6 +213,8 @@ echo "==> Opening firewall ports ${PANEL_PORT:-?} (panel) / ${VLESS_PORT} (vless
 if need_cmd ufw; then
   [[ -n "${PANEL_PORT:-}" ]] && ufw allow "${PANEL_PORT}/tcp" >/dev/null 2>&1 || true
   ufw allow "${VLESS_PORT}/tcp" >/dev/null 2>&1 || true
+  # Always allow SSH so we don't lock ourselves out
+  ufw allow 22/tcp >/dev/null 2>&1 || true
   ufw --force enable >/dev/null 2>&1 || true
 fi
 
@@ -293,7 +295,7 @@ if [[ -n "$REUSE_INBOUND_ID" ]]; then
   PUB="$(printf '%s' "$STREAM_OBJ" | jq -r '.realitySettings.settings.publicKey // empty')"
   SHORT_ID="$(printf '%s' "$STREAM_OBJ" | jq -r '.realitySettings.shortIds[0] // empty')"
   SNI="$(printf '%s' "$STREAM_OBJ" | jq -r '.realitySettings.serverNames[0] // empty')"
-  if [[ -z "$SNI" || "$SNI" == "null" ]]; then SNI="${AIRVPN_SNI:-www.microsoft.com}"; fi
+  if [[ -z "$SNI" || "$SNI" == "null" ]]; then SNI="${AIRVPN_SNI:-aws.amazon.com}"; fi
   if [[ -z "$PUB" || -z "$SHORT_ID" ]]; then
     echo "Inbound #${INBOUND_ID} is missing Reality publicKey/shortId" >&2
     exit 1
@@ -313,6 +315,26 @@ else
     PUB="$(printf '%s\n' "$KEY_OUT" | sed -n '2p' | tr -d '[:space:]')"
   fi
   SHORT_ID="$(openssl rand -hex 8)"
+  # Generate 8 shortIds of varying lengths (2..8 bytes) like a real 3x-ui setup
+  SID1="$(openssl rand -hex 1)"
+  SID2="$(openssl rand -hex 3)"
+  SID3="$(openssl rand -hex 4)"
+  SID4="$(openssl rand -hex 3)"
+  SID5="$(openssl rand -hex 2)"
+  SID6="$(openssl rand -hex 4)"
+  SID7="$(openssl rand -hex 5)"
+  SID8="$(openssl rand -hex 8)"
+  SHORT_ID="$SID1"  # exported in result JSON as vlessSid (client uses first shortId)
+  SHORT_IDS_JSON="$(jq -nc --arg s1 "$SID1" --arg s2 "$SID2" --arg s3 "$SID3" \
+    --arg s4 "$SID4" --arg s5 "$SID5" --arg s6 "$SID6" --arg s7 "$SID7" --arg s8 "$SID8" \
+    '[$s1,$s2,$s3,$s4,$s5,$s6,$s7,$s8]')"
+
+  # Build serverNames list — full amazon.com list for best camouflage when SNI matches
+  if [[ "$SNI" == *"amazon.com"* ]]; then
+    SERVER_NAMES_JSON='["www.amazon.com","yp.amazon.com","mp3recs.amazon.com","origin-www.amazon.com","buybox.amazon.com","uedata.amazon.com","us.amazon.com","yellowpages.amazon.com","home.amazon.com","www.m.amazon.com","iphone.amazon.com","www.amzn.com","huddles.amazon.com","amazon.com","corporate.amazon.com","shop.business.amazon.com","www.cdn.amazon.com","test-www.amazon.com","amzn.com","konrad-test.amazon.com","buckeye-retail-website.amazon.com","p-yo-www-amazon-com-kalias.amazon.com","p-nt-www-amazon-com-kalias.amazon.com","p-y3-www-amazon-com-kalias.amazon.com"]'
+  else
+    SERVER_NAMES_JSON="$(jq -nc --arg sni "$SNI" '[$sni]')"
+  fi
 
   CSRF="$(panel_csrf)"
   SETTINGS_JSON="$(jq -nc '{clients:[], decryption:"none", fallbacks:[]}')"
@@ -320,7 +342,8 @@ else
     --arg priv "$PRIV" \
     --arg pub "$PUB" \
     --arg sni "$SNI" \
-    --arg sid "$SHORT_ID" \
+    --argjson shortIds "$SHORT_IDS_JSON" \
+    --argjson serverNames "$SERVER_NAMES_JSON" \
     '{
        network: "tcp",
        security: "reality",
@@ -329,12 +352,12 @@ else
          show: false,
          xver: 0,
          dest: ($sni + ":443"),
-         serverNames: [$sni],
+         serverNames: $serverNames,
          privateKey: $priv,
          minClientVer: "",
          maxClientVer: "",
          maxTimediff: 0,
-         shortIds: [$sid],
+         shortIds: $shortIds,
          settings: {
            publicKey: $pub,
            fingerprint: "chrome",
@@ -344,7 +367,7 @@ else
        },
        tcpSettings: { acceptProxyProtocol: false, header: { type: "none" } }
      }')"
-  SNIFF_JSON="$(jq -nc '{enabled:true, destOverride:["http","tls","quic","fakedns"], metadataOnly:false, routeOnly:false}')"
+  SNIFF_JSON="$(jq -nc '{enabled:false}')"
   ADD_PAYLOAD="$(jq -nc \
     --argjson port "$VLESS_PORT" \
     --arg settings "$SETTINGS_JSON" \

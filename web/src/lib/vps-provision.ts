@@ -119,7 +119,7 @@ export async function provisionVps(input: ProvisionInput): Promise<ProvisionResu
       `AIRVPN_SERVER_NAME=${shellQuote(input.name.trim())}`,
       `AIRVPN_SERVER_NAME_MY=${shellQuote((input.nameMy || input.name).trim())}`,
       `AIRVPN_REGION=${shellQuote(input.region.trim().toUpperCase() || "US")}`,
-      `AIRVPN_SNI=${shellQuote(input.sni || "www.microsoft.com")}`,
+      `AIRVPN_SNI=${shellQuote(input.sni || "www.amazon.com")}`,
       `AIRVPN_PANEL_USER=${shellQuote(input.panelUser || "dominate")}`,
       `AIRVPN_PANEL_PASS=${shellQuote(input.panelPass || "")}`,
       `AIRVPN_PANEL_URL=${shellQuote(input.panelUrl || "")}`,

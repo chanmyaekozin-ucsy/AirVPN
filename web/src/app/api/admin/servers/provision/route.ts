@@ -44,6 +44,9 @@ export async function POST(req: NextRequest) {
     panelPass?: string;
     panelUrl?: string;
     reuseInboundId?: string;
+    vlessPort?: string;
+    panelPort?: string;
+    sni?: string;
   };
 
   const ip = String(body.ip ?? "").trim();
@@ -88,6 +91,9 @@ export async function POST(req: NextRequest) {
           panelPass: String(body.panelPass ?? ""),
           panelUrl: String(body.panelUrl ?? "").trim(),
           reuseInboundId: String(body.reuseInboundId ?? "").trim(),
+          vlessPort: String(body.vlessPort ?? "").trim(),
+          panelPort: String(body.panelPort ?? "").trim(),
+          sni: String(body.sni ?? "").trim(),
           onLog: (line) => {
             const cleaned = line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd();
             if (cleaned) send({ type: "log", line: cleaned });

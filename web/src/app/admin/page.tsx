@@ -89,6 +89,11 @@ export default function AdminServersPage() {
     panelUser: "dominate",
     panelPass: "",
     reuseInboundId: "",
+    // VLESS inbound config
+    vlessPortMode: "443" as "443" | "random" | "custom",
+    vlessPortCustom: "",
+    panelPort: "",
+    sni: "www.amazon.com",
   });
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
@@ -98,6 +103,55 @@ export default function AdminServersPage() {
   const orderDirty = useRef(false);
   const serversRef = useRef(servers);
   serversRef.current = servers;
+
+  // Delete modal state
+  const [deleteModal, setDeleteModal] = useState<{
+    server: AdminServer;
+    mode: "pick" | "uninstall";
+    ip: string;
+    password: string;
+    running: boolean;
+    logs: string[];
+    phase: string;
+  } | null>(null);
+
+  // Deploy form visibility
+  const [deployOpen, setDeployOpen] = useState(false);
+
+  // Configure card tab ("settings" | "keys")
+  const [configTab, setConfigTab] = useState<"settings" | "keys">("settings");
+
+  // SSH modal (for restart / reinstall)
+  const [sshModal, setSshModal] = useState<{
+    action: "restart" | "status";
+    ip: string;
+    password: string;
+    running: boolean;
+    logs: string[];
+    done: boolean;
+  } | null>(null);
+
+  // Keys tab data
+  type KeyRow = {
+    id: string; orderId: string; userId: string; panelEmail: string; clientUuid: string;
+    planTitle: string; dataGb: number; durationDays: number; status: string;
+    createdAt: string; expiresAt: string | null; vlessKey: string; subUrl: string;
+    liveEnabled: boolean | null; usedGb: number | null; remainingGb: number | null;
+    quotaBytes: number | null; usedBytes: number | null; liveExpiry: number | null;
+  };
+  const [keysList, setKeysList] = useState<KeyRow[]>([]);
+  const [keysLoading, setKeysLoading] = useState(false);
+  const [keysError, setKeysError] = useState("");
+  const [keysServerId, setKeysServerId] = useState("");
+  const [replacingKey, setReplacingKey] = useState<string | null>(null);
+  const [revokingKey, setRevokingKey] = useState<string | null>(null);
+  const [creatingTestKey, setCreatingTestKey] = useState(false);
+  const [testKeyResult, setTestKeyResult] = useState<{ vlessKey: string; subUrl: string; expiresAt: string } | null>(null);
+
+  // Panel push draft (port + SNI override)
+  const [pushDraft, setPushDraft] = useState<{ port: string; sni: string } | null>(null);
+  const [pushing, setPushing] = useState(false);
+  const [syncing, setSyncing] = useState(false);
 
   const load = () =>
     Promise.all([
@@ -202,6 +256,13 @@ export default function AdminServersPage() {
     setProvLogs([]);
     setProvPhase("starting");
     try {
+      const resolvedVlessPort =
+        prov.vlessPortMode === "443"
+          ? "443"
+          : prov.vlessPortMode === "random"
+            ? ""
+            : prov.vlessPortCustom.trim() || "";
+
       const res = await fetch("/api/admin/servers/provision", {
         method: "POST",
         headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" },
@@ -216,6 +277,9 @@ export default function AdminServersPage() {
           panelUser: prov.panelUser.trim() || "dominate",
           panelPass: prov.panelPass,
           reuseInboundId: prov.reuseInboundId.trim() || undefined,
+          vlessPort: resolvedVlessPort || undefined,
+          panelPort: prov.panelPort.trim() || undefined,
+          sni: prov.sni.trim() || undefined,
         }),
       });
 
@@ -255,6 +319,7 @@ export default function AdminServersPage() {
             );
             setProv((p) => ({ ...p, password: "", panelPass: "" }));
             setProvPhase("done");
+            setDeployOpen(false);
             await load();
           } else if (event.type === "error") {
             finished = true;
@@ -284,11 +349,94 @@ export default function AdminServersPage() {
     }
   };
 
+  const openDeleteModal = (server: AdminServer) => {
+    setDeleteModal({ server, mode: "pick", ip: server.host || "", password: "", running: false, logs: [], phase: "" });
+  };
+
+  const closeDeleteModal = () => setDeleteModal(null);
+
+  const runDelete = async (mode: "record" | "uninstall") => {
+    if (!deleteModal) return;
+    const { server } = deleteModal;
+
+    if (mode === "record") {
+      setDeleteModal((d) => d && { ...d, running: true, logs: ["Removing record…"] });
+      try {
+        const res = await fetch(`/api/admin/servers/${server.id}`, {
+          method: "DELETE",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ mode: "record" }),
+        });
+        if (!res.ok) {
+          const j = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(j.error || `HTTP ${res.status}`);
+        }
+        setOk(`Server "${server.name}" removed.`);
+        setDeleteModal(null);
+        await load();
+      } catch (err) {
+        setDeleteModal((d) => d && { ...d, running: false, logs: [...(d?.logs ?? []), `Error: ${err instanceof Error ? err.message : String(err)}`] });
+      }
+      return;
+    }
+
+    // uninstall mode
+    if (!deleteModal.ip.trim() || !deleteModal.password) {
+      setDeleteModal((d) => d && { ...d, logs: ["IP and password are required."] });
+      return;
+    }
+    setDeleteModal((d) => d && { ...d, running: true, logs: [], phase: "connecting", mode: "uninstall" });
+    try {
+      const res = await fetch(`/api/admin/servers/${server.id}`, {
+        method: "DELETE",
+        headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: "uninstall", ip: deleteModal.ip.trim(), password: deleteModal.password }),
+      });
+      if (!res.ok || !res.body) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(j.error || `HTTP ${res.status}`);
+      }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n");
+        buffer = parts.pop() || "";
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line) continue;
+          const evt = JSON.parse(line) as { type: string; line?: string; phase?: string; message?: string };
+          if (evt.type === "log") setDeleteModal((d) => d && { ...d, logs: [...d.logs.slice(-200), evt.line!] });
+          else if (evt.type === "status") setDeleteModal((d) => d && { ...d, phase: evt.phase! });
+          else if (evt.type === "done") {
+            setOk(`Server "${server.name}" uninstalled and removed.`);
+            setDeleteModal(null);
+            await load();
+            return;
+          } else if (evt.type === "error") {
+            throw new Error(evt.message);
+          }
+        }
+      }
+    } catch (err) {
+      setDeleteModal((d) => d && { ...d, running: false, logs: [...(d?.logs ?? []), `Error: ${err instanceof Error ? err.message : String(err)}`] });
+    }
+  };
+
   const startEdit = (server: Server) => {
     setError("");
     setOk("");
     setEditingId(server.id);
     setDraft(toDraft(server));
+    setConfigTab("settings");
+    setPushDraft(null);
+    setKeysList([]);
+    setKeysError("");
+    // Load keys in background — don't block UI
+    void loadKeys(server.id);
   };
 
   const testServer = async (server: Server) => {
@@ -321,6 +469,182 @@ export default function AdminServersPage() {
   const cancelEdit = () => {
     setEditingId(null);
     setDraft(null);
+    setConfigTab("settings");
+    setPushDraft(null);
+    setKeysList([]);
+    setKeysError("");
+  };
+
+  /** Pull live inbound fields from the panel and pre-fill the Configure form. */
+  const syncFromPanel = async () => {
+    if (!editingId) return;
+    setSyncing(true);
+    setError("");
+    try {
+      const res = await api<{ ok: boolean; fields: Record<string, unknown>; error?: string }>(
+        `/api/admin/servers/${editingId}/panel-sync`,
+      );
+      if (!res.ok) throw new Error(res.error ?? "Sync failed");
+      const f = res.fields as {
+        port: number; vlessPbk: string; vlessSid: string; vlessSni: string;
+        vlessFp: string; vlessFlow: string; vlessSecurity: string; vlessSpx: string;
+      };
+      setDraft((d) => d && {
+        ...d,
+        port: String(f.port ?? d.port),
+        vlessPbk: f.vlessPbk || d.vlessPbk,
+        vlessSid: f.vlessSid || d.vlessSid,
+        vlessSni: f.vlessSni || d.vlessSni,
+        vlessFp: f.vlessFp || d.vlessFp,
+        vlessFlow: f.vlessFlow || d.vlessFlow,
+        vlessSecurity: f.vlessSecurity || d.vlessSecurity,
+        vlessSpx: f.vlessSpx || d.vlessSpx,
+      });
+      setOk("Synced from panel ✓ — review and save.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Sync failed");
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  /** Push port + SNI changes to the live 3x-ui panel. */
+  const pushPortSni = async () => {
+    if (!editingId || !pushDraft) return;
+    const newPort = Number(pushDraft.port);
+    const newSni = pushDraft.sni.trim();
+    if (!newPort || !newSni) { setError("Port and SNI are required."); return; }
+
+    setPushing(true);
+    setError("");
+    try {
+      const res = await api<{ ok: boolean; error?: string }>(
+        `/api/admin/servers/${editingId}/panel-sync`,
+        { method: "POST", body: JSON.stringify({ port: newPort, sni: newSni }) },
+      );
+      if (!res.ok) throw new Error(res.error ?? "Push failed");
+      setDraft((d) => d && { ...d, port: String(newPort), vlessSni: newSni });
+      setPushDraft(null);
+      setOk(`Port ${newPort} and SNI ${newSni} pushed to panel ✓`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Push failed");
+    } finally {
+      setPushing(false);
+    }
+  };
+
+  /** Stream SSH command (restart / status) to the sshModal log. */
+  const runSshAction = async () => {
+    if (!sshModal || !editingId) return;
+    const { action, ip, password } = sshModal;
+    if (!ip || !password) { setSshModal((m) => m && { ...m, logs: ["IP and password required."] }); return; }
+
+    setSshModal((m) => m && { ...m, running: true, logs: [], done: false });
+    try {
+      const res = await fetch(`/api/admin/servers/${editingId}/ssh-exec`, {
+        method: "POST",
+        headers: { Accept: "application/x-ndjson", "Content-Type": "application/json" },
+        body: JSON.stringify({ action, ip, password }),
+      });
+      if (!res.body) throw new Error("No stream");
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        const parts = buf.split("\n"); buf = parts.pop() || "";
+        for (const part of parts) {
+          const line = part.trim();
+          if (!line) continue;
+          const evt = JSON.parse(line) as { type: string; line?: string; exitCode?: number; message?: string };
+          if (evt.type === "log") setSshModal((m) => m && { ...m, logs: [...m.logs.slice(-300), evt.line!] });
+          else if (evt.type === "done") setSshModal((m) => m && { ...m, running: false, done: true });
+          else if (evt.type === "error") setSshModal((m) => m && { ...m, running: false, logs: [...(m?.logs ?? []), `Error: ${evt.message}`] });
+        }
+      }
+    } catch (err) {
+      setSshModal((m) => m && { ...m, running: false, logs: [...(m?.logs ?? []), `Error: ${err instanceof Error ? err.message : String(err)}`] });
+    }
+  };
+
+  /** Load keys for the current server (with live panel stats). */
+  const loadKeys = async (serverId: string) => {
+    setKeysLoading(true);
+    setKeysError("");
+    setKeysServerId(serverId);
+    try {
+      const res = await api<{ keys: KeyRow[]; panelOnline: boolean }>(
+        `/api/admin/servers/${serverId}/keys`,
+      );
+      setKeysList(res.keys);
+    } catch (err) {
+      setKeysError(err instanceof Error ? err.message : "Failed to load keys");
+    } finally {
+      setKeysLoading(false);
+    }
+  };
+
+  /** Replace a key — delete old client, provision new one. */
+  const replaceKey = async (keyId: string) => {
+    if (!editingId) return;
+    if (!window.confirm("Replace this key? The old VLESS link will stop working immediately.")) return;
+    setReplacingKey(keyId);
+    try {
+      const res = await api<{ ok: boolean; vlessKey: string; error?: string }>(
+        `/api/admin/servers/${editingId}/keys/replace`,
+        { method: "POST", body: JSON.stringify({ subscriptionId: keyId }) },
+      );
+      if (!res.ok) throw new Error(res.error ?? "Replace failed");
+      setOk("Key replaced ✓");
+      await loadKeys(editingId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Replace failed");
+    } finally {
+      setReplacingKey(null);
+    }
+  };
+
+  /** Revoke a key — disable on panel + mark expired in store. */
+  const revokeKey = async (keyId: string) => {
+    if (!editingId) return;
+    if (!window.confirm("Revoke this key? This will permanently disable the client on the panel.")) return;
+    setRevokingKey(keyId);
+    try {
+      await api(`/api/admin/servers/${editingId}/keys/revoke`, {
+        method: "POST", body: JSON.stringify({ subscriptionId: keyId }),
+      });
+      setOk("Key revoked ✓");
+      await loadKeys(editingId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Revoke failed");
+    } finally {
+      setRevokingKey(null);
+    }
+  };
+
+  /** Create a temporary test key on this server. */
+  const createTestKey = async () => {
+    if (!editingId) return;
+    setCreatingTestKey(true);
+    setTestKeyResult(null);
+    setError("");
+    try {
+      const res = await api<{ ok: boolean; vlessKey: string; subUrl: string; expiresAt: string; error?: string }>(
+        `/api/admin/servers/${editingId}/keys/test`,
+        { method: "POST", body: JSON.stringify({ dataGb: 1, expiryHours: 24 }) },
+      );
+      if (!res.ok) throw new Error(res.error ?? "Failed");
+      setTestKeyResult({ vlessKey: res.vlessKey, subUrl: res.subUrl, expiresAt: res.expiresAt });
+      setOk("Test key created ✓ — copy the link below.");
+      // Refresh keys tab
+      void loadKeys(editingId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Test key creation failed");
+    } finally {
+      setCreatingTestKey(false);
+    }
   };
 
   const saveEdit = async () => {
@@ -370,6 +694,15 @@ export default function AdminServersPage() {
           <h2>Servers</h2>
           <p>Shop regions and 3x-ui VLESS provisioning per server. Drag rows to reorder.</p>
         </div>
+        <button
+          className="btn small"
+          type="button"
+          style={{ whiteSpace: "nowrap" }}
+          onClick={() => setDeployOpen((o) => !o)}
+          disabled={provisioning}
+        >
+          {deployOpen ? "✕ Close" : "+ New Node"}
+        </button>
       </div>
       {error ? <p className="err">{error}</p> : null}
       {ok ? <p className="ok">{ok}</p> : null}
@@ -398,25 +731,38 @@ export default function AdminServersPage() {
         ) : null}
       </div>
 
+      {deployOpen ? (
       <div className="deploy-card">
         <header>
           <div>
             <h2>Deploy node</h2>
             <p>Connect over SSH, set up 3x-ui, then register this shop server automatically.</p>
           </div>
-          {provisioning ? (
-            <span className="pill on">
-              {provPhase === "connecting"
-                ? "Connecting…"
-                : provPhase === "registering"
-                  ? "Registering…"
-                  : "Installing…"}
-            </span>
-          ) : provPhase === "done" ? (
-            <span className="pill on">Done</span>
-          ) : provPhase === "failed" ? (
-            <span className="pill">Failed</span>
-          ) : null}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {provisioning ? (
+              <span className="pill on">
+                {provPhase === "connecting"
+                  ? "Connecting…"
+                  : provPhase === "registering"
+                    ? "Registering…"
+                    : "Installing…"}
+              </span>
+            ) : provPhase === "done" ? (
+              <span className="pill on">Done</span>
+            ) : provPhase === "failed" ? (
+              <span className="pill">Failed</span>
+            ) : null}
+            {!provisioning && (
+              <button
+                type="button"
+                className="btn small ghost"
+                onClick={() => setDeployOpen(false)}
+                aria-label="Collapse deploy form"
+              >
+                ✕ Close
+              </button>
+            )}
+          </div>
         </header>
 
         <div className="deploy-section" style={{ borderTop: 0, marginTop: 0, paddingTop: 8 }}>
@@ -490,6 +836,9 @@ export default function AdminServersPage() {
               >
                 <option value="US">United States</option>
                 <option value="SG">Singapore</option>
+                <option value="JP">Japan</option>
+                <option value="EU">Europe</option>
+                <option value="AU">Australia</option>
               </select>
             </label>
             <label className="field span-2">
@@ -502,6 +851,92 @@ export default function AdminServersPage() {
               />
             </label>
           </div>
+        </div>
+
+        {/* ── VLESS inbound config ── */}
+        <div className="deploy-section">
+          <h3>VLESS inbound</h3>
+          <div className="form-grid">
+            <label className="field span-2">
+              VLESS port
+              <div className="seg" role="group" aria-label="VLESS port mode" style={{ marginTop: 6 }}>
+                <button
+                  type="button"
+                  className={prov.vlessPortMode === "443" ? "on" : ""}
+                  disabled={provisioning}
+                  onClick={() => setProv({ ...prov, vlessPortMode: "443" })}
+                >
+                  <span className="seg-title">443</span>
+                  <span className="seg-desc">Standard HTTPS port — best for bypassing firewalls.</span>
+                </button>
+                <button
+                  type="button"
+                  className={prov.vlessPortMode === "random" ? "on" : ""}
+                  disabled={provisioning}
+                  onClick={() => setProv({ ...prov, vlessPortMode: "random" })}
+                >
+                  <span className="seg-title">Random</span>
+                  <span className="seg-desc">Auto-pick a high port (20 000–60 000).</span>
+                </button>
+                <button
+                  type="button"
+                  className={prov.vlessPortMode === "custom" ? "on" : ""}
+                  disabled={provisioning}
+                  onClick={() => setProv({ ...prov, vlessPortMode: "custom" })}
+                >
+                  <span className="seg-title">Custom</span>
+                  <span className="seg-desc">Enter any port number you want.</span>
+                </button>
+              </div>
+            </label>
+
+            {prov.vlessPortMode === "custom" ? (
+              <label className="field">
+                Custom port
+                <input
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={prov.vlessPortCustom}
+                  onChange={(e) => setProv({ ...prov, vlessPortCustom: e.target.value })}
+                  placeholder="e.g. 8443"
+                  disabled={provisioning}
+                />
+              </label>
+            ) : null}
+
+            <label className="field">
+              SNI target
+              <select
+                value={prov.sni}
+                onChange={(e) => setProv({ ...prov, sni: e.target.value })}
+                disabled={provisioning}
+              >
+                <option value="www.amazon.com">www.amazon.com (recommended)</option>
+                <option value="www.microsoft.com">www.microsoft.com</option>
+                <option value="www.apple.com">www.apple.com</option>
+                <option value="aws.amazon.com">aws.amazon.com</option>
+                <option value="cloudflare.com">cloudflare.com</option>
+                <option value="www.google.com">www.google.com</option>
+              </select>
+            </label>
+
+            <label className="field">
+              Panel port
+              <input
+                type="number"
+                min={1}
+                max={65535}
+                value={prov.panelPort}
+                onChange={(e) => setProv({ ...prov, panelPort: e.target.value })}
+                placeholder="Auto (random)"
+                disabled={provisioning}
+              />
+            </label>
+          </div>
+          <p className="muted" style={{ marginTop: 8, fontSize: 12 }}>
+            Port 443 gives the best firewall bypass. Reality SNI is the camouflage domain — pick one that is reachable from your region.
+          </p>
         </div>
 
         {prov.mode === "reuse" ? (
@@ -584,16 +1019,105 @@ export default function AdminServersPage() {
           </div>
         ) : null}
       </div>
+      ) : null}
 
       {draft && editingId ? (
         <div className="account-card" style={{ marginBottom: 16 }}>
-          <div className="page-h" style={{ marginBottom: 12 }}>
+          {/* Card header + tabs */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
             <div>
-              <h2 style={{ fontSize: 16 }}>Configure VLESS / panel</h2>
-              <p>Used when a paid order is fulfilled — not read from .env.</p>
+              <h2 style={{ fontSize: 16, margin: 0 }}>Configure — {servers.find(s => s.id === editingId)?.name ?? editingId}</h2>
+              <p style={{ margin: "2px 0 0", fontSize: 12, opacity: 0.6 }}>Panel settings and live key management.</p>
+            </div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button type="button" className="btn small ghost"
+                disabled={syncing || saving}
+                onClick={() => void syncFromPanel()}
+                title="Pull live inbound fields from 3x-ui into the form below"
+              >{syncing ? "Syncing…" : "↓ Sync from panel"}</button>
+              <button type="button" className="btn small ghost"
+                onClick={() => setSshModal({ action: "status", ip: servers.find(s => s.id === editingId)?.host ?? "", password: "", running: false, logs: [], done: false })}
+                title="Check x-ui service status via SSH"
+              >Service status</button>
+              <button type="button" className="btn small ghost"
+                onClick={() => setSshModal({ action: "restart", ip: servers.find(s => s.id === editingId)?.host ?? "", password: "", running: false, logs: [], done: false })}
+                title="Restart x-ui via SSH"
+              >↺ Restart x-ui</button>
+              <button type="button" className="btn small ghost"
+                onClick={() => setPushDraft(d => d ? null : { port: draft.port, sni: draft.vlessSni })}
+                title="Push port and SNI changes directly to the 3x-ui panel"
+              >Push port / SNI</button>
+              <button type="button" className="btn small"
+                disabled={creatingTestKey}
+                onClick={() => void createTestKey()}
+                title="Create a 1 GB / 24h test key to verify the connection works"
+              >{creatingTestKey ? "Creating…" : "🔑 Test key"}</button>
             </div>
           </div>
 
+          {/* Push port/SNI panel */}
+          {pushDraft ? (
+            <div style={{ background: "rgba(255,255,255,0.04)", border: "1px solid var(--border)", borderRadius: 8, padding: "12px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+              <label className="field" style={{ flex: 1, minWidth: 100, marginBottom: 0 }}>
+                New port
+                <input type="number" min={1} max={65535} value={pushDraft.port}
+                  onChange={e => setPushDraft(d => d && { ...d, port: e.target.value })} />
+              </label>
+              <label className="field" style={{ flex: 2, minWidth: 180, marginBottom: 0 }}>
+                New SNI
+                <input value={pushDraft.sni}
+                  onChange={e => setPushDraft(d => d && { ...d, sni: e.target.value })}
+                  placeholder="www.amazon.com" />
+              </label>
+              <button type="button" className="btn small"
+                disabled={pushing || !pushDraft.port || !pushDraft.sni.trim()}
+                onClick={() => void pushPortSni()}
+                style={{ marginBottom: 0 }}
+              >{pushing ? "Pushing…" : "Push to panel"}</button>
+              <button type="button" className="btn small ghost" onClick={() => setPushDraft(null)} style={{ marginBottom: 0 }}>Cancel</button>
+            </div>
+          ) : null}
+
+          {/* Test key result */}
+          {testKeyResult ? (
+            <div style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.3)", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                <strong style={{ fontSize: 13 }}>🔑 Test key ready (1 GB · 24h)</strong>
+                <button type="button" onClick={() => setTestKeyResult(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 14 }}>✕</button>
+              </div>
+              <label className="field" style={{ marginBottom: 8 }}>
+                VLESS link
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input readOnly value={testKeyResult.vlessKey} style={{ fontSize: 11, fontFamily: "monospace" }} onClick={e => (e.target as HTMLInputElement).select()} />
+                  <button type="button" className="btn small" onClick={() => { void navigator.clipboard.writeText(testKeyResult.vlessKey); setOk("VLESS link copied ✓"); }} style={{ whiteSpace: "nowrap" }}>Copy</button>
+                </div>
+              </label>
+              <label className="field" style={{ marginBottom: 0 }}>
+                Subscription URL
+                <div style={{ display: "flex", gap: 6 }}>
+                  <input readOnly value={testKeyResult.subUrl} style={{ fontSize: 11, fontFamily: "monospace" }} onClick={e => (e.target as HTMLInputElement).select()} />
+                  <button type="button" className="btn small" onClick={() => { void navigator.clipboard.writeText(testKeyResult.subUrl); setOk("Sub URL copied ✓"); }} style={{ whiteSpace: "nowrap" }}>Copy</button>
+                </div>
+              </label>
+              <p className="muted" style={{ fontSize: 11, marginTop: 6, marginBottom: 0 }}>Expires {new Date(testKeyResult.expiresAt).toLocaleString()}. Visible in the Keys tab — revoke anytime.</p>
+            </div>
+          ) : null}
+
+          {/* Tabs */}
+          <div style={{ display: "flex", gap: 0, borderBottom: "1px solid var(--border)", marginBottom: 16 }}>
+            {(["settings", "keys"] as const).map(tab => (
+              <button key={tab} type="button"
+                onClick={() => { setConfigTab(tab); if (tab === "keys" && editingId && keysServerId !== editingId) void loadKeys(editingId); }}
+                style={{
+                  background: "none", border: "none", borderBottom: configTab === tab ? "2px solid var(--brand)" : "2px solid transparent",
+                  padding: "6px 14px", cursor: "pointer", fontWeight: configTab === tab ? 700 : 400,
+                  fontSize: 13, color: configTab === tab ? "var(--brand)" : "inherit", marginBottom: -1,
+                  textTransform: "capitalize",
+                }}
+              >{tab}{tab === "keys" ? ` (${keysList.length})` : ""}</button>
+            ))}
+          </div>
+          {configTab === "settings" && (<>
           <div className="toolbar" style={{ marginBottom: 0, alignItems: "flex-end" }}>
             <span style={{ paddingBottom: 18 }}>
               <FlagIcon
@@ -757,6 +1281,122 @@ export default function AdminServersPage() {
               Cancel
             </button>
           </div>
+          </>)}
+
+          {configTab === "keys" && (
+            <div>
+              {keysLoading && <p className="muted" style={{ fontSize: 13 }}>Loading keys from panel…</p>}
+              {keysError && <p className="err">{keysError}</p>}
+              {!keysLoading && keysList.length === 0 && !keysError && (
+                <p className="muted" style={{ fontSize: 13 }}>No subscriptions found for this server.</p>
+              )}
+              {keysList.length > 0 && (
+                <div className="table-wrap" style={{ marginTop: 0 }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Email</th>
+                        <th>Plan</th>
+                        <th>Usage</th>
+                        <th>Expires</th>
+                        <th>Status</th>
+                        <th />
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {keysList.map(key => {
+                        const pct = key.quotaBytes && key.usedBytes !== null
+                          ? Math.min(100, Math.round((key.usedBytes / key.quotaBytes) * 100))
+                          : null;
+                        const isExpired = key.status !== "active";
+                        return (
+                          <tr key={key.id} style={{ opacity: isExpired ? 0.5 : 1 }}>
+                            <td style={{ fontSize: 12 }}>
+                              <code style={{ fontSize: 11 }}>{key.panelEmail}</code>
+                              <div className="muted" style={{ fontSize: 11 }}>{key.userId.slice(0, 10)}…</div>
+                            </td>
+                            <td style={{ fontSize: 12 }}>{key.planTitle}</td>
+                            <td style={{ minWidth: 130 }}>
+                              {pct !== null ? (
+                                <>
+                                  <div style={{ fontSize: 11, marginBottom: 3 }}>
+                                    {key.usedGb?.toFixed(2)} / {key.dataGb} GB ({pct}%)
+                                  </div>
+                                  <div style={{ height: 5, borderRadius: 3, background: "var(--border)", overflow: "hidden" }}>
+                                    <div style={{ width: `${pct}%`, height: "100%", background: pct >= 90 ? "var(--danger)" : pct >= 70 ? "#f59e0b" : "var(--brand)", transition: "width .3s" }} />
+                                  </div>
+                                </>
+                              ) : key.dataGb > 0 ? <span className="muted" style={{ fontSize: 11 }}>{key.dataGb} GB · offline</span> : <span className="muted" style={{ fontSize: 11 }}>Unlimited</span>}
+                            </td>
+                            <td style={{ fontSize: 12 }}>
+                              {key.expiresAt ? new Date(key.expiresAt).toLocaleDateString() : "∞"}
+                            </td>
+                            <td>
+                              <span className={`pill ${key.status === "active" ? (key.liveEnabled === false ? "off" : "on") : "off"}`}>
+                                {key.status === "active" ? (key.liveEnabled === false ? "Disabled" : "Active") : key.status}
+                              </span>
+                            </td>
+                            <td>
+                              <div className="toolbar" style={{ marginBottom: 0, gap: 5 }}>
+                                <button type="button" className="btn small ghost"
+                                  disabled={!!replacingKey || isExpired}
+                                  onClick={() => void replaceKey(key.id)}
+                                  title="Issue a new VLESS key for this subscription"
+                                >{replacingKey === key.id ? "Replacing…" : "Replace"}</button>
+                                <button type="button" className="btn small ghost danger"
+                                  disabled={!!revokingKey || isExpired}
+                                  onClick={() => void revokeKey(key.id)}
+                                  title="Permanently revoke this key"
+                                >{revokingKey === key.id ? "Revoking…" : "Revoke"}</button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div style={{ marginTop: 12 }}>
+                <button type="button" className="btn small ghost"
+                  disabled={keysLoading}
+                  onClick={() => editingId && void loadKeys(editingId)}
+                >↻ Refresh</button>
+                <button type="button" className="btn small ghost" style={{ marginLeft: 6 }} onClick={cancelEdit}>Close</button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : null}
+
+      {/* SSH action modal */}
+      {sshModal ? (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)", display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+          onClick={e => { if (e.target === e.currentTarget && !sshModal.running) setSshModal(null); }}>
+          <div style={{ background: "var(--card-bg,#1a1a2e)", border: "1px solid var(--border,#333)", borderRadius: 12, padding: 24, width: "100%", maxWidth: 520, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <h2 style={{ fontSize: 15, margin: 0 }}>{sshModal.action === "restart" ? "↺ Restart x-ui" : "Service status"}</h2>
+              {!sshModal.running && <button type="button" onClick={() => setSshModal(null)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "var(--muted,#888)" }}>✕</button>}
+            </div>
+            <label className="field">
+              VPS IP
+              <input value={sshModal.ip} onChange={e => setSshModal(m => m && { ...m, ip: e.target.value })} disabled={sshModal.running} placeholder="123.45.67.89" />
+            </label>
+            <label className="field">
+              Root password
+              <input type="password" value={sshModal.password} onChange={e => setSshModal(m => m && { ...m, password: e.target.value })} disabled={sshModal.running} autoComplete="new-password" />
+            </label>
+            {sshModal.logs.length > 0 && (
+              <pre style={{ background: "#0d0d1a", border: "1px solid #333", borderRadius: 8, padding: "10px 12px", fontSize: 11, lineHeight: 1.6, maxHeight: 200, overflowY: "auto", margin: 0, whiteSpace: "pre-wrap" }}>{sshModal.logs.join("\n")}</pre>
+            )}
+            {sshModal.done && <p style={{ color: "var(--brand)", fontSize: 12, margin: 0 }}>✓ Done</p>}
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button type="button" className="btn small ghost" onClick={() => setSshModal(null)} disabled={sshModal.running}>Cancel</button>
+              <button type="button" className="btn small" onClick={() => void runSshAction()} disabled={sshModal.running || !sshModal.ip || !sshModal.password}>
+                {sshModal.running ? "Running…" : sshModal.action === "restart" ? "Restart" : "Check status"}
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 
@@ -859,6 +1499,14 @@ export default function AdminServersPage() {
                       <button className="btn small ghost" type="button" onClick={() => startEdit(server)}>
                         Configure
                       </button>
+                      <button
+                        className="btn small ghost danger"
+                        type="button"
+                        onClick={() => openDeleteModal(server)}
+                        title="Delete this server"
+                      >
+                        Delete
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -867,6 +1515,135 @@ export default function AdminServersPage() {
           </tbody>
         </table>
       </div>
+
+      {/* ── Delete confirmation modal ── */}
+      {deleteModal ? (
+        <div
+          style={{
+            position: "fixed", inset: 0, zIndex: 1000,
+            background: "rgba(0,0,0,0.55)", backdropFilter: "blur(4px)",
+            display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
+          }}
+          onClick={(e) => { if (e.target === e.currentTarget && !deleteModal.running) closeDeleteModal(); }}
+        >
+          <div
+            style={{
+              background: "var(--card-bg,#1a1a2e)", border: "1px solid var(--border,#333)",
+              borderRadius: 12, padding: 24, width: "100%", maxWidth: 480,
+              display: "flex", flexDirection: "column", gap: 16,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <h2 style={{ fontSize: 16, margin: 0 }}>Delete "{deleteModal.server.name}"</h2>
+              {!deleteModal.running && (
+                <button
+                  type="button"
+                  onClick={closeDeleteModal}
+                  style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "var(--muted,#888)" }}
+                  aria-label="Close"
+                >✕</button>
+              )}
+            </div>
+
+            {deleteModal.mode === "pick" && (
+              <>
+                <p style={{ margin: 0, fontSize: 13, color: "var(--muted,#aaa)" }}>
+                  Choose how to delete this node:
+                </p>
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => setDeleteModal((d) => d && { ...d, mode: "uninstall" })}
+                    style={{ textAlign: "left", padding: "12px 16px" }}
+                  >
+                    <div style={{ fontWeight: 700 }}>Uninstall 3x-ui &amp; delete record</div>
+                    <div style={{ fontSize: 12, fontWeight: 400, marginTop: 3, opacity: 0.75 }}>
+                      SSH into the VPS, stop and remove 3x-ui, then delete the server entry here.
+                    </div>
+                  </button>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={() => void runDelete("record")}
+                    style={{ textAlign: "left", padding: "12px 16px" }}
+                  >
+                    <div style={{ fontWeight: 700 }}>Delete record only</div>
+                    <div style={{ fontSize: 12, fontWeight: 400, marginTop: 3, opacity: 0.75 }}>
+                      Remove this server from the shop only. 3x-ui stays running on the VPS.
+                    </div>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="btn small ghost"
+                  onClick={closeDeleteModal}
+                  style={{ alignSelf: "flex-end" }}
+                >Cancel</button>
+              </>
+            )}
+
+            {deleteModal.mode === "uninstall" && (
+              <>
+                <p style={{ margin: 0, fontSize: 13, color: "var(--muted,#aaa)" }}>
+                  Enter root SSH credentials for <code>{deleteModal.server.host || deleteModal.ip}</code>.
+                </p>
+                <label className="field">
+                  VPS IP address
+                  <input
+                    value={deleteModal.ip}
+                    onChange={(e) => setDeleteModal((d) => d && { ...d, ip: e.target.value })}
+                    placeholder="123.45.67.89"
+                    disabled={deleteModal.running}
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="field">
+                  Root password
+                  <input
+                    type="password"
+                    value={deleteModal.password}
+                    onChange={(e) => setDeleteModal((d) => d && { ...d, password: e.target.value })}
+                    disabled={deleteModal.running}
+                    autoComplete="new-password"
+                  />
+                </label>
+
+                {deleteModal.logs.length > 0 && (
+                  <pre
+                    style={{
+                      background: "#0d0d1a", border: "1px solid #333", borderRadius: 8,
+                      padding: "10px 12px", fontSize: 11, lineHeight: 1.6,
+                      maxHeight: 160, overflowY: "auto", margin: 0, whiteSpace: "pre-wrap",
+                    }}
+                  >
+                    {deleteModal.logs.join("\n")}
+                  </pre>
+                )}
+
+                <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+                  <button
+                    type="button"
+                    className="btn small ghost"
+                    onClick={closeDeleteModal}
+                    disabled={deleteModal.running}
+                  >Cancel</button>
+                  <button
+                    type="button"
+                    className="btn small danger"
+                    disabled={deleteModal.running || !deleteModal.ip.trim() || !deleteModal.password}
+                    onClick={() => void runDelete("uninstall")}
+                  >
+                    {deleteModal.running
+                      ? (deleteModal.phase === "uninstalling" ? "Uninstalling…" : deleteModal.phase === "removing" ? "Removing…" : "Connecting…")
+                      : "Uninstall &amp; delete"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

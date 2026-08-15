@@ -338,7 +338,14 @@ input.box, select.box {
   border: 1px solid var(--border);
   box-shadow: none;
 }
-.btn.danger { background: var(--danger); }
+.btn.danger { background: var(--danger); color: #fff; box-shadow: 0 4px 14px rgba(224,69,85,0.3); }
+.btn.ghost.danger {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid var(--danger);
+  box-shadow: none;
+}
+.btn.ghost.danger:hover:not(:disabled) { background: rgba(224,69,85,0.08); }
 .btn.small {
   width: auto;
   padding: 7px 12px;

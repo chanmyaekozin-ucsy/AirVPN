@@ -312,6 +312,165 @@ export class PanelClient {
     });
     return { uuid: clientUuid, email, vlessKey };
   }
+
+  /** Delete a client from the panel by UUID (tries API then falls back to inbound edit). */
+  async deleteClientByUuid(clientUuid: string): Promise<boolean> {
+    const encoded = encodeURIComponent(clientUuid);
+    const iid = this.server.panelInboundId;
+    const res = await this.post(`/panel/api/inbounds/${iid}/delClient/${encoded}`);
+    if (res.status === 404) return false;
+    const text = await res.text();
+    if (!text.trim()) return res.status === 200;
+    try {
+      const body = JSON.parse(text) as Json;
+      return Boolean(body.success);
+    } catch {
+      return false;
+    }
+  }
+
+  /** Enable or disable a client by UUID. */
+  async setClientEnabled(clientUuid: string, email: string, enabled: boolean): Promise<void> {
+    const inbound = await this.getInbound();
+    const settings = parseJsonField(inbound.settings, "settings") as Json;
+    const clients = Array.isArray(settings.clients) ? (settings.clients as Json[]) : [];
+    const client = clients.find(
+      (c) => String(c.id) === clientUuid || String(c.email) === email,
+    );
+    if (!client) throw new PanelError(`Client ${email} not found in inbound`);
+    client.enable = enabled;
+    settings.clients = clients;
+
+    const payload = {
+      id: inbound.id,
+      settings: JSON.stringify(settings),
+      streamSettings: serializeJsonField(inbound.streamSettings),
+      sniffing: serializeJsonField(inbound.sniffing ?? "{}"),
+      remark: inbound.remark ?? "",
+      enable: inbound.enable ?? true,
+      expiryTime: inbound.expiryTime ?? 0,
+      listen: inbound.listen ?? "",
+      port: inbound.port,
+      protocol: inbound.protocol,
+      tag: inbound.tag ?? "",
+    };
+    const res = await this.post(`/panel/api/inbounds/update/${inbound.id}`, {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await this.parseJson(res, "set client enabled");
+    if (!body.success) throw new PanelError(`setClientEnabled failed: ${String(body.msg)}`);
+  }
+
+  /** Fetch clientStats for all clients on this inbound (live usage). */
+  async getClientStats(): Promise<
+    Array<{
+      email: string;
+      up: number;
+      down: number;
+      total: number;
+      enable: boolean;
+      expiryTime: number;
+    }>
+  > {
+    const inbound = await this.getInbound();
+    const raw = Array.isArray(inbound.clientStats) ? (inbound.clientStats as Json[]) : [];
+    return raw.map((s) => ({
+      email: String(s.email ?? ""),
+      up: Number(s.up ?? 0),
+      down: Number(s.down ?? 0),
+      total: Number(s.total ?? 0),
+      enable: Boolean(s.enable ?? true),
+      expiryTime: Number(s.expiryTime ?? 0),
+    }));
+  }
+
+  /**
+   * Push updated port + Reality SNI to the panel inbound.
+   * Returns the updated streamSettings JSON from the panel.
+   */
+  async updateInboundPortAndSni(newPort: number, newSni: string): Promise<Json> {
+    const inbound = await this.getInbound();
+    const stream = parseJsonField(inbound.streamSettings, "streamSettings") as Json;
+    const reality = (stream.realitySettings ?? {}) as Json;
+
+    // Update SNI-related fields
+    reality.dest = `${newSni}:443`;
+    // Preserve existing serverNames if SNI didn't change, else use curated list
+    if (newSni.includes("amazon.com")) {
+      reality.serverNames = [
+        "www.amazon.com","yp.amazon.com","mp3recs.amazon.com","origin-www.amazon.com",
+        "buybox.amazon.com","uedata.amazon.com","us.amazon.com","yellowpages.amazon.com",
+        "home.amazon.com","www.m.amazon.com","iphone.amazon.com","www.amzn.com",
+        "huddles.amazon.com","amazon.com","corporate.amazon.com","shop.business.amazon.com",
+        "www.cdn.amazon.com","test-www.amazon.com","amzn.com",
+      ];
+    } else {
+      reality.serverNames = [newSni];
+    }
+    stream.realitySettings = reality;
+
+    const settings = parseJsonField(inbound.settings, "settings") as Json;
+    const payload = {
+      id: inbound.id,
+      settings: JSON.stringify(settings),
+      streamSettings: JSON.stringify(stream),
+      sniffing: serializeJsonField(inbound.sniffing ?? "{}"),
+      remark: inbound.remark ?? "",
+      enable: inbound.enable ?? true,
+      expiryTime: inbound.expiryTime ?? 0,
+      listen: inbound.listen ?? "",
+      port: newPort,
+      protocol: inbound.protocol,
+      tag: inbound.tag ?? "",
+    };
+    const res = await this.post(`/panel/api/inbounds/update/${inbound.id}`, {
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const body = await this.parseJson(res, "update inbound");
+    if (!body.success) throw new PanelError(`updateInbound failed: ${String(body.msg)}`);
+    return stream;
+  }
+
+  /**
+   * Read the live inbound from the panel and return parsed Reality / VLESS fields
+   * suitable for filling the admin Configure form.
+   */
+  async syncInboundFields(): Promise<{
+    port: number;
+    vlessPbk: string;
+    vlessSid: string;
+    vlessSni: string;
+    vlessFp: string;
+    vlessFlow: string;
+    vlessSecurity: string;
+    vlessSpx: string;
+    panelInboundId: number;
+    clientCount: number;
+  }> {
+    const inbound = await this.getInbound();
+    const stream = parseJsonField(inbound.streamSettings, "streamSettings") as Json;
+    const reality = (stream.realitySettings ?? {}) as Json;
+    const rsSettings = (reality.settings ?? {}) as Json;
+    const serverNames = Array.isArray(reality.serverNames) ? (reality.serverNames as string[]) : [];
+    const shortIds = Array.isArray(reality.shortIds) ? (reality.shortIds as string[]) : [];
+    const settings = parseJsonField(inbound.settings, "settings") as Json;
+    const clients = Array.isArray(settings.clients) ? settings.clients : [];
+
+    return {
+      port: Number(inbound.port) || 443,
+      vlessPbk: String(rsSettings.publicKey ?? ""),
+      vlessSid: shortIds[0] ?? "",
+      vlessSni: serverNames[0] ?? "",
+      vlessFp: String(rsSettings.fingerprint ?? "chrome"),
+      vlessFlow: String((clients[0] as Json | undefined)?.flow ?? "xtls-rprx-vision"),
+      vlessSecurity: String(stream.security ?? "reality"),
+      vlessSpx: String(rsSettings.spiderX ?? "/"),
+      panelInboundId: Number(inbound.id) || this.server.panelInboundId,
+      clientCount: clients.length,
+    };
+  }
 }
 
 export async function provisionVless(input: {
@@ -345,3 +504,4 @@ export async function testPanelConnection(server: Server) {
   const client = new PanelClient(server);
   return client.testConnection();
 }
+
