@@ -172,7 +172,7 @@ async function handleBuyServers(chatId: number) {
   const buttons = activeServers.map((server) => [
     {
       text: `${server.name} (${server.region})`,
-      callback_data: `buy_srv_${server.id}`,
+      callback_data: `buy_srv:${server.id}`,
     },
   ]);
   buttons.push([{ text: "Back to Menu", callback_data: "cmd_start" }]);
@@ -210,7 +210,7 @@ async function handleBuyServerPlans(chatId: number, serverId: string) {
   const buttons = plans.map((plan) => [
     {
       text: `${plan.title} (${formatDataGb(plan.dataGb)}) — ${formatKs(plan.priceKs)}`,
-      callback_data: `buy_plan_${plan.id}`,
+      callback_data: `buy_plan:${plan.id}`,
     },
   ]);
   buttons.push([{ text: "Back to Servers", callback_data: "buy_servers" }]);
@@ -240,13 +240,13 @@ async function handleBuyPlan(chatId: number, planId: string) {
     buttons.push([
       {
         text: `Pay with ${m.method} (${m.accountName || ""})`,
-        callback_data: `buy_pay_${plan.id}_${m.id}`,
+        callback_data: `buy_pay:${plan.id}:${m.id}`,
       },
     ]);
   }
 
   buttons.push([
-    { text: "Back to Plans", callback_data: `buy_srv_${plan.serverId}` },
+    { text: "Back to Plans", callback_data: `buy_srv:${plan.serverId}` },
   ]);
 
   const text = `
@@ -773,31 +773,59 @@ export async function POST(req: NextRequest) {
       } else if (data === "buy_servers") {
         await answerCallback(cb.id);
         await handleBuyServers(chatId);
-      } else if (data.startsWith("buy_srv_")) {
+      } else if (data.startsWith("buy_srv:") || data.startsWith("buy_srv_")) {
         await answerCallback(cb.id);
-        const srvId = data.replace("buy_srv_", "");
+        const srvId = data.startsWith("buy_srv:")
+          ? data.slice("buy_srv:".length)
+          : data.slice("buy_srv_".length);
         await handleBuyServerPlans(chatId, srvId);
-      } else if (data.startsWith("buy_plan_")) {
+      } else if (data.startsWith("buy_plan:") || data.startsWith("buy_plan_")) {
         await answerCallback(cb.id);
-        const planId = data.replace("buy_plan_", "");
+        const planId = data.startsWith("buy_plan:")
+          ? data.slice("buy_plan:".length)
+          : data.slice("buy_plan_".length);
         await handleBuyPlan(chatId, planId);
-      } else if (data.startsWith("buy_pay_")) {
+      } else if (data.startsWith("buy_pay:") || data.startsWith("buy_pay_")) {
         await answerCallback(cb.id);
-        const parts = data.replace("buy_pay_", "").split("_");
-        const planId = parts[0];
-        const accountId = parts.slice(1).join("_");
+        const rest = data.startsWith("buy_pay:")
+          ? data.slice("buy_pay:".length)
+          : data.slice("buy_pay_".length);
+        let planId = "";
+        let accountId = "";
+        if (rest.includes(":")) {
+          const parts = rest.split(":");
+          planId = parts[0];
+          accountId = parts.slice(1).join(":");
+        } else {
+          const store = await readStore();
+          const foundPlan = store.plans.find((p) => rest.startsWith(p.id + "_"));
+          if (foundPlan) {
+            planId = foundPlan.id;
+            accountId = rest.slice(planId.length + 1);
+          } else {
+            const parts = rest.split("_");
+            planId = parts.slice(0, -1).join("_");
+            accountId = parts[parts.length - 1];
+          }
+        }
         await handleCreateDeposit(chatId, user, planId, accountId);
-      } else if (data.startsWith("check_ord_")) {
+      } else if (data.startsWith("check_ord:") || data.startsWith("check_ord_")) {
         await answerCallback(cb.id);
-        const ordId = data.replace("check_ord_", "");
+        const ordId = data.startsWith("check_ord:")
+          ? data.slice("check_ord:".length)
+          : data.slice("check_ord_".length);
         await handleCheckOrder(chatId, user, ordId);
-      } else if (data.startsWith("cancel_ord_")) {
+      } else if (data.startsWith("cancel_ord:") || data.startsWith("cancel_ord_")) {
         await answerCallback(cb.id);
-        const ordId = data.replace("cancel_ord_", "");
+        const ordId = data.startsWith("cancel_ord:")
+          ? data.slice("cancel_ord:".length)
+          : data.slice("cancel_ord_".length);
         await handleCancelOrder(chatId, user, ordId);
-      } else if (data.startsWith("req_rep_")) {
+      } else if (data.startsWith("req_rep:") || data.startsWith("req_rep_")) {
         await answerCallback(cb.id);
-        const subId = data.replace("req_rep_", "");
+        const subId = data.startsWith("req_rep:")
+          ? data.slice("req_rep:".length)
+          : data.slice("req_rep_".length);
         await handleRequestReplacement(chatId, user, subId);
       } else if (data === "cmd_plans") {
         await answerCallback(cb.id);
