@@ -18,8 +18,8 @@ export async function POST(req: NextRequest) {
     const user = await updateStore((store) => {
       const found = store.users.find(
         (u) =>
-          u.phone.replace(/\s/g, "") === identifier.replace(/\s/g, "") ||
-          u.email.toLowerCase() === identifier,
+          (u.phone && u.phone.replace(/\s/g, "") === identifier.replace(/\s/g, "")) ||
+          (u.email && u.email.toLowerCase() === identifier),
       );
       if (!found || found.pinHash !== hashPin(pin)) {
         return null;

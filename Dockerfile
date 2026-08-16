@@ -1,43 +1,32 @@
-# AirVPN — Telegram bot (Coolify / Docker)
-FROM python:3.11-slim-bookworm
-
+# ─── AirVPN Unified Web & Bot Application (Next.js 15 Standalone) ────────────
+FROM node:22-alpine AS deps
 WORKDIR /app
+COPY web/package.json web/package-lock.json ./
+RUN npm ci
 
-# OpenCV (receipt QR) runtime deps
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        libglib2.0-0 \
-        libgl1 \
-    && rm -rf /var/lib/apt/lists/*
+FROM node:22-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY web/ .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+FROM node:22-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000 \
+    HOSTNAME=0.0.0.0
 
-COPY . .
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
-RUN useradd --create-home --uid 1000 appuser \
-    && mkdir -p /data /data/ads \
-    && chmod +x /app/entrypoint.sh \
-    && chown -R appuser:appuser /app /data
+RUN mkdir -p /app/data /app/data/uploads
 
-USER appuser
+EXPOSE 3000
 
-EXPOSE 9090
+HEALTHCHECK --interval=30s --timeout=5s --start-period=40s --retries=3 \
+  CMD node -e "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-ENV ENV=production \
-    DEV_MOCK_VPN=false \
-    SQLITE_PATH=/data/airvpn.sqlite3 \
-    MOBILE_ADS_DIR=/data/ads \
-    KBZ_SESSION_PATH=/data/kbz/kbz_session.json \
-    SUB_SERVER_PORT=9090 \
-    MOBILE_API_PORT=9090 \
-    MOBILE_API_PUBLIC_BASE=https://airnetwork.flash-myanmar.com
-
-# Mount:
-#   - private volume at /data for SQLite (airvpn.sqlite3) + ad images (/data/ads)
-#   - shared host path /data/kbz → /data/kbz for merchant kbz_session.json
-#     (same file as Cloud Game Shop + Donimate Payment Manager)
-# Expose port 9090 (nginx: airnetwork.flash-myanmar.com → 127.0.0.1:9090)
-# for mobile API (/v1/*, /admin/login) + subscription (/sub/...).
-# Set SUB_PUBLIC_BASE_URL for subscription links.
-CMD ["/app/entrypoint.sh"]
+CMD ["node", "server.js"]

@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
       let found = store.users.find(
         (u) =>
           (sub && u.googleSub === sub) ||
-          (email && u.email.toLowerCase() === email),
+          (email && u.email?.toLowerCase() === email),
       );
 
       if (!found) {

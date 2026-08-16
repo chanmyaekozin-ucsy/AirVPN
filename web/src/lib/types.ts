@@ -13,10 +13,10 @@ export type LoginMethod = "email" | "google" | "wathanpay" | "phone";
 export type User = {
   id: string;
   name: string;
-  phone: string;
-  email: string;
+  phone?: string;
+  email?: string;
   role: Role;
-  pinHash: string;
+  pinHash?: string;
   balanceKs: number;
   loginMethod?: LoginMethod;
   googleSub?: string;
