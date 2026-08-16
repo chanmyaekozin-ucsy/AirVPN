@@ -36,9 +36,39 @@ export function PlanCardSkeleton() {
 
 export function PlanListSkeleton({ count = 3 }: { count?: number }) {
   return (
-    <div className="plan-grid" aria-busy="true" aria-label="Loading plans">
+    <div className="pkg-list" aria-busy="true" aria-label="Loading plans">
       {Array.from({ length: count }).map((_, i) => (
-        <PlanCardSkeleton key={i} />
+        <div key={i} className="pkg" style={{ opacity: 0.85, cursor: "default" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", width: "100%" }}>
+            <div style={{ flex: 1 }}>
+              <div className="skeleton skeleton-line w-60" style={{ height: 16, marginBottom: 6 }} />
+              <div className="skeleton skeleton-line w-30" style={{ height: 12 }} />
+            </div>
+            <div className="skeleton skeleton-price" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function PaymentMethodSkeleton() {
+  return (
+    <div className="pay-method skeleton-pay-card" style={{ opacity: 0.85, cursor: "default" }}>
+      <div className="skeleton skeleton-circle" style={{ width: 36, height: 36 }} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div className="skeleton skeleton-line w-40" style={{ height: 15 }} />
+        <div className="skeleton skeleton-line w-60" style={{ height: 12 }} />
+      </div>
+    </div>
+  );
+}
+
+export function PaymentMethodsSkeleton({ count = 2 }: { count?: number }) {
+  return (
+    <div className="pay-list" aria-busy="true" aria-label="Loading payment methods">
+      {Array.from({ length: count }).map((_, i) => (
+        <PaymentMethodSkeleton key={i} />
       ))}
     </div>
   );

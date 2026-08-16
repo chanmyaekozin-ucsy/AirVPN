@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { PaymentMethodsSkeleton } from "@/components/LoadingSkeleton";
 import { ShopShell } from "@/components/ShopShell";
 import { useAuth } from "@/components/Auth";
 import { api } from "@/lib/api";
@@ -332,23 +333,31 @@ export default function OrderResultPage() {
 
             {awaiting && payStep === "methods" ? (
               <>
-                <div className="pay-list">
-                  {methods.map((method) => (
-                    <button
-                      key={method.id}
-                      className={selected?.id === method.id ? "pay-method on" : "pay-method"}
-                      type="button"
-                      onClick={() => setSelected(method)}
-                    >
-                      <span className={`pay-mark ${method.method === "WavePay" ? "wave" : "kbz"}`}>
-                        {method.method === "WavePay" ? "W" : "K"}
-                      </span>
-                      <span>
-                        <b>{method.method}</b>
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                {methods.length === 0 ? (
+                  <PaymentMethodsSkeleton count={2} />
+                ) : (
+                  <div className="pay-list">
+                    {methods.map((method) => (
+                      <button
+                        key={method.id}
+                        className={selected?.id === method.id ? "pay-method on" : "pay-method"}
+                        type="button"
+                        onClick={() => setSelected(method)}
+                      >
+                        <span className={`pay-mark ${method.method === "WavePay" ? "wave" : "kbz"}`}>
+                          {method.method === "WavePay" ? "W" : "K"}
+                        </span>
+                        <span>
+                          <b>{method.method}</b>
+                          <span className="pay-sub">
+                            {method.accountName || method.method}
+                            {method.accountNumber ? ` · ${method.accountNumber}` : ""}
+                          </span>
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <button className="btn" style={{ marginTop: 16, marginBottom: 8 }} disabled={!selected || busy} type="button" onClick={() => void startGatewayPay()}>
                   {busy ? "Starting…" : "Continue"}
                 </button>

@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { FlagIcon } from "@/components/FlagIcon";
-import { PlanListSkeleton } from "@/components/LoadingSkeleton";
+import { PaymentMethodsSkeleton, PlanListSkeleton } from "@/components/LoadingSkeleton";
 import { ShopShell } from "@/components/ShopShell";
 import { useAuth } from "@/components/Auth";
 import { api } from "@/lib/api";
@@ -42,6 +42,7 @@ export default function BuyPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [methods, setMethods] = useState<PayMethod[]>([]);
+  const [methodsLoading, setMethodsLoading] = useState(false);
   const [selected, setSelected] = useState<PayMethod | null>(null);
   const [orderId, setOrderId] = useState("");
   const [payee, setPayee] = useState<{ name: string | null; phone: string | null; method: string } | null>(
@@ -71,12 +72,14 @@ export default function BuyPage() {
 
   useEffect(() => {
     if (miniApp || step !== "pay") return;
+    setMethodsLoading(true);
     api<{ methods: PayMethod[] }>("/api/payment-methods")
       .then((data) => {
         setMethods(data.methods);
         setSelected((current) => current ?? data.methods[0] ?? null);
       })
-      .catch((err) => setError(err instanceof Error ? err.message : "Could not load payment methods"));
+      .catch((err) => setError(err instanceof Error ? err.message : "Could not load payment methods"))
+      .finally(() => setMethodsLoading(false));
   }, [step, miniApp]);
 
   useEffect(() => {
@@ -312,28 +315,31 @@ export default function BuyPage() {
 
         {step === "pay" && !miniApp ? (
           <>
-            <p className="hint">Choose how to pay. Transfer the exact amount, then confirm with TxID.</p>
-            <div className="pay-list">
-              {methods.map((method) => (
-                <button
-                  key={method.id}
-                  className={selected?.id === method.id ? "pay-method on" : "pay-method"}
-                  type="button"
-                  onClick={() => setSelected(method)}
-                >
-                  <span className={`pay-mark ${method.method === "WavePay" ? "wave" : "kbz"}`}>
-                    {method.method === "WavePay" ? "W" : "K"}
-                  </span>
-                  <span>
-                    <b>{method.method}</b>
-                    <span className="pay-sub">
-                      {method.accountName || method.method}
-                      {method.accountNumber ? ` · ${method.accountNumber}` : ""}
+            {methodsLoading ? (
+              <PaymentMethodsSkeleton count={2} />
+            ) : (
+              <div className="pay-list">
+                {methods.map((method) => (
+                  <button
+                    key={method.id}
+                    className={selected?.id === method.id ? "pay-method on" : "pay-method"}
+                    type="button"
+                    onClick={() => setSelected(method)}
+                  >
+                    <span className={`pay-mark ${method.method === "WavePay" ? "wave" : "kbz"}`}>
+                      {method.method === "WavePay" ? "W" : "K"}
                     </span>
-                  </span>
-                </button>
-              ))}
-            </div>
+                    <span>
+                      <b>{method.method}</b>
+                      <span className="pay-sub">
+                        {method.accountName || method.method}
+                        {method.accountNumber ? ` · ${method.accountNumber}` : ""}
+                      </span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
             <button
               className="btn"
               style={{ marginTop: 20 }}
