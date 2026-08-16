@@ -68,7 +68,7 @@ function getAppBaseUrl(): string {
     process.env.APP_URL ||
     process.env.NEXT_PUBLIC_APP_URL ||
     process.env.COOLIFY_URL ||
-    "https://airnetwork.flash-myanmar.com"
+    "https://airnetworkshop.flash-myanmar.com"
   ).replace(/\/$/, "");
 }
 
