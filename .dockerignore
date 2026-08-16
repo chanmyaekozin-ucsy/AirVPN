@@ -1,12 +1,12 @@
 .env
 .env.*
-!.env.example
+.env.local
+!*.example
 .venv/
 __pycache__/
 *.pyc
 *.pyo
 *.sqlite3
-kbz_session.json
 .git/
 .gitignore
 .DS_Store
@@ -14,3 +14,11 @@ kbz_session.json
 docs/
 scripts/
 terminals/
+android/
+android-admin/
+vps/
+web/node_modules/
+web/.next/
+web/data/store.json
+data/store.json
+node_modules/
