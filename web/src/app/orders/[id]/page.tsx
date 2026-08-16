@@ -48,7 +48,17 @@ async function payWithWathanPay(input: {
 export default function OrderResultPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { miniApp, ready } = useAuth();
+  const { miniApp, ready, me } = useAuth();
+  const isMiniApp =
+    miniApp ||
+    Boolean(
+      (typeof window !== "undefined" &&
+        (window.WathanPay?.pay != null ||
+          window.WathanPay?.accessToken != null ||
+          sessionStorage.getItem("wathanpay_miniapp") === "true")) ||
+        me?.loginMethod === "wathanpay" ||
+        me?.miniApp,
+    );
   const [order, setOrder] = useState<Order | null>(null);
   const [subscription, setSubscription] = useState<Subscription | null>(null);
   const [error, setError] = useState("");
@@ -155,7 +165,7 @@ export default function OrderResultPage() {
   };
 
   const startPay = async (current: Order) => {
-    if (miniApp) await retryWallet(current);
+    if (isMiniApp) await retryWallet(current);
     else await openGatewayPay(current);
   };
 
@@ -167,7 +177,7 @@ export default function OrderResultPage() {
     window.history.replaceState(null, "", `/orders/${order.id}`);
     void startPay(order);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [order, ready, miniApp]);
+  }, [order, ready, isMiniApp]);
 
   const startGatewayPay = async () => {
     if (!selected || !order) return;

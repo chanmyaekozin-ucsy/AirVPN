@@ -37,6 +37,16 @@ export default function BuyPage() {
   const { slug } = useParams<{ slug: string }>();
   const router = useRouter();
   const { me, ready, miniApp } = useAuth();
+  const isMiniApp =
+    miniApp ||
+    Boolean(
+      (typeof window !== "undefined" &&
+        (window.WathanPay?.pay != null ||
+          window.WathanPay?.accessToken != null ||
+          sessionStorage.getItem("wathanpay_miniapp") === "true")) ||
+        me?.loginMethod === "wathanpay" ||
+        me?.miniApp,
+    );
   const [step, setStep] = useState<Step>("plans");
   const [server, setServer] = useState<Server | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
@@ -65,13 +75,13 @@ export default function BuyPage() {
   }, [slug]);
 
   useEffect(() => {
-    if (ready && !me && !miniApp && (step === "pay" || step === "confirm")) {
+    if (ready && !me && !isMiniApp && (step === "pay" || step === "confirm")) {
       router.replace(`/login?next=/buy/${slug}`);
     }
-  }, [ready, me, miniApp, router, step, slug]);
+  }, [ready, me, isMiniApp, router, step, slug]);
 
   useEffect(() => {
-    if (miniApp || step !== "pay") return;
+    if (isMiniApp || step !== "pay") return;
     setMethodsLoading(true);
     api<{ methods: PayMethod[] }>("/api/payment-methods")
       .then((data) => {
@@ -80,7 +90,7 @@ export default function BuyPage() {
       })
       .catch((err) => setError(err instanceof Error ? err.message : "Could not load payment methods"))
       .finally(() => setMethodsLoading(false));
-  }, [step, miniApp]);
+  }, [step, isMiniApp]);
 
   useEffect(() => {
     if (step !== "pay") walletLaunch.current = false;
@@ -129,22 +139,19 @@ export default function BuyPage() {
   };
 
   const startGatewayPay = async () => {
-    if (!selected) return;
+    if (!selected || !plan || !server) return;
     setBusy(true);
     setError("");
     try {
       const id = await createOrder();
       const paid = await api<{
-        order: { payeeName: string | null; payeePhone: string | null; paymentMethod: string };
+        order: { id: string };
+        payee: { name: string | null; phone: string | null; method: string };
       }>(`/api/orders/${id}/pay`, {
         method: "POST",
         body: JSON.stringify({ accountId: selected.id }),
       });
-      setPayee({
-        name: paid.order.payeeName,
-        phone: paid.order.payeePhone,
-        method: paid.order.paymentMethod || selected.method,
-      });
+      setPayee(paid.payee);
       setStep("confirm");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start payment");
@@ -171,7 +178,7 @@ export default function BuyPage() {
   };
 
   const titles = { plans: server?.name || "Plans", pay: "Payment", confirm: "Confirm" };
-  const lastStep = miniApp ? 2 : 3;
+  const lastStep = isMiniApp ? 2 : 3;
   const stepNo = { plans: 1, pay: 2, confirm: 3 }[step];
 
   return (
@@ -261,7 +268,7 @@ export default function BuyPage() {
                 disabled={!plan}
                 type="button"
                 onClick={() => {
-                  if (!me && !miniApp) {
+                  if (!me && !isMiniApp) {
                     router.push(`/login?next=/buy/${slug}`);
                     return;
                   }
@@ -269,7 +276,7 @@ export default function BuyPage() {
                   setOrderId("");
                   setError("");
                   setStep("pay");
-                  if (miniApp) void startWalletPay();
+                  if (isMiniApp) void startWalletPay();
                 }}
               >
                 Continue
@@ -280,7 +287,7 @@ export default function BuyPage() {
           </>
         ) : null}
 
-        {step === "pay" && miniApp ? (
+        {step === "pay" && isMiniApp ? (
           <>
             <p className="hint">Paying with WathanPay. Confirm with your wallet PIN.</p>
             <div className="summary">
@@ -313,7 +320,7 @@ export default function BuyPage() {
           </>
         ) : null}
 
-        {step === "pay" && !miniApp ? (
+        {step === "pay" && !isMiniApp ? (
           <>
             {methodsLoading ? (
               <PaymentMethodsSkeleton count={2} />
