@@ -63,6 +63,10 @@ export async function POST(req: NextRequest) {
         txid: null,
         failReason: null,
         subscriptionId: null,
+        userLoginMethod: user.loginMethod,
+        userName: user.name,
+        userEmail: user.email,
+        userPhone: user.phone,
         createdAt: new Date().toISOString(),
         completedAt: null,
       };

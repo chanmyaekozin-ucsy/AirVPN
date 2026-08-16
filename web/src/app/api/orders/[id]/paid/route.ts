@@ -3,6 +3,7 @@ import { jsonError, requireUser } from "@/lib/auth";
 import { fulfillOrder, markFulfillFailed } from "@/lib/fulfill";
 import { PanelError } from "@/lib/panel";
 import { updateStore } from "@/lib/store";
+import { notifyPurchaseSuccess } from "@/lib/telegram";
 import type { Transaction } from "@/lib/types";
 
 export async function POST(
@@ -12,7 +13,11 @@ export async function POST(
   try {
     const session = await requireUser();
     const { id } = await params;
-    const body = (await req.json()) as { txid?: string };
+    const body = (await req.json()) as {
+      txid?: string;
+      payeeName?: string;
+      payerName?: string;
+    };
     const txid = String(body.txid ?? "").trim();
     if (!txid) {
       return Response.json({ error: "Missing WathanPay payment id." }, { status: 400 });
@@ -32,11 +37,20 @@ export async function POST(
         throw Object.assign(new Error("This order is already closed."), { status: 409 });
       }
 
+      const user = store.users.find((u) => u.id === session.sub);
+      const payerName =
+        String(body.payeeName ?? body.payerName ?? "").trim() ||
+        (user?.name && user.name !== "WathanPay" ? user.name : "WathanPay User");
+
       order.paymentMethod = "WathanPay";
       order.txid = txid;
-      order.payeeName = "WathanPay wallet";
-      order.payeePhone = null;
+      order.payeeName = payerName;
+      order.payeePhone = user?.phone || null;
       order.depositId = null;
+      order.userLoginMethod = user?.loginMethod || "wathanpay";
+      order.userName = user?.name || payerName;
+      order.userEmail = user?.email;
+      order.userPhone = user?.phone;
       order.status = "processing";
 
       const txn: Transaction = {
@@ -54,6 +68,7 @@ export async function POST(
 
       try {
         const subscription = await fulfillOrder(store, order);
+        void notifyPurchaseSuccess({ order, subscription, user }).catch(() => false);
         return { order, subscription, transaction: txn };
       } catch (err) {
         const message =

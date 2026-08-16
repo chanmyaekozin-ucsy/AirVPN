@@ -64,10 +64,10 @@ export default function AdminPurchasesPage() {
           <thead>
             <tr>
               <th>When</th>
-              <th>Server</th>
-              <th>Plan</th>
+              <th>Customer</th>
+              <th>Server & Plan</th>
               <th>Amount</th>
-              <th>Paid by</th>
+              <th>Payment & Payer</th>
               <th>Status</th>
             </tr>
           </thead>
@@ -79,20 +79,67 @@ export default function AdminPurchasesPage() {
                 </td>
               </tr>
             ) : (
-              rows.map((o) => (
-                <tr key={o.id}>
-                  <td className="muted">{formatWhen(o.createdAt)}</td>
-                  <td>{o.serverName}</td>
-                  <td>{o.planTitle}</td>
-                  <td>{formatKs(o.amountKs)}</td>
-                  <td>{o.paymentMethod || "—"}</td>
-                  <td>
-                    <span className={`pill ${o.status === "success" ? "on" : o.status === "failed" || o.status === "cancelled" ? "fail" : ""}`}>
-                      {orderStatusLabel(o.status)}
-                    </span>
-                  </td>
-                </tr>
-              ))
+              rows.map((o) => {
+                const method = (o.userLoginMethod || "").toLowerCase();
+                const badgeStyle =
+                  method === "wathanpay"
+                    ? { bg: "#e3f2fd", text: "#0d47a1" }
+                    : method === "google"
+                    ? { bg: "#fce8e6", text: "#c5221f" }
+                    : method === "email"
+                    ? { bg: "#f1f8e9", text: "#33691e" }
+                    : { bg: "#ede7f6", text: "#4a148c" };
+
+                return (
+                  <tr key={o.id}>
+                    <td className="muted">{formatWhen(o.createdAt)}</td>
+                    <td>
+                      <div style={{ fontWeight: 650 }}>{o.userName || "Customer"}</div>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", marginTop: 2 }}>
+                        <span
+                          style={{
+                            fontSize: 10,
+                            fontWeight: 700,
+                            padding: "1px 5px",
+                            borderRadius: 4,
+                            background: badgeStyle.bg,
+                            color: badgeStyle.text,
+                            textTransform: "capitalize",
+                          }}
+                        >
+                          {method || "Email"}
+                        </span>
+                        {o.userEmail ? (
+                          <span style={{ fontSize: 11, color: "var(--text-2)" }}>{o.userEmail}</span>
+                        ) : o.userPhone ? (
+                          <span style={{ fontSize: 11, color: "var(--text-2)" }}>{o.userPhone}</span>
+                        ) : null}
+                      </div>
+                    </td>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{o.serverName}</div>
+                      <div style={{ fontSize: 12, color: "var(--text-2)" }}>{o.planTitle}</div>
+                    </td>
+                    <td>{formatKs(o.amountKs)}</td>
+                    <td>
+                      <div style={{ fontWeight: 600 }}>{o.paymentMethod || "—"}</div>
+                      {o.payeeName ? (
+                        <div style={{ fontSize: 11, color: "var(--brand-dark)" }}>Payer: {o.payeeName}</div>
+                      ) : null}
+                      {o.txid ? (
+                        <div style={{ fontSize: 10, color: "var(--muted)", fontFamily: "monospace" }}>
+                          Tx: {o.txid.slice(0, 16)}
+                        </div>
+                      ) : null}
+                    </td>
+                    <td>
+                      <span className={`pill ${o.status === "success" ? "on" : o.status === "failed" || o.status === "cancelled" ? "fail" : ""}`}>
+                        {orderStatusLabel(o.status)}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

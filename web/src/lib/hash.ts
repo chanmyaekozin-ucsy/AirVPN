@@ -9,27 +9,66 @@ export function hashToken(token: string) {
 }
 
 /**
- * WathanPay mini-app accessToken is a short-lived JWT (`{ sub: userId, role }`,
- * ~15min TTL) — a fresh token is issued on every mini-app open, but `sub` stays
- * constant for the same WathanPay account. We don't have WathanPay's signing
- * secret to verify it, so decode the payload only; that's fine here because
- * we're just picking a stable local user key, not making an authorization
- * decision (WathanPay itself verifies the token when we send it back as a
- * Bearer header in chargeWathanPay).
+ * Decodes the JSON payload from a JWT without signature verification.
  */
-export function wathanpaySubject(token: string): string {
+export function decodeJwtPayload<T = Record<string, unknown>>(token: string): T | null {
   const parts = token.split(".");
-  if (parts.length === 3) {
+  if (parts.length >= 2) {
     try {
-      const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as {
-        sub?: unknown;
-      };
-      if (typeof payload.sub === "string" && payload.sub.trim()) {
-        return hashToken(payload.sub.trim());
-      }
+      const json = Buffer.from(parts[1], "base64url").toString("utf8");
+      return JSON.parse(json) as T;
     } catch {
-      // not a JWT we can read — fall through to raw-token hashing below
+      return null;
     }
   }
-  return hashToken(token);
+  return null;
 }
+
+export type WathanPayPayload = {
+  sub?: string;
+  id?: string;
+  name?: string;
+  username?: string;
+  phone?: string;
+  email?: string;
+  role?: string;
+};
+
+export function decodeWathanpayToken(token: string): {
+  subKey: string;
+  name: string;
+  phone: string;
+  email: string;
+} {
+  const payload = decodeJwtPayload<WathanPayPayload>(token);
+  const rawSub = String(payload?.sub || payload?.id || "").trim();
+  const subKey = rawSub ? hashToken(rawSub) : hashToken(token);
+  const name = String(payload?.name || payload?.username || "").trim();
+  const phone = String(payload?.phone || "").trim();
+  const email = String(payload?.email || "").trim();
+  return { subKey, name, phone, email };
+}
+
+/**
+ * WathanPay mini-app accessToken is a short-lived JWT (`{ sub: userId, role }`,
+ * ~15min TTL) — a fresh token is issued on every mini-app open, but `sub` stays
+ * constant for the same WathanPay account.
+ */
+export function wathanpaySubject(token: string): string {
+  return decodeWathanpayToken(token).subKey;
+}
+
+export type GooglePayload = {
+  sub: string;
+  email: string;
+  name?: string;
+  given_name?: string;
+  family_name?: string;
+  picture?: string;
+  email_verified?: boolean;
+};
+
+export function decodeGoogleToken(idToken: string): GooglePayload | null {
+  return decodeJwtPayload<GooglePayload>(idToken);
+}
+

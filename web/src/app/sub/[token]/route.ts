@@ -1,4 +1,5 @@
 import { readStore } from "@/lib/store";
+import { formatKeyRemark } from "@/lib/format";
 import { buildVlessUrl } from "@/lib/panel";
 
 export async function GET(
@@ -22,11 +23,12 @@ export async function GET(
   const server = store.servers.find((s) => s.id === sub.serverId);
   let vlessKey = sub.vlessKey;
   if (server && sub.clientUuid && server.host) {
+    const remark = formatKeyRemark(server.name, sub.userName, sub.dataGb);
     vlessKey = buildVlessUrl({
       uuid: sub.clientUuid,
       host: server.host,
       port: server.port,
-      remark: `AirVPN-${server.name}`,
+      remark,
       server,
     });
   }

@@ -4,6 +4,7 @@ import { failedStatus, paidStatus, verifyDepositLast5 } from "@/lib/dominate";
 import { fulfillOrder, markFulfillFailed } from "@/lib/fulfill";
 import { PanelError } from "@/lib/panel";
 import { readStore, updateStore } from "@/lib/store";
+import { notifyPurchaseSuccess } from "@/lib/telegram";
 import { chargeWathanPay } from "@/lib/wathanpay";
 import type { Order, Transaction } from "@/lib/types";
 
@@ -25,6 +26,8 @@ async function deliver(store: Parameters<typeof fulfillOrder>[0], order: Order, 
   order.status = "processing";
   try {
     const subscription = await fulfillOrder(store, order);
+    const user = store.users.find((u) => u.id === order.userId);
+    void notifyPurchaseSuccess({ order, subscription, user }).catch(() => false);
     return { order, transaction: txn, subscription };
   } catch (err) {
     const message =

@@ -9,6 +9,8 @@ export type Me = {
   role: "user" | "admin";
   phone?: string;
   email?: string;
+  loginMethod?: "email" | "google" | "wathanpay" | "phone";
+  telegramId?: string;
   balanceKs: number;
   miniApp?: boolean;
 };

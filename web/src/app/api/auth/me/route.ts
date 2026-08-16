@@ -15,6 +15,8 @@ export async function GET() {
         role: user.role,
         phone: user.phone,
         email: user.email,
+        loginMethod: user.loginMethod,
+        telegramId: user.telegramId,
         balanceKs: user.balanceKs,
       },
     });

@@ -57,6 +57,10 @@ export default function OrderResultPage() {
   const [selected, setSelected] = useState<PayMethod | null>(null);
   const [last5, setLast5] = useState("");
   const [copied, setCopied] = useState("");
+  const [replaceModalOpen, setReplaceModalOpen] = useState(false);
+  const [replaceReason, setReplaceReason] = useState("Connection blocked on my SIM / Wi-Fi");
+  const [replaceNote, setReplaceNote] = useState("");
+  const [submittingReplace, setSubmittingReplace] = useState(false);
   const autoPay = useRef(false);
 
   const load = useCallback(
@@ -72,6 +76,26 @@ export default function OrderResultPage() {
   useEffect(() => {
     load().catch((err) => setError(err instanceof Error ? err.message : "Order not found"));
   }, [load]);
+
+  const requestKeyReplacement = async () => {
+    setSubmittingReplace(true);
+    setError("");
+    try {
+      await api(`/api/orders/${id}/replacement-request`, {
+        method: "POST",
+        body: JSON.stringify({
+          reason: replaceReason,
+          customerNote: replaceNote,
+        }),
+      });
+      setReplaceModalOpen(false);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not submit key replacement request");
+    } finally {
+      setSubmittingReplace(false);
+    }
+  };
 
   const cancel = async () => {
     setBusy(true);
@@ -240,6 +264,25 @@ export default function OrderResultPage() {
               </div>
             </div>
 
+            {order.replacementRequested ? (
+              <div
+                style={{
+                  background: "#e3f2fd",
+                  border: "1px solid #bbdefb",
+                  borderRadius: 12,
+                  padding: "12px 14px",
+                  margin: "12px 0",
+                  fontSize: 13,
+                  color: "#0d47a1",
+                }}
+              >
+                <strong>Key Replacement Requested (Under Review)</strong>
+                <div style={{ marginTop: 3, fontSize: 12, color: "#1565c0" }}>
+                  Reason: {order.replacementReason || "Customer requested key replacement"}
+                </div>
+              </div>
+            ) : null}
+
             {subscription && status === "success" ? (
               <div className="summary">
                 <div className="muted">Subscription link</div>
@@ -264,6 +307,21 @@ export default function OrderResultPage() {
                   Import this link in AirVPN / v2rayN / Streisand.
                 </p>
               </div>
+            ) : null}
+
+            {status === "success" && !order.replacementRequested ? (
+              <button
+                className="btn ghost"
+                type="button"
+                style={{ marginTop: 8, marginBottom: 8, color: "var(--text-2)", borderColor: "var(--border)" }}
+                onClick={() => {
+                  setReplaceModalOpen(true);
+                  setReplaceReason("Connection blocked on my SIM / Wi-Fi");
+                  setReplaceNote("");
+                }}
+              >
+                Request Key Replacement
+              </button>
             ) : null}
 
             {awaiting && payStep === "idle" ? (
@@ -325,6 +383,81 @@ export default function OrderResultPage() {
           </div>
         </>
       ) : null}
+
+      {/* Request Key Replacement Modal */}
+      {replaceModalOpen ? (
+        <div className="busy" style={{ background: "rgba(16, 42, 67, 0.45)" }}>
+          <div
+            style={{
+              background: "var(--white)",
+              borderRadius: 16,
+              padding: 24,
+              width: "min(460px, 92vw)",
+              boxShadow: "0 20px 60px rgba(0,0,0,0.25)",
+            }}
+          >
+            <h3 style={{ fontSize: 18, marginBottom: 8, color: "var(--navy)" }}>
+              Request Key Replacement
+            </h3>
+            <p style={{ fontSize: 13, color: "var(--text-2)", marginBottom: 16, lineHeight: 1.45 }}>
+              Having issues connecting with your current VPN key? Submit a key replacement request and our admin team will be notified immediately to re-issue or switch your server node.
+            </p>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
+                Reason for Replacement
+              </label>
+              <select
+                className="box"
+                value={replaceReason}
+                onChange={(e) => setReplaceReason(e.target.value)}
+                style={{ width: "100%" }}
+              >
+                <option value="Connection blocked on my SIM / Wi-Fi">Connection blocked on my SIM / Wi-Fi</option>
+                <option value="Slow speed / Ping drops">Slow speed / Ping drops</option>
+                <option value="Key not connecting on my device">Key not connecting on my device</option>
+                <option value="Want to switch to another server node">Want to switch to another server node</option>
+                <option value="Other connection issue">Other connection issue</option>
+              </select>
+            </div>
+
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: "block", fontSize: 12, fontWeight: 700, marginBottom: 4 }}>
+                Additional Details (Optional)
+              </label>
+              <textarea
+                className="box"
+                rows={3}
+                placeholder="e.g. MPT 4G connects but no internet, want to try Japan node..."
+                value={replaceNote}
+                onChange={(e) => setReplaceNote(e.target.value)}
+                style={{ width: "100%", resize: "vertical" }}
+              />
+            </div>
+
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button
+                type="button"
+                className="btn small"
+                style={{ background: "var(--bg-soft)", color: "var(--text)" }}
+                onClick={() => setReplaceModalOpen(false)}
+                disabled={submittingReplace}
+              >
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn small"
+                onClick={requestKeyReplacement}
+                disabled={submittingReplace}
+              >
+                {submittingReplace ? "Submitting…" : "Submit Replacement Request"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </ShopShell>
   );
 }
+

@@ -7,6 +7,7 @@ import { useAuth } from "@/components/Auth";
 
 const NAV = [
   { href: "/admin/dashboard", label: "Dashboard" },
+  { href: "/admin/keys", label: "Keys & Customers" },
   { href: "/admin", label: "Servers" },
   { href: "/admin/plans", label: "Plans" },
   { href: "/admin/purchases", label: "Purchases" },

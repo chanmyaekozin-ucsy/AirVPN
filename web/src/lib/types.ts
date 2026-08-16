@@ -8,6 +8,8 @@ export type OrderStatus =
   | "cancelled";
 export type TxnStatus = "pending" | "succeeded" | "failed";
 
+export type LoginMethod = "email" | "google" | "wathanpay" | "phone";
+
 export type User = {
   id: string;
   name: string;
@@ -16,7 +18,12 @@ export type User = {
   role: Role;
   pinHash: string;
   balanceKs: number;
+  loginMethod?: LoginMethod;
+  googleSub?: string;
   wathanpaySub?: string;
+  telegramId?: string;
+  notes?: string;
+  createdAt?: string;
 };
 
 /** Panel / Reality settings live on the server row (admin-configured, not env). */
@@ -82,6 +89,14 @@ export type Order = {
   txid: string | null;
   failReason: string | null;
   subscriptionId: string | null;
+  userLoginMethod?: LoginMethod;
+  userEmail?: string;
+  userPhone?: string;
+  userName?: string;
+  replacementRequested?: boolean;
+  replacementReason?: string;
+  replacementRequestedAt?: string;
+  notes?: string;
   createdAt: string;
   completedAt: string | null;
 };
@@ -99,7 +114,17 @@ export type Subscription = {
   vlessKey: string;
   panelEmail: string;
   clientUuid: string;
-  status: "active" | "expired" | "pending";
+  status: "active" | "expired" | "pending" | "cancelled";
+  userLoginMethod?: LoginMethod;
+  userName?: string;
+  userEmail?: string;
+  userPhone?: string;
+  replacementCount?: number;
+  lastReplacedAt?: string;
+  replacementRequested?: boolean;
+  replacementReason?: string;
+  replacementRequestedAt?: string;
+  notes?: string;
   createdAt: string;
   expiresAt: string | null;
 };

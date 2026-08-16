@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { jsonError, setSessionCookie } from "@/lib/auth";
 import { hashPin } from "@/lib/hash";
-import { readStore } from "@/lib/store";
+import { updateStore } from "@/lib/store";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,15 +11,29 @@ export async function POST(req: NextRequest) {
     if (!identifier || pin.length !== 6) {
       return Response.json({ error: "Phone/email and 6-digit PIN required." }, { status: 400 });
     }
-    const store = await readStore();
-    const user = store.users.find(
-      (u) =>
-        u.phone.replace(/\s/g, "") === identifier.replace(/\s/g, "") ||
-        u.email.toLowerCase() === identifier,
-    );
-    if (!user || user.pinHash !== hashPin(pin)) {
+
+    const isEmail = identifier.includes("@");
+    const method = isEmail ? "email" : "phone";
+
+    const user = await updateStore((store) => {
+      const found = store.users.find(
+        (u) =>
+          u.phone.replace(/\s/g, "") === identifier.replace(/\s/g, "") ||
+          u.email.toLowerCase() === identifier,
+      );
+      if (!found || found.pinHash !== hashPin(pin)) {
+        return null;
+      }
+      if (!found.loginMethod) {
+        found.loginMethod = method;
+      }
+      return found;
+    });
+
+    if (!user) {
       return Response.json({ error: "Wrong phone, email, or PIN." }, { status: 401 });
     }
+
     await setSessionCookie({ sub: user.id, role: user.role, name: user.name });
     return Response.json({
       user: {
@@ -27,9 +41,13 @@ export async function POST(req: NextRequest) {
         name: user.name,
         role: user.role,
         balanceKs: user.balanceKs,
+        loginMethod: user.loginMethod,
+        email: user.email,
+        phone: user.phone,
       },
     });
   } catch (err) {
     return jsonError(err);
   }
 }
+
