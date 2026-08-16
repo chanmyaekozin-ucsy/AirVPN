@@ -45,6 +45,8 @@ type TelegramUpdate = {
   callback_query?: TelegramCallbackQuery;
 };
 
+type Lang = "my" | "en";
+
 async function sendTg(method: string, body: Record<string, unknown>) {
   loadShopEnv();
   const token = process.env.BOT_TOKEN;
@@ -114,17 +116,73 @@ async function findOrCreateTgUser(from: TelegramFrom): Promise<User> {
   });
 }
 
-function mainMenuKeyboard() {
+async function setUserLanguage(userId: string, lang: Lang) {
+  await updateStore((store) => {
+    const u = store.users.find((x) => x.id === userId);
+    if (u) {
+      u.language = lang;
+    }
+  });
+}
+
+/** Language Selection Prompt */
+async function promptLanguageSelection(chatId: number) {
+  const text = `
+<b>Please choose your language / ဘာသာစကား ရွေးချယ်ပါ</b>
+
+အသုံးပြုလိုသော ဘာသာစကားကို ရွေးချယ်ပေးပါ:
+`.trim();
+
+  await sendTg("sendMessage", {
+    chat_id: chatId,
+    text,
+    parse_mode: "HTML",
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "မြန်မာစာ (Myanmar)", callback_data: "set_lang:my" },
+          { text: "English", callback_data: "set_lang:en" },
+        ],
+      ],
+    },
+  });
+}
+
+function mainMenuKeyboard(lang: Lang) {
   const appUrl = getAppBaseUrl();
+  if (lang === "my") {
+    return {
+      inline_keyboard: [
+        [
+          { text: "VPN ဝယ်ယူရန်", callback_data: "buy_servers" },
+          { text: "ပလန်များ ကြည့်ရန်", callback_data: "cmd_plans" },
+        ],
+        [
+          { text: "ကျွန်ုပ်၏ ကီးများ", callback_data: "cmd_mykeys" },
+          { text: "အကူအညီ ရယူရန်", callback_data: "cmd_support" },
+        ],
+        [
+          { text: "ဘာသာစကား ပြောင်းရန်", callback_data: "cmd_lang" },
+        ],
+        [
+          { text: "Web Shop ဖွင့်ရန် (WathanPay)", web_app: { url: appUrl } },
+        ],
+      ],
+    };
+  }
+
   return {
     inline_keyboard: [
       [
-        { text: "Buy VPN / Plan ဝယ်ယူရန်", callback_data: "buy_servers" },
-        { text: "Plans / ပလန်များ", callback_data: "cmd_plans" },
+        { text: "Buy VPN", callback_data: "buy_servers" },
+        { text: "View Plans", callback_data: "cmd_plans" },
       ],
       [
-        { text: "My Keys / ကီးများ", callback_data: "cmd_mykeys" },
-        { text: "Support / အကူအညီ", callback_data: "cmd_support" },
+        { text: "My Keys", callback_data: "cmd_mykeys" },
+        { text: "Support", callback_data: "cmd_support" },
+      ],
+      [
+        { text: "Change Language", callback_data: "cmd_lang" },
       ],
       [
         { text: "Open Web Shop (WathanPay)", web_app: { url: appUrl } },
@@ -133,8 +191,11 @@ function mainMenuKeyboard() {
   };
 }
 
-async function handleStart(chatId: number, user: User) {
-  const text = `
+async function handleMainMenu(chatId: number, user: User) {
+  const lang: Lang = user.language || "my";
+
+  if (lang === "my") {
+    const text = `
 <b>AirVPN Myanmar</b>
 
 မင်္ဂလာပါ <b>${user.name || "Customer"}</b>!
@@ -147,61 +208,90 @@ async function handleStart(chatId: number, user: User) {
 အောက်ပါ Menu မှ စတင် ဝယ်ယူ အသုံးပြုနိုင်ပါသည်:
 `.trim();
 
-  await sendTg("sendMessage", {
-    chat_id: chatId,
-    text,
-    parse_mode: "HTML",
-    reply_markup: mainMenuKeyboard(),
-  });
+    await sendTg("sendMessage", {
+      chat_id: chatId,
+      text,
+      parse_mode: "HTML",
+      reply_markup: mainMenuKeyboard("my"),
+    });
+  } else {
+    const text = `
+<b>AirVPN Myanmar</b>
+
+Welcome <b>${user.name || "Customer"}</b>!
+Fast and unblockable VLESS Reality VPN Service.
+
+• Works smoothly across MPT, ATOM, Ooredoo, Mytel, and all Wi-Fi networks
+• Singapore & Global High-Speed Server Nodes
+• Direct Payment via KBZPay and WavePay
+
+Select an option below to get started:
+`.trim();
+
+    await sendTg("sendMessage", {
+      chat_id: chatId,
+      text,
+      parse_mode: "HTML",
+      reply_markup: mainMenuKeyboard("en"),
+    });
+  }
 }
 
 /** Step 1: Choose Server Node */
-async function handleBuyServers(chatId: number) {
+async function handleBuyServers(chatId: number, lang: Lang) {
   const store = await readStore();
   const activeServers = store.servers.filter((s) => s.isActive);
 
   if (activeServers.length === 0) {
-    await sendTg("sendMessage", {
-      chat_id: chatId,
-      text: "လက်ရှိတွင် VPN ဆာဗာများ မရှိသေးပါ။ ခေတ္တစောင့်ဆိုင်းပေးပါ။",
-      parse_mode: "HTML",
-    });
+    const emptyMsg = lang === "my"
+      ? "လက်ရှိတွင် VPN ဆာဗာများ မရှိသေးပါ။ ခေတ္တစောင့်ဆိုင်းပေးပါ။"
+      : "No active VPN servers available right now. Please check back later.";
+    await sendTg("sendMessage", { chat_id: chatId, text: emptyMsg, parse_mode: "HTML" });
     return;
   }
 
   const buttons = activeServers.map((server) => [
     {
-      text: `${server.name} (${server.region})`,
+      text: lang === "my" && server.nameMy ? `${server.nameMy} (${server.region})` : `${server.name} (${server.region})`,
       callback_data: `buy_srv:${server.id}`,
     },
   ]);
-  buttons.push([{ text: "Back to Menu", callback_data: "cmd_start" }]);
+  buttons.push([{ text: lang === "my" ? "ပင်မစာမျက်နှာသို့" : "Back to Menu", callback_data: "cmd_start" }]);
+
+  const text = lang === "my"
+    ? "<b>ဆာဗာ တည်နေရာ ရွေးချယ်ပါ:</b>\n\nအသုံးပြုလိုသော ဆာဗာကို ရွေးချယ်ပါ:"
+    : "<b>Choose Server Location:</b>\n\nPlease select your preferred server node:";
 
   await sendTg("sendMessage", {
     chat_id: chatId,
-    text: "<b>Choose Server Location / ဆာဗာ ရွေးချယ်ပါ:</b>\n\nအသုံးပြုလိုသော ဆာဗာကို ရွေးချယ်ပါ:",
+    text,
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: buttons },
   });
 }
 
 /** Step 2: Choose Plan for Server */
-async function handleBuyServerPlans(chatId: number, serverId: string) {
+async function handleBuyServerPlans(chatId: number, serverId: string, lang: Lang) {
   const store = await readStore();
   const server = store.servers.find((s) => s.id === serverId);
   if (!server) {
-    await handleBuyServers(chatId);
+    await handleBuyServers(chatId, lang);
     return;
   }
 
+  const serverName = lang === "my" && server.nameMy ? server.nameMy : server.name;
   const plans = store.plans.filter((p) => p.serverId === serverId && p.isActive);
+
   if (plans.length === 0) {
+    const emptyMsg = lang === "my"
+      ? `<b>${serverName}</b> အတွက် ပလန်များ မရှိသေးပါ။`
+      : `No plans found for <b>${server.name}</b>.`;
     await sendTg("sendMessage", {
       chat_id: chatId,
-      text: `<b>${server.name}</b> အတွက် ပလန်များ မရှိသေးပါ။`,
+      text: emptyMsg,
       parse_mode: "HTML",
       reply_markup: {
-        inline_keyboard: [[{ text: "Back to Servers", callback_data: "buy_servers" }]],
+        inline_keyboard: [[{ text: lang === "my" ? "ဆာဗာများသို့ ပြန်သွားရန်" : "Back to Servers", callback_data: "buy_servers" }]],
       },
     });
     return;
@@ -213,51 +303,71 @@ async function handleBuyServerPlans(chatId: number, serverId: string) {
       callback_data: `buy_plan:${plan.id}`,
     },
   ]);
-  buttons.push([{ text: "Back to Servers", callback_data: "buy_servers" }]);
+  buttons.push([{ text: lang === "my" ? "ဆာဗာများသို့ ပြန်သွားရန်" : "Back to Servers", callback_data: "buy_servers" }]);
+
+  const text = lang === "my"
+    ? `<b>${serverName} — ပလန် ရွေးချယ်ပါ:</b>\n\nဝယ်ယူလိုသော ပက်ကေ့ချ်ကို ရွေးချယ်ပါ:`
+    : `<b>${server.name} (${server.region}) — Choose Plan:</b>\n\nPlease select a package:`;
 
   await sendTg("sendMessage", {
     chat_id: chatId,
-    text: `<b>${server.name} (${server.region}) — Choose Plan:</b>\n\nဝယ်ယူလိုသော ပက်ကေ့ချ်ကို ရွေးချယ်ပါ:`,
+    text,
     parse_mode: "HTML",
     reply_markup: { inline_keyboard: buttons },
   });
 }
 
 /** Step 3: Choose Payment Method */
-async function handleBuyPlan(chatId: number, planId: string) {
+async function handleBuyPlan(chatId: number, planId: string, lang: Lang) {
   const store = await readStore();
   const plan = store.plans.find((p) => p.id === planId);
   if (!plan) {
-    await handleBuyServers(chatId);
+    await handleBuyServers(chatId, lang);
     return;
   }
   const server = store.servers.find((s) => s.id === plan.serverId);
+  const serverName = lang === "my" && server?.nameMy ? server.nameMy : (server?.name || plan.serverId);
   const methods = await listPaymentMethods();
 
   const buttons: { text: string; callback_data: string }[][] = [];
 
   for (const m of methods) {
+    const btnLabel = lang === "my"
+      ? `${m.method} ဖြင့် ပေးချေမည် (${m.accountName || ""})`
+      : `Pay with ${m.method} (${m.accountName || ""})`;
+
     buttons.push([
       {
-        text: `Pay with ${m.method} (${m.accountName || ""})`,
+        text: btnLabel,
         callback_data: `buy_pay:${plan.id}:${m.id}`,
       },
     ]);
   }
 
   buttons.push([
-    { text: "Back to Plans", callback_data: `buy_srv:${plan.serverId}` },
+    { text: lang === "my" ? "ပလန်များသို့ ပြန်သွားရန်" : "Back to Plans", callback_data: `buy_srv:${plan.serverId}` },
   ]);
 
-  const text = `
-<b>Order Summary / အော်ဒါ အကျဉ်းချုပ်</b>
+  const text = lang === "my"
+    ? `
+<b>အော်ဒါ အကျဉ်းချုပ်</b>
+
+• <b>ဆာဗာ:</b> ${serverName}
+• <b>ပလန်:</b> ${plan.title} (${formatDataGb(plan.dataGb)})
+• <b>သက်တမ်း:</b> ${formatDuration(plan.durationDays)}
+• <b>ကျသင့်ငွေ:</b> <b>${formatKs(plan.priceKs)}</b>
+
+ပေးချေလိုသော ငွေပေးချေနည်းလမ်းကို ရွေးချယ်ပါ:
+`.trim()
+    : `
+<b>Order Summary</b>
 
 • <b>Server:</b> ${server?.name || plan.serverId}
 • <b>Plan:</b> ${plan.title} (${formatDataGb(plan.dataGb)})
 • <b>Duration:</b> ${formatDuration(plan.durationDays)}
 • <b>Price:</b> <b>${formatKs(plan.priceKs)}</b>
 
-ပေးချေလိုသော ငွေပေးချေနည်းလမ်းကို ရွေးချယ်ပါ:
+Please select a payment method:
 `.trim();
 
   await sendTg("sendMessage", {
@@ -269,23 +379,23 @@ async function handleBuyPlan(chatId: number, planId: string) {
 }
 
 /** Step 4: Create Order & Show Deposit Details */
-async function handleCreateDeposit(chatId: number, user: User, planId: string, accountId: string) {
+async function handleCreateDeposit(chatId: number, user: User, planId: string, accountId: string, lang: Lang) {
   const store = await readStore();
   const plan = store.plans.find((p) => p.id === planId);
   if (!plan) {
-    await handleBuyServers(chatId);
+    await handleBuyServers(chatId, lang);
     return;
   }
   const server = store.servers.find((s) => s.id === plan.serverId);
+  const serverName = lang === "my" && server?.nameMy ? server.nameMy : (server?.name || plan.serverId);
   const methods = await listPaymentMethods();
   const method = methods.find((m) => m.id === accountId) || methods[0];
 
   if (!method) {
-    await sendTg("sendMessage", {
-      chat_id: chatId,
-      text: "ငွေပေးချေမှု လိုင်း ခေတ္တမအားလပ်ပါ။ နောက်မှ ပြန်လည်ကြိုးစားပါ။",
-      parse_mode: "HTML",
-    });
+    const unavailableMsg = lang === "my"
+      ? "ငွေပေးချေမှု လိုင်း ခေတ္တမအားလပ်ပါ။ နောက်မှ ပြန်လည်ကြိုးစားပါ။"
+      : "Payment gateway is temporarily unavailable. Please try again later.";
+    await sendTg("sendMessage", { chat_id: chatId, text: unavailableMsg, parse_mode: "HTML" });
     return;
   }
 
@@ -344,21 +454,39 @@ async function handleCreateDeposit(chatId: number, user: User, planId: string, a
     console.error("[Telegram Deposit] Gateway createDeposit failed:", err);
   }
 
-  const text = `
+  const text = lang === "my"
+    ? `
+<b>အော်ဒါ #${order.id}</b>
+
+• <b>ဆာဗာ:</b> ${serverName}
+• <b>ပလန်:</b> ${order.planTitle} (${formatDataGb(order.dataGb)})
+• <b>ကျသင့်ငွေ:</b> <b>${formatKs(order.amountKs)}</b> (ကျပ်တိတိ)
+
+<b>ငွေပေးချေနည်းလမ်း:</b> <b>${order.paymentMethod}</b>
+<b>အကောင့်အမည်:</b> <code>${order.payeeName || method.accountName}</code>
+<b>အကောင့်နံပါတ်:</b> <code>${order.payeePhone || method.accountNumber}</code>
+
+━━━━━━━━━━━━━━━━━━━━
+<b>ငွေလွှဲပြီးပါက ပြုလုပ်ရန်:</b>
+၁။ အထက်ပါ အကောင့်သို့ <b>${formatKs(order.amountKs)}</b> တိတိ လွှဲပေးပါ။
+၂။ ငွေလွှဲပြေစာမှ <b>TxID (နောက်ဆုံး ၅ လုံး)</b> ကို ဤ Chat တွင် စာရိုက်ပို့ပေးပါ (ဥပမာ: <code>12345</code>)။
+━━━━━━━━━━━━━━━━━━━━
+`.trim()
+    : `
 <b>Order #${order.id}</b>
 
 • <b>Server:</b> ${order.serverName}
 • <b>Plan:</b> ${order.planTitle} (${formatDataGb(order.dataGb)})
-• <b>Amount to Pay:</b> <b>${formatKs(order.amountKs)}</b> (ကျပ်တိတိ)
+• <b>Amount to Pay:</b> <b>${formatKs(order.amountKs)}</b>
 
 <b>Payment Method:</b> <b>${order.paymentMethod}</b>
 <b>Account Name:</b> <code>${order.payeeName || method.accountName}</code>
 <b>Account Number:</b> <code>${order.payeePhone || method.accountNumber}</code>
 
 ━━━━━━━━━━━━━━━━━━━━
-<b>ငွေလွှဲပြီးပါက ပြုလုပ်ရန်:</b>
-၁။ အထက်ပါ အကောင့်သို့ <b>${formatKs(order.amountKs)}</b> တိတိ လွှဲပေးပါ။
-၂။ ငွေလွှဲပြေစာမှ <b>TxID (နောက်ဆုံး ၅ လုံး)</b> ကို ဤ Chat တွင် စာရိုက်ပို့ပေးပါ (ဥပမာ: <code>12345</code>)။
+<b>Next Steps:</b>
+1. Transfer exact <b>${formatKs(order.amountKs)}</b> to the account above.
+2. Send the <b>Last 5 digits of your TxID</b> directly in this chat (e.g. <code>12345</code>).
 ━━━━━━━━━━━━━━━━━━━━
 `.trim();
 
@@ -369,8 +497,8 @@ async function handleCreateDeposit(chatId: number, user: User, planId: string, a
     reply_markup: {
       inline_keyboard: [
         [
-          { text: "Cancel Order / ပယ်ဖျက်ရန်", callback_data: `cancel_ord_${order.id}` },
-          { text: "Refresh Status / အခြေအနေစစ်", callback_data: `check_ord_${order.id}` },
+          { text: lang === "my" ? "အော်ဒါ ပယ်ဖျက်မည်" : "Cancel Order", callback_data: `cancel_ord:${order.id}` },
+          { text: lang === "my" ? "အခြေအနေ ပြန်စစ်မည်" : "Refresh Status", callback_data: `check_ord:${order.id}` },
         ],
       ],
     },
@@ -379,16 +507,16 @@ async function handleCreateDeposit(chatId: number, user: User, planId: string, a
 
 /** Step 5: User sends TxID / 5 digits in chat */
 async function handleTxidSubmission(chatId: number, user: User, inputTxid: string) {
+  const lang: Lang = user.language || "my";
   const store = await readStore();
   const digits = inputTxid.replace(/\D/g, "");
   const last5 = digits.length >= 5 ? digits.slice(-5) : "";
 
   if (last5.length !== 5) {
-    await sendTg("sendMessage", {
-      chat_id: chatId,
-      text: "ကျေးဇူးပြု၍ ငွေလွှဲပြေစာမှ <b>TxID နောက်ဆုံး ၅ လုံး</b> (ဥပမာ: <code>12345</code>) ကို ရိုက်ပို့ပေးပါ။",
-      parse_mode: "HTML",
-    });
+    const warnMsg = lang === "my"
+      ? "ကျေးဇူးပြု၍ ငွေလွှဲပြေစာမှ <b>TxID နောက်ဆုံး ၅ လုံး</b> (ဥပမာ: <code>12345</code>) ကို ရိုက်ပို့ပေးပါ။"
+      : "Please send the <b>last 5 digits of your Transaction ID (TxID)</b> (e.g. <code>12345</code>).";
+    await sendTg("sendMessage", { chat_id: chatId, text: warnMsg, parse_mode: "HTML" });
     return;
   }
 
@@ -398,25 +526,25 @@ async function handleTxidSubmission(chatId: number, user: User, inputTxid: strin
   );
 
   if (pendingOrders.length === 0) {
+    const noOrdMsg = lang === "my"
+      ? "ငွေပေးချေရန် စောင့်ဆိုင်းနေသော အော်ဒါ မတွေ့ပါ။ အသစ်ဝယ်ယူလိုပါက /start ကို နှိပ်ပါ။"
+      : "No pending order awaiting payment found. Please type /start to create a new order.";
     await sendTg("sendMessage", {
       chat_id: chatId,
-      text: `
-ငွေပေးချေရန် စောင့်ဆိုင်းနေသော အော်ဒါ မတွေ့ပါ။
-အသစ်ဝယ်ယူလိုပါက /start ကို နှိပ်ပါ။
-`.trim(),
+      text: noOrdMsg,
       parse_mode: "HTML",
-      reply_markup: mainMenuKeyboard(),
+      reply_markup: mainMenuKeyboard(lang),
     });
     return;
   }
 
   const order = pendingOrders[pendingOrders.length - 1];
 
-  await sendTg("sendMessage", {
-    chat_id: chatId,
-    text: `TxID <code>${last5}</code> ဖြင့် ငွေလွှဲစစ်ဆေးနေပါသည်... ခေတ္တစောင့်ပေးပါ။`,
-    parse_mode: "HTML",
-  });
+  const verifyingMsg = lang === "my"
+    ? `TxID <code>${last5}</code> ဖြင့် ငွေလွှဲစစ်ဆေးနေပါသည်... ခေတ္တစောင့်ပေးပါ။`
+    : `Verifying transaction with TxID <code>${last5}</code>... Please wait.`;
+
+  await sendTg("sendMessage", { chat_id: chatId, text: verifyingMsg, parse_mode: "HTML" });
 
   if (order.depositId) {
     try {
@@ -425,19 +553,28 @@ async function handleTxidSubmission(chatId: number, user: User, inputTxid: strin
       const txid = String(deposit.bank_trx_id || deposit.trx_id || last5);
 
       if (!isPaid) {
-        await sendTg("sendMessage", {
-          chat_id: chatId,
-          text: `
+        const notFoundText = lang === "my"
+          ? `
 <b>ငွေလွှဲပြေစာ မတွေ့ရှိသေးပါ</b>
 
 လွှဲငွေ <b>${formatKs(order.amountKs)}</b> နှင့် TxID <code>${last5}</code> ကို စစ်ဆေးနေဆဲဖြစ်ပါသည်။
 ငွေလွှဲပြီးပါက ၁ မိနစ်ခန့်စောင့်ပြီး TxID ၅ လုံးကို ပြန်လည်ပို့ပေးပါ။
-`.trim(),
+`.trim()
+          : `
+<b>Payment Record Not Found Yet</b>
+
+Checking transfer of <b>${formatKs(order.amountKs)}</b> with TxID <code>${last5}</code>.
+Please wait a minute after transfer and send the 5 digits again.
+`.trim();
+
+        await sendTg("sendMessage", {
+          chat_id: chatId,
+          text: notFoundText,
           parse_mode: "HTML",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "ပြန်လည်စစ်ဆေးမည်", callback_data: `check_ord_${order.id}` }],
-              [{ text: "Order ပယ်ဖျက်မည်", callback_data: `cancel_ord_${order.id}` }],
+              [{ text: lang === "my" ? "ပြန်လည်စစ်ဆေးမည်" : "Check Again", callback_data: `check_ord:${order.id}` }],
+              [{ text: lang === "my" ? "Order ပယ်ဖျက်မည်" : "Cancel Order", callback_data: `cancel_ord:${order.id}` }],
             ],
           },
         });
@@ -476,17 +613,34 @@ async function handleTxidSubmission(chatId: number, user: User, inputTxid: strin
       });
 
       if (!deliveryResult.subscription) {
-        await sendTg("sendMessage", {
-          chat_id: chatId,
-          text: "ငွေပေးချေမှု အောင်မြင်သော်လည်း VPN Key ထုတ်ပေးရာတွင် ချို့ယွင်းချက်ရှိပါသည်။ Support @dominate_x17 သို့ ဆက်သွယ်ပေးပါ။",
-          parse_mode: "HTML",
-        });
+        const failMsg = lang === "my"
+          ? "ငွေပေးချေမှု အောင်မြင်သော်လည်း VPN Key ထုတ်ပေးရာတွင် ချို့ယွင်းချက်ရှိပါသည်။ Support @dominate_x17 သို့ ဆက်သွယ်ပေးပါ။"
+          : "Payment verified but VPN key provisioning failed. Please contact Support @dominate_x17.";
+        await sendTg("sendMessage", { chat_id: chatId, text: failMsg, parse_mode: "HTML" });
         return;
       }
 
       const sub = deliveryResult.subscription;
-      const successText = `
+      const successText = lang === "my"
+        ? `
 <b>ငွေပေးချေမှု အောင်မြင်ပြီး VPN Key အဆင်သင့်ဖြစ်ပါပြီ</b>
+
+• <b>ဆာဗာ:</b> ${order.serverName}
+• <b>ပလန်:</b> ${order.planTitle} (${formatDataGb(order.dataGb)})
+• <b>သက်တမ်း:</b> ${formatDuration(order.durationDays)}
+• <b>TxID:</b> <code>${txid}</code>
+
+━━━━━━━━━━━━━━━━━━━━
+<b>VLESS Key (ကူးယူရန် နှိပ်ပါ):</b>
+<code>${sub.vlessKey}</code>
+
+<b>Subscription URL:</b>
+<code>${sub.subUrl}</code>
+━━━━━━━━━━━━━━━━━━━━
+v2rayNG / Hiddify / Streisand ထဲသို့ ထည့်သွင်းပြီး ချိတ်ဆက် အသုံးပြုနိုင်ပါပြီ။
+`.trim()
+        : `
+<b>Payment Confirmed & VPN Key Ready</b>
 
 • <b>Server:</b> ${order.serverName}
 • <b>Plan:</b> ${order.planTitle} (${formatDataGb(order.dataGb)})
@@ -500,7 +654,7 @@ async function handleTxidSubmission(chatId: number, user: User, inputTxid: strin
 <b>Subscription URL:</b>
 <code>${sub.subUrl}</code>
 ━━━━━━━━━━━━━━━━━━━━
-v2rayNG / Hiddify / Streisand ထဲသို့ ထည့်သွင်းပြီး ချိတ်ဆက် အသုံးပြုနိုင်ပါပြီ။
+Import into v2rayNG / Hiddify / Streisand to connect immediately.
 `.trim();
 
       await sendTg("sendMessage", {
@@ -509,55 +663,55 @@ v2rayNG / Hiddify / Streisand ထဲသို့ ထည့်သွင်းပ�
         parse_mode: "HTML",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "My Keys / ကီးများကြည့်ရန်", callback_data: "cmd_mykeys" }],
-            [{ text: "Main Menu", callback_data: "cmd_start" }],
+            [{ text: lang === "my" ? "ကျွန်ုပ်၏ ကီးများ" : "My Keys", callback_data: "cmd_mykeys" }],
+            [{ text: lang === "my" ? "ပင်မစာမျက်နှာ" : "Main Menu", callback_data: "cmd_start" }],
           ],
         },
       });
       return;
     } catch (err) {
       console.error("[Telegram Webhook] verifyDeposit error:", err);
-      await sendTg("sendMessage", {
-        chat_id: chatId,
-        text: "ငွေလွှဲစစ်ဆေးရာတွင် ချို့ယွင်းချက်ဖြစ်ပေါ်ခဲ့ပါသည်။ ခေတ္တစောင့်ပြီး ပြန်လည်ပို့ပေးပါ။",
-        parse_mode: "HTML",
-      });
+      const errMsg = lang === "my"
+        ? "ငွေလွှဲစစ်ဆေးရာတွင် ချို့ယွင်းချက်ဖြစ်ပေါ်ခဲ့ပါသည်။ ခေတ္တစောင့်ပြီး ပြန်လည်ပို့ပေးပါ။"
+        : "An error occurred while verifying the payment. Please wait a moment and try again.";
+      await sendTg("sendMessage", { chat_id: chatId, text: errMsg, parse_mode: "HTML" });
       return;
     }
   }
 }
 
 /** Check order status button */
-async function handleCheckOrder(chatId: number, user: User, orderId: string) {
+async function handleCheckOrder(chatId: number, user: User, orderId: string, lang: Lang) {
   const store = await readStore();
   const order = store.orders.find((o) => o.id === orderId && o.userId === user.id);
   if (!order) {
-    await sendTg("sendMessage", {
-      chat_id: chatId,
-      text: "အော်ဒါ မတွေ့ရှိပါ။ /start ကို နှိပ်ပါ။",
-      parse_mode: "HTML",
-    });
+    const notFoundMsg = lang === "my" ? "အော်ဒါ မတွေ့ရှိပါ။ /start ကို နှိပ်ပါ။" : "Order not found. Please type /start.";
+    await sendTg("sendMessage", { chat_id: chatId, text: notFoundMsg, parse_mode: "HTML" });
     return;
   }
 
   if (order.status === "success") {
-    await handleMyKeys(chatId, { id: Number(user.id.replace(/\D/g, "") || "0"), username: user.telegramId });
+    await handleMyKeys(chatId, { id: Number(user.id.replace(/\D/g, "") || "0"), username: user.telegramId }, lang);
     return;
   }
 
-  await sendTg("sendMessage", {
-    chat_id: chatId,
-    text: `
+  const text = lang === "my"
+    ? `
 Order #${order.id}
 Status: <b>${order.status.toUpperCase()}</b>
 ငွေလွှဲပြီးပါက TxID နောက်ဆုံး ၅ လုံးကို ဤ Chat တွင် စာရိုက်ပို့ပေးပါ။
-`.trim(),
-    parse_mode: "HTML",
-  });
+`.trim()
+    : `
+Order #${order.id}
+Status: <b>${order.status.toUpperCase()}</b>
+Please send the last 5 digits of your TxID in this chat.
+`.trim();
+
+  await sendTg("sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
 }
 
 /** Cancel order button */
-async function handleCancelOrder(chatId: number, user: User, orderId: string) {
+async function handleCancelOrder(chatId: number, user: User, orderId: string, lang: Lang) {
   await updateStore((s) => {
     const order = s.orders.find((o) => o.id === orderId && o.userId === user.id);
     if (order && order.status === "awaiting_payment") {
@@ -566,42 +720,48 @@ async function handleCancelOrder(chatId: number, user: User, orderId: string) {
     }
   });
 
+  const text = lang === "my"
+    ? `Order #${orderId} ကို ပယ်ဖျက်ပြီးပါပြီ။`
+    : `Order #${orderId} has been cancelled.`;
+
   await sendTg("sendMessage", {
     chat_id: chatId,
-    text: `Order #${orderId} ကို ပယ်ဖျက်ပြီးပါပြီ။`,
+    text,
     parse_mode: "HTML",
-    reply_markup: mainMenuKeyboard(),
+    reply_markup: mainMenuKeyboard(lang),
   });
 }
 
 /** View Plans */
-async function handlePlans(chatId: number) {
+async function handlePlans(chatId: number, lang: Lang) {
   const store = await readStore();
   const activeServers = store.servers.filter((s) => s.isActive);
 
   if (activeServers.length === 0) {
-    await sendTg("sendMessage", {
-      chat_id: chatId,
-      text: "No VPN plans available at the moment. Please check back later.",
-      parse_mode: "HTML",
-    });
+    const msg = lang === "my"
+      ? "လက်ရှိတွင် VPN ပလန်များ မရှိသေးပါ။"
+      : "No VPN plans available at the moment.";
+    await sendTg("sendMessage", { chat_id: chatId, text: msg, parse_mode: "HTML" });
     return;
   }
 
-  let text = "<b>AirVPN Plans & Pricing</b>\n\n";
+  let text = lang === "my" ? "<b>AirVPN ပလန်များနှင့် ဈေးနှုန်းများ</b>\n\n" : "<b>AirVPN Plans & Pricing</b>\n\n";
 
   for (const server of activeServers) {
     const serverPlans = store.plans.filter((p) => p.serverId === server.id && p.isActive);
     if (serverPlans.length === 0) continue;
 
-    text += `<b>${server.name} (${server.region})</b>\n`;
+    const srvName = lang === "my" && server.nameMy ? server.nameMy : server.name;
+    text += `<b>${srvName} (${server.region})</b>\n`;
     for (const plan of serverPlans) {
       text += `• <b>${plan.title}</b> (${formatDataGb(plan.dataGb)}) — <b>${formatKs(plan.priceKs)}</b> / ${formatDuration(plan.durationDays)}\n`;
     }
     text += "\n";
   }
 
-  text += "All plans include unblockable VLESS Reality & high-speed bandwidth.";
+  text += lang === "my"
+    ? "ပလန်အားလုံးတွင် အပိတ်အဆို့မရှိ VLESS Reality နှင့် မြန်နှုန်းမြင့် Bandwidth ပါဝင်ပါသည်။"
+    : "All plans include unblockable VLESS Reality & high-speed bandwidth.";
 
   await sendTg("sendMessage", {
     chat_id: chatId,
@@ -609,15 +769,15 @@ async function handlePlans(chatId: number) {
     parse_mode: "HTML",
     reply_markup: {
       inline_keyboard: [
-        [{ text: "Buy VPN / Plan ဝယ်ယူရန်", callback_data: "buy_servers" }],
-        [{ text: "Back to Menu", callback_data: "cmd_start" }],
+        [{ text: lang === "my" ? "VPN ဝယ်ယူရန်" : "Buy VPN", callback_data: "buy_servers" }],
+        [{ text: lang === "my" ? "ပင်မစာမျက်နှာသို့" : "Back to Menu", callback_data: "cmd_start" }],
       ],
     },
   });
 }
 
 /** View My Keys */
-async function handleMyKeys(chatId: number, from: TelegramFrom) {
+async function handleMyKeys(chatId: number, from: TelegramFrom, lang: Lang) {
   const store = await readStore();
   const tgId = (from.username || "").toLowerCase();
   const tgUserId = `tg_${from.id}`;
@@ -631,32 +791,43 @@ async function handleMyKeys(chatId: number, from: TelegramFrom) {
   );
 
   if (userSubs.length === 0) {
-    await sendTg("sendMessage", {
-      chat_id: chatId,
-      text: `
+    const emptyText = lang === "my"
+      ? `
+<b>အသုံးပြုဆဲ VPN ကီး မတွေ့ရှိပါ</b>
+
+@${from.username || from.id} နှင့် ချိတ်ဆက်ထားသော VPN ကီး မရှိသေးပါ။
+အောက်ပါ Menu မှ စတင်ဝယ်ယူနိုင်ပါသည်:
+`.trim()
+      : `
 <b>No Active VPN Keys Found</b>
 
-@${from.username || from.id} နှင့် ချိတ်ဆက်ထားသော အသုံးပြုဆဲ VPN ကီး မရှိသေးပါ။
-အောက်ပါ Menu မှ စတင်ဝယ်ယူနိုင်ပါသည်:
-`.trim(),
+No active VPN subscription linked with @${from.username || from.id}.
+You can purchase a new plan from the menu below:
+`.trim();
+
+    await sendTg("sendMessage", {
+      chat_id: chatId,
+      text: emptyText,
       parse_mode: "HTML",
       reply_markup: {
         inline_keyboard: [
-          [{ text: "Buy VPN / Plan ဝယ်ယူရန်", callback_data: "buy_servers" }],
-          [{ text: "Back to Menu", callback_data: "cmd_start" }],
+          [{ text: lang === "my" ? "VPN ဝယ်ယူရန်" : "Buy VPN", callback_data: "buy_servers" }],
+          [{ text: lang === "my" ? "ပင်မစာမျက်နှာသို့" : "Back to Menu", callback_data: "cmd_start" }],
         ],
       },
     });
     return;
   }
 
-  let text = `<b>Your AirVPN Subscriptions (${userSubs.length})</b>\n\n`;
+  let text = lang === "my"
+    ? `<b>သင့်၏ VPN ကီးများ (${userSubs.length})</b>\n\n`
+    : `<b>Your AirVPN Subscriptions (${userSubs.length})</b>\n\n`;
 
   const buttons: { text: string; callback_data: string }[][] = [];
 
   for (const sub of userSubs) {
     const server = store.servers.find((s) => s.id === sub.serverId);
-    const serverName = server?.name || sub.serverId;
+    const serverName = lang === "my" && server?.nameMy ? server.nameMy : (server?.name || sub.serverId);
     text += `<b>${serverName} · ${sub.planTitle}</b>\n`;
     text += `• Status: <b>${sub.status.toUpperCase()}</b>\n`;
     text += `• Data: ${formatDataGb(sub.dataGb)}\n`;
@@ -670,11 +841,14 @@ async function handleMyKeys(chatId: number, from: TelegramFrom) {
     text += "\n";
 
     buttons.push([
-      { text: `Request Key Replacement (${serverName})`, callback_data: `req_rep_${sub.id}` },
+      {
+        text: lang === "my" ? `ကီး အသစ်လဲလှယ်ရန် (${serverName})` : `Request Key Replacement (${serverName})`,
+        callback_data: `req_rep:${sub.id}`,
+      },
     ]);
   }
 
-  buttons.push([{ text: "Main Menu", callback_data: "cmd_start" }]);
+  buttons.push([{ text: lang === "my" ? "ပင်မစာမျက်နှာ" : "Main Menu", callback_data: "cmd_start" }]);
 
   await sendTg("sendMessage", {
     chat_id: chatId,
@@ -685,15 +859,12 @@ async function handleMyKeys(chatId: number, from: TelegramFrom) {
 }
 
 /** Request Key Replacement from Bot */
-async function handleRequestReplacement(chatId: number, user: User, subId: string) {
+async function handleRequestReplacement(chatId: number, user: User, subId: string, lang: Lang) {
   const store = await readStore();
   const sub = store.subscriptions.find((s) => s.id === subId);
   if (!sub) {
-    await sendTg("sendMessage", {
-      chat_id: chatId,
-      text: "Subscription not found.",
-      parse_mode: "HTML",
-    });
+    const notFoundMsg = lang === "my" ? "ကီး မတွေ့ရှိပါ။" : "Subscription not found.";
+    await sendTg("sendMessage", { chat_id: chatId, text: notFoundMsg, parse_mode: "HTML" });
     return;
   }
 
@@ -741,18 +912,29 @@ async function handleRequestReplacement(chatId: number, user: User, subId: strin
     customerNote: `Requested by @${user.telegramId || user.name}`,
   }).catch(() => false);
 
-  await sendTg("sendMessage", {
-    chat_id: chatId,
-    text: `
+  const text = lang === "my"
+    ? `
+<b>ကီး လဲလှယ်ခွင့် တောင်းဆိုမှု ပေးပို့ပြီးပါပြီ</b>
+
+ဆာဗာ: ${sub.planTitle}
+အခြေအနေ: <b>စိစစ်နေဆဲ</b>
+
+Admin များထံသို့ အကြောင်းကြားပြီးပါပြီ။ အမြန်ဆုံး အသစ်လဲလှယ်ပေးပါမည်။
+`.trim()
+    : `
 <b>Key Replacement Request Sent</b>
 
 Server: ${sub.planTitle}
 Status: <b>Under Review</b>
 
-Admin များထံသို့ အကြောင်းကြားပြီးပါပြီ။ ခေတ္တစောင့်ဆိုင်းပေးပါ၊ အမြန်ဆုံး အသစ်လဲလှယ်ပေးပါမည်။
-`.trim(),
+Our administrators have been notified. A new key will be issued promptly.
+`.trim();
+
+  await sendTg("sendMessage", {
+    chat_id: chatId,
+    text,
     parse_mode: "HTML",
-    reply_markup: mainMenuKeyboard(),
+    reply_markup: mainMenuKeyboard(lang),
   });
 }
 
@@ -766,25 +948,35 @@ export async function POST(req: NextRequest) {
       const data = cb.data || "";
       const chatId = cb.message?.chat.id || cb.from.id;
       const user = await findOrCreateTgUser(cb.from);
+      const lang: Lang = user.language || "my";
 
-      if (data === "cmd_start" || data === "main_menu") {
+      if (data.startsWith("set_lang:")) {
         await answerCallback(cb.id);
-        await handleStart(chatId, user);
+        const selectedLang = data.slice("set_lang:".length) as Lang;
+        await setUserLanguage(user.id, selectedLang);
+        user.language = selectedLang;
+        await handleMainMenu(chatId, user);
+      } else if (data === "cmd_lang") {
+        await answerCallback(cb.id);
+        await promptLanguageSelection(chatId);
+      } else if (data === "cmd_start" || data === "main_menu") {
+        await answerCallback(cb.id);
+        await handleMainMenu(chatId, user);
       } else if (data === "buy_servers") {
         await answerCallback(cb.id);
-        await handleBuyServers(chatId);
+        await handleBuyServers(chatId, lang);
       } else if (data.startsWith("buy_srv:") || data.startsWith("buy_srv_")) {
         await answerCallback(cb.id);
         const srvId = data.startsWith("buy_srv:")
           ? data.slice("buy_srv:".length)
           : data.slice("buy_srv_".length);
-        await handleBuyServerPlans(chatId, srvId);
+        await handleBuyServerPlans(chatId, srvId, lang);
       } else if (data.startsWith("buy_plan:") || data.startsWith("buy_plan_")) {
         await answerCallback(cb.id);
         const planId = data.startsWith("buy_plan:")
           ? data.slice("buy_plan:".length)
           : data.slice("buy_plan_".length);
-        await handleBuyPlan(chatId, planId);
+        await handleBuyPlan(chatId, planId, lang);
       } else if (data.startsWith("buy_pay:") || data.startsWith("buy_pay_")) {
         await answerCallback(cb.id);
         const rest = data.startsWith("buy_pay:")
@@ -808,45 +1000,56 @@ export async function POST(req: NextRequest) {
             accountId = parts[parts.length - 1];
           }
         }
-        await handleCreateDeposit(chatId, user, planId, accountId);
+        await handleCreateDeposit(chatId, user, planId, accountId, lang);
       } else if (data.startsWith("check_ord:") || data.startsWith("check_ord_")) {
         await answerCallback(cb.id);
         const ordId = data.startsWith("check_ord:")
           ? data.slice("check_ord:".length)
           : data.slice("check_ord_".length);
-        await handleCheckOrder(chatId, user, ordId);
+        await handleCheckOrder(chatId, user, ordId, lang);
       } else if (data.startsWith("cancel_ord:") || data.startsWith("cancel_ord_")) {
         await answerCallback(cb.id);
         const ordId = data.startsWith("cancel_ord:")
           ? data.slice("cancel_ord:".length)
           : data.slice("cancel_ord_".length);
-        await handleCancelOrder(chatId, user, ordId);
+        await handleCancelOrder(chatId, user, ordId, lang);
       } else if (data.startsWith("req_rep:") || data.startsWith("req_rep_")) {
         await answerCallback(cb.id);
         const subId = data.startsWith("req_rep:")
           ? data.slice("req_rep:".length)
           : data.slice("req_rep_".length);
-        await handleRequestReplacement(chatId, user, subId);
+        await handleRequestReplacement(chatId, user, subId, lang);
       } else if (data === "cmd_plans") {
         await answerCallback(cb.id);
-        await handlePlans(chatId);
+        await handlePlans(chatId, lang);
       } else if (data === "cmd_mykeys") {
         await answerCallback(cb.id);
-        await handleMyKeys(chatId, cb.from);
+        await handleMyKeys(chatId, cb.from, lang);
       } else if (data === "cmd_support") {
         await answerCallback(cb.id);
-        await sendTg("sendMessage", {
-          chat_id: chatId,
-          text: `
-<b>AirVPN Customer Support</b>
+        const supportText = lang === "my"
+          ? `
+<b>AirVPN အကူအညီနှင့် ဝန်ဆောင်မှု</b>
 
 Key အခက်အခဲ၊ ငွေပေးချေမှု သို့မဟုတ် အကူအညီ လိုအပ်ပါက:
 • Admin Support: @dominate_x17
 • Official Channel: https://t.me/airvpn_myanmar_bot
 • Web Shop: ${getAppBaseUrl()}
-`.trim(),
+`.trim()
+          : `
+<b>AirVPN Customer Support</b>
+
+Need help with key issues or payments:
+• Admin Support: @dominate_x17
+• Official Channel: https://t.me/airvpn_myanmar_bot
+• Web Shop: ${getAppBaseUrl()}
+`.trim();
+
+        await sendTg("sendMessage", {
+          chat_id: chatId,
+          text: supportText,
           parse_mode: "HTML",
-          reply_markup: mainMenuKeyboard(),
+          reply_markup: mainMenuKeyboard(lang),
         });
       } else {
         await answerCallback(cb.id);
@@ -864,33 +1067,47 @@ Key အခက်အခဲ၊ ငွေပေးချေမှု သို့�
 
       if (from && text) {
         const user = await findOrCreateTgUser(from);
+        const lang: Lang = user.language || "my";
 
-        if (text.startsWith("/start") || text.startsWith("/menu")) {
-          await handleStart(chatId, user);
+        if (text.startsWith("/start") || text.startsWith("/lang") || text.startsWith("/language")) {
+          // If no language set, or user explicitly runs /lang or /start, prompt language selection
+          if (!user.language || text.startsWith("/lang")) {
+            await promptLanguageSelection(chatId);
+          } else {
+            await handleMainMenu(chatId, user);
+          }
+        } else if (text.startsWith("/menu")) {
+          await handleMainMenu(chatId, user);
         } else if (text.startsWith("/buy")) {
-          await handleBuyServers(chatId);
+          await handleBuyServers(chatId, lang);
         } else if (text.startsWith("/plans")) {
-          await handlePlans(chatId);
+          await handlePlans(chatId, lang);
         } else if (text.startsWith("/mykeys") || text.startsWith("/keys")) {
-          await handleMyKeys(chatId, from);
+          await handleMyKeys(chatId, from, lang);
         } else if (text.startsWith("/help") || text.startsWith("/support")) {
-          await sendTg("sendMessage", {
-            chat_id: chatId,
-            text: `
-<b>AirVPN Customer Support</b>
+          const supportText = lang === "my"
+            ? `
+<b>AirVPN အကူအညီနှင့် ဝန်ဆောင်မှု</b>
 
 Key အခက်အခဲ၊ ငွေပေးချေမှု သို့မဟုတ် အကူအညီ လိုအပ်ပါက:
 • Admin Support: @dominate_x17
 • Web Shop: ${getAppBaseUrl()}
-`.trim(),
-            parse_mode: "HTML",
-          });
+`.trim()
+            : `
+<b>AirVPN Customer Support</b>
+
+Need help with key issues or payments:
+• Admin Support: @dominate_x17
+• Web Shop: ${getAppBaseUrl()}
+`.trim();
+
+          await sendTg("sendMessage", { chat_id: chatId, text: supportText, parse_mode: "HTML" });
         } else if (/^\d{5,}$/.test(text) || text.length === 5 || text.toLowerCase().includes("tx")) {
           // User sent TxID digits
           await handleTxidSubmission(chatId, user, text);
         } else {
-          // Fallback to start menu
-          await handleStart(chatId, user);
+          // Fallback to main menu
+          await handleMainMenu(chatId, user);
         }
       }
     }

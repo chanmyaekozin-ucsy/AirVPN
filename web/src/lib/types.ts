@@ -22,6 +22,7 @@ export type User = {
   googleSub?: string;
   wathanpaySub?: string;
   telegramId?: string;
+  language?: "my" | "en";
   notes?: string;
   createdAt?: string;
 };
