@@ -1,5 +1,7 @@
+"use client";
+
 import { useState } from "react";
-import { countryCodeFor, countryLabel, flagEmoji, flagImageUrl } from "@/lib/flags";
+import { countryCodeFor, countryLabel, flagSvgUrl } from "@/lib/flags";
 
 type FlagIconProps = {
   region?: string;
@@ -8,6 +10,7 @@ type FlagIconProps = {
   id?: string;
   size?: number;
   className?: string;
+  ratio?: "4x3" | "1x1";
 };
 
 export function FlagIcon({
@@ -17,29 +20,40 @@ export function FlagIcon({
   id = "",
   size = 28,
   className = "",
+  ratio = "4x3",
 }: FlagIconProps) {
   const code = countryCodeFor({ region, name, slug, id });
-  const label = countryLabel(code) || "Unknown";
+  const label = countryLabel(code) || name || "Location";
   const [imgFailed, setImgFailed] = useState(false);
-  const emoji = code ? flagEmoji(code) : "🏳️";
+
+  // Calculate proportional dimensions
+  const width = size;
+  const height = ratio === "4x3" ? Math.round((size * 3) / 4) : size;
 
   return (
     <span
-      className={`flag-icon ${className}`.trim()}
-      style={{ width: size, height: size, fontSize: Math.round(size * 0.62) }}
+      className={`flag-box ${className}`.trim()}
+      style={{
+        width,
+        height,
+        minWidth: width,
+        minHeight: height,
+      }}
       title={label}
       aria-label={label}
     >
       {code && !imgFailed ? (
         <img
-          src={flagImageUrl(code, Math.round(size * 2.5))}
-          alt=""
+          src={flagSvgUrl(code, ratio)}
+          alt={label}
+          className="flag-svg"
           draggable={false}
+          loading="lazy"
           onError={() => setImgFailed(true)}
         />
       ) : (
-        <span className="flag-emoji" aria-hidden>
-          {emoji}
+        <span className="flag-fallback-text" aria-hidden>
+          {code || (region.slice(0, 2) || "VPN").toUpperCase()}
         </span>
       )}
     </span>

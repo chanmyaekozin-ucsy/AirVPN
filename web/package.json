@@ -11,6 +11,7 @@
     "vps:install": "bash scripts/vps-one-click.sh"
   },
   "dependencies": {
+    "flag-icons": "^7.5.0",
     "jose": "^6.2.8",
     "next": "^15.5.9",
     "react": "19.1.0",

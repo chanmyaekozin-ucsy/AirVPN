@@ -124,8 +124,12 @@ export function flagEmoji(code: string | null | undefined): string {
   return String.fromCodePoint(...[...cc].map((ch) => 127397 + ch.charCodeAt(0)));
 }
 
-export function flagImageUrl(countryCode: string, widthPx = 80): string {
+/** Direct SVG vector flag from lipis/flag-icons library */
+export function flagSvgUrl(countryCode: string, ratio: "4x3" | "1x1" = "4x3"): string {
   const cc = countryCode.trim().toLowerCase();
-  const w = Math.min(640, Math.max(20, Math.round(widthPx)));
-  return `https://flagcdn.com/w${w}/${cc}.png`;
+  return `https://cdn.jsdelivr.net/gh/lipis/flag-icons/flags/${ratio}/${cc}.svg`;
+}
+
+export function flagImageUrl(countryCode: string): string {
+  return flagSvgUrl(countryCode, "4x3");
 }

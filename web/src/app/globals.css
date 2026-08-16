@@ -542,43 +542,49 @@ input.box, select.box {
 
 .pkg-head .name { flex: 1; min-width: 0; }
 
+.flag-box,
 .flag-icon {
   display: inline-flex;
   flex-shrink: 0;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 30%;
+  border-radius: 8px;
   background: var(--white);
-  border: 1px solid var(--border);
-  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.08);
+  border: 1px solid rgba(16, 42, 67, 0.14);
+  box-shadow: 0 2px 6px rgba(16, 42, 67, 0.08);
+  position: relative;
+  vertical-align: middle;
 }
 
+.flag-box .flag-svg,
 .flag-icon img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
   display: block;
+  transform: scale(1.02);
 }
 
+.flag-fallback-text,
 .flag-fallback {
   font-size: 11px;
-  font-weight: 700;
-  color: var(--muted);
-}
-
-.flag-emoji {
-  line-height: 1;
-  display: grid;
-  place-items: center;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  color: var(--brand-dark);
+  background: var(--brand-soft);
   width: 100%;
   height: 100%;
+  display: grid;
+  place-items: center;
+  text-transform: uppercase;
 }
 
 .server-flag-row {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 
 .pkg .price {
@@ -1244,6 +1250,13 @@ tr.dragging { background: var(--bg-soft); }
   border: 1px solid var(--border);
   border-radius: var(--radius);
   margin-bottom: 12px;
+}
+
+.skeleton-flag {
+  width: 44px;
+  height: 33px;
+  border-radius: 8px;
+  flex-shrink: 0;
 }
 
 .skeleton-circle {

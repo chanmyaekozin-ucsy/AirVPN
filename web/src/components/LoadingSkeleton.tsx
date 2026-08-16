@@ -1,7 +1,7 @@
 export function ServerCardSkeleton() {
   return (
     <div className="skeleton-server-card">
-      <div className="skeleton skeleton-circle" />
+      <div className="skeleton skeleton-flag" />
       <div className="skeleton-lines">
         <div className="skeleton skeleton-line w-60" />
         <div className="skeleton skeleton-line w-40" />
