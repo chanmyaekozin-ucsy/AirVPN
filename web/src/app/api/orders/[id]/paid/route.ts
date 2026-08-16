@@ -4,6 +4,7 @@ import { fulfillOrder, markFulfillFailed } from "@/lib/fulfill";
 import { PanelError } from "@/lib/panel";
 import { updateStore } from "@/lib/store";
 import { notifyPurchaseSuccess } from "@/lib/telegram";
+import { verifyWathanPayPayment } from "@/lib/wathanpay";
 import type { Transaction } from "@/lib/types";
 
 export async function POST(
@@ -37,6 +38,34 @@ export async function POST(
         throw Object.assign(new Error("This order is already closed."), { status: 409 });
       }
 
+      // Rule 1: Anti-Replay Guard — Never trust client-supplied TxIDs that were previously consumed
+      const isReused =
+        store.orders.some((o) => o.id !== id && o.txid === txid && o.status === "success") ||
+        store.transactions.some((t) => t.orderId !== id && t.txid === txid && t.status === "succeeded");
+      if (isReused) {
+        throw Object.assign(new Error("This transaction ID has already been redeemed."), { status: 409 });
+      }
+
+      // Rule 2: Server-to-Server Zero-Trust Verification with WathanPay Core Ledger
+      const verification = await verifyWathanPayPayment({
+        shopOrderId: order.id,
+        transactionId: txid,
+        amountKs: order.amountKs,
+      });
+
+      const isAuthentic =
+        verification.ok === true &&
+        verification.verified === true &&
+        verification.status === "succeeded" &&
+        (verification.amountKs == null || verification.amountKs === order.amountKs);
+
+      if (!isAuthentic) {
+        throw Object.assign(
+          new Error(verification.message || "Payment verification failed on WathanPay ledger."),
+          { status: 400 },
+        );
+      }
+
       const user = store.users.find((u) => u.id === session.sub);
       const payerName =
         String(body.payeeName ?? body.payerName ?? "").trim() ||
@@ -61,7 +90,7 @@ export async function POST(
         method: "WathanPay",
         txid,
         status: "succeeded",
-        note: "WathanPay in-app",
+        note: "WathanPay in-app (verified)",
         createdAt: new Date().toISOString(),
       };
       store.transactions.push(txn);
@@ -88,3 +117,4 @@ export async function POST(
     return jsonError(err);
   }
 }
+
