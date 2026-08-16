@@ -93,6 +93,7 @@ export type Order = {
   userEmail?: string;
   userPhone?: string;
   userName?: string;
+  telegramId?: string;
   replacementRequested?: boolean;
   replacementReason?: string;
   replacementRequestedAt?: string;
