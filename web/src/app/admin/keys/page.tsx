@@ -278,10 +278,23 @@ export default function AdminKeysPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {loading ? (
+              Array.from({ length: 4 }).map((_, r) => (
+                <tr key={r}>
+                  {Array.from({ length: 7 }).map((_, c) => (
+                    <td key={c} style={{ padding: "16px 12px" }}>
+                      <div
+                        className="skeleton skeleton-line"
+                        style={{ width: c === 0 ? "85%" : c === 6 ? "40%" : "65%", height: 14 }}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={7} className="empty">
-                  {loading ? "Loading customer keys…" : "No keys found matching your criteria."}
+                  No keys found matching your criteria.
                 </td>
               </tr>
             ) : (

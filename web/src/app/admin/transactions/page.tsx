@@ -18,17 +18,19 @@ type Row = {
 
 export default function AdminTransactionsPage() {
   const [rows, setRows] = useState<Row[]>([]);
+  const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
 
   const load = () => {
+    setLoading(true);
     const params = new URLSearchParams();
     if (q.trim()) params.set("q", q.trim());
     if (status) params.set("status", status);
-    return api<{ transactions: Row[] }>(`/api/admin/transactions?${params}`).then((r) =>
-      setRows(r.transactions),
-    );
+    return api<{ transactions: Row[] }>(`/api/admin/transactions?${params}`)
+      .then((r) => setRows(r.transactions))
+      .finally(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -75,7 +77,20 @@ export default function AdminTransactionsPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {loading ? (
+              Array.from({ length: 4 }).map((_, r) => (
+                <tr key={r}>
+                  {Array.from({ length: 5 }).map((_, c) => (
+                    <td key={c} style={{ padding: "16px 12px" }}>
+                      <div
+                        className="skeleton skeleton-line"
+                        style={{ width: c === 0 ? "40%" : c === 1 ? "80%" : "60%", height: 14 }}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={5} className="empty">
                   No transactions yet.

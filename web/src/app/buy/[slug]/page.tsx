@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { FlagIcon } from "@/components/FlagIcon";
+import { PlanListSkeleton } from "@/components/LoadingSkeleton";
 import { ShopShell } from "@/components/ShopShell";
 import { useAuth } from "@/components/Auth";
 import { api } from "@/lib/api";
@@ -193,41 +194,43 @@ export default function BuyPage() {
 
         {step === "plans" ? (
           <>
-            <p className="hint">
-              {server ? (
-                <span className="server-flag-row">
-                  <FlagIcon
-                    region={server.region}
-                    name={server.name}
-                    slug={server.slug}
-                    id={server.id}
-                    size={28}
-                  />
-                  <span>
-                    <b>{server.name}</b>
-                    {server.nameMy ? (
-                      <>
-                        <br />
-                        <span className="font-my" style={{ color: "var(--text-2)", fontSize: 13 }}>
-                          {server.nameMy}
-                        </span>
-                      </>
-                    ) : null}
-                  </span>
-                </span>
-              ) : (
-                "Loading…"
-              )}
-            </p>
-            <div className="pkg-list">
-              {plans.map((item) => {
-                const d = planDiscount(item);
-                return (
-                  <button
-                    key={item.id}
-                    className={plan?.id === item.id ? "pkg on" : "pkg"}
-                    type="button"
-                    onClick={() => setPlan(item)}
+            {!server && !error ? (
+              <PlanListSkeleton count={4} />
+            ) : (
+              <>
+                <p className="hint">
+                  {server ? (
+                    <span className="server-flag-row">
+                      <FlagIcon
+                        region={server.region}
+                        name={server.name}
+                        slug={server.slug}
+                        id={server.id}
+                        size={28}
+                      />
+                      <span>
+                        <b>{server.name}</b>
+                        {server.nameMy ? (
+                          <>
+                            <br />
+                            <span className="font-my" style={{ color: "var(--text-2)", fontSize: 13 }}>
+                              {server.nameMy}
+                            </span>
+                          </>
+                        ) : null}
+                      </span>
+                    </span>
+                  ) : null}
+                </p>
+                <div className="pkg-list">
+                  {plans.map((item) => {
+                    const d = planDiscount(item);
+                    return (
+                      <button
+                        key={item.id}
+                        className={plan?.id === item.id ? "pkg on" : "pkg"}
+                        type="button"
+                        onClick={() => setPlan(item)}
                   >
                     <span className="name">
                       {item.title}
@@ -269,6 +272,8 @@ export default function BuyPage() {
                 Continue
               </button>
             </div>
+            </>
+          )}
           </>
         ) : null}
 

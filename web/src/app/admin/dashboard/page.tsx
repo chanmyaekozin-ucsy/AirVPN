@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { FlagIcon } from "@/components/FlagIcon";
+import { KpiGridSkeleton } from "@/components/LoadingSkeleton";
 import { api } from "@/lib/api";
 import { countryCodeFor, countryLabel } from "@/lib/flags";
 import { formatKs } from "@/lib/format";
@@ -34,7 +35,9 @@ export default function AdminDashboardPage() {
       </div>
       {error ? <p className="err">{error}</p> : null}
 
-      {stats ? (
+      {!stats && !error ? (
+        <KpiGridSkeleton />
+      ) : stats ? (
         <>
           <div className="kpi-grid">
             <div className="kpi">

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { OrderListSkeleton } from "@/components/LoadingSkeleton";
 import { ShopShell } from "@/components/ShopShell";
 import { useAuth } from "@/components/Auth";
 import { api } from "@/lib/api";
@@ -11,20 +12,29 @@ import type { Order } from "@/lib/types";
 export default function OrdersPage() {
   const { me, ready } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    if (!ready || !me) return;
+    if (!ready) return;
+    if (!me) {
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
     api<{ orders: Order[] }>("/api/orders")
       .then((data) => setOrders(data.orders))
-      .catch((err) => setError(err instanceof Error ? err.message : "Could not load orders"));
+      .catch((err) => setError(err instanceof Error ? err.message : "Could not load orders"))
+      .finally(() => setLoading(false));
   }, [ready, me]);
 
   return (
     <ShopShell title="Orders" backHref="/">
       <div className="pad">
         {error ? <p className="err">{error}</p> : null}
-        {!me ? (
+        {loading ? (
+          <OrderListSkeleton count={3} />
+        ) : !me ? (
           <p className="empty">
             Sign in to see purchases. <Link href="/login">Sign in</Link>
           </p>

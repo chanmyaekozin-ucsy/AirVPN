@@ -7,17 +7,21 @@ import type { Order } from "@/lib/types";
 
 export default function AdminPurchasesPage() {
   const [rows, setRows] = useState<Order[]>([]);
+  const [loading, setLoading] = useState(true);
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
   const [paidBy, setPaidBy] = useState("");
   const [error, setError] = useState("");
 
   const load = () => {
+    setLoading(true);
     const params = new URLSearchParams();
     if (q.trim()) params.set("q", q.trim());
     if (status) params.set("status", status);
     if (paidBy) params.set("paidBy", paidBy);
-    return api<{ orders: Order[] }>(`/api/admin/purchases?${params}`).then((r) => setRows(r.orders));
+    return api<{ orders: Order[] }>(`/api/admin/purchases?${params}`)
+      .then((r) => setRows(r.orders))
+      .finally(() => setLoading(false));
   };
 
   useEffect(() => {
@@ -72,7 +76,20 @@ export default function AdminPurchasesPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 ? (
+            {loading ? (
+              Array.from({ length: 4 }).map((_, r) => (
+                <tr key={r}>
+                  {Array.from({ length: 6 }).map((_, c) => (
+                    <td key={c} style={{ padding: "16px 12px" }}>
+                      <div
+                        className="skeleton skeleton-line"
+                        style={{ width: c === 0 ? "40%" : c === 1 ? "80%" : "60%", height: 14 }}
+                      />
+                    </td>
+                  ))}
+                </tr>
+              ))
+            ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={6} className="empty">
                   No purchases yet.
