@@ -130,6 +130,15 @@ if [[ "$MODE" == "fresh" ]]; then
 
   if [[ "$EXISTING" -eq 1 ]]; then
     echo "==> Existing 3x-ui found — fresh install will reconfigure the panel"
+    # Fix broken nginx SSL config that blocks dpkg/apt (leftover from old Let's Encrypt setup)
+    if [[ -f /etc/nginx/sites-enabled/default ]]; then
+      if grep -q 'options-ssl-nginx.conf' /etc/nginx/sites-enabled/default 2>/dev/null; then
+        echo "==> Repairing broken nginx config (missing options-ssl-nginx.conf)"
+        rm -f /etc/nginx/sites-enabled/default
+        nginx -t 2>/dev/null && systemctl restart nginx 2>/dev/null || true
+      fi
+    fi
+    repair_apt
   fi
 
   echo "==> Installing 3x-ui (non-interactive)"
@@ -267,6 +276,23 @@ panel_login() {
 
 echo "==> Logging into panel API"
 panel_login
+
+# In fresh mode, wipe any surviving inbounds so ports are free for the new config
+if [[ "$MODE" == "fresh" ]]; then
+  echo "==> Removing existing inbounds (fresh mode)"
+  CSRF="$(panel_csrf)"
+  list_json="$(curl -fsS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+    "${PANEL_BASE}/panel/api/inbounds/list" \
+    -H "x-csrf-token: ${CSRF}" || echo '{}')"
+  inbound_ids="$(printf '%s' "$list_json" | jq -r '(.obj // [])[] | .id' 2>/dev/null || true)"
+  for iid in $inbound_ids; do
+    CSRF="$(panel_csrf)"
+    del_json="$(curl -fsS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+      -X POST "${PANEL_BASE}/panel/api/inbounds/del/${iid}" \
+      -H "x-csrf-token: ${CSRF}" || echo '{}')"
+    echo "==> Deleted inbound #${iid}: $(printf '%s' "$del_json" | jq -r '.success // "?"')"
+  done
+fi
 
 PRIV=""
 PUB=""
