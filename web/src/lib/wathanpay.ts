@@ -56,8 +56,8 @@ export async function chargeWathanPay(input: ChargeInput): Promise<ChargeResult 
 
 export type VerifyPaymentInput = {
   shopOrderId: string;
-  transactionId: string;
-  amountKs: number;
+  transactionId?: string;
+  amountKs?: number;
 };
 
 export type VerifyPaymentResult = {
@@ -67,60 +67,73 @@ export type VerifyPaymentResult = {
   transactionId?: string;
   shopOrderId?: string;
   amountKs?: number;
+  paidAt?: string;
   message?: string;
 };
 
 /**
  * Server-to-Server Payment Verification (Zero-Trust Security Rule).
- * Verifies transaction legitimacy with WathanPay Core Ledger before fulfilling orders.
+ * Official endpoint: GET /v1/mini-apps/verify-payment?shopOrderId={shopOrderId}
+ * Header: X-API-Key: {process.env.WATHANPAY_API_KEY}
  */
 export async function verifyWathanPayPayment(
   input: VerifyPaymentInput,
 ): Promise<VerifyPaymentResult> {
-  const base = (process.env.WATHANPAY_API_URL || "").replace(/\/$/, "");
-  if (!base) {
-    // Standalone / mock fallback when running without a connected WathanPay backend
+  const base = (process.env.WATHANPAY_API_URL || "https://api.wathanpay.com").replace(/\/$/, "");
+  const apiKey = process.env.WATHANPAY_API_KEY || "";
+
+  // Mock / offline fallback when running in development without live WathanPay API
+  if (!process.env.WATHANPAY_API_URL && !apiKey && process.env.NODE_ENV !== "production") {
     return {
       ok: true,
       verified: true,
       status: "succeeded",
-      transactionId: input.transactionId,
+      transactionId: input.transactionId || "0000001",
       shopOrderId: input.shopOrderId,
       amountKs: input.amountKs,
+      paidAt: new Date().toISOString(),
     };
   }
 
   try {
-    const res = await fetch(`${base}/v1/merchant/verify-payment`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        shopOrderId: input.shopOrderId,
-        transactionId: input.transactionId,
-        amountKs: input.amountKs,
-      }),
+    const url = `${base}/v1/mini-apps/verify-payment?shopOrderId=${encodeURIComponent(input.shopOrderId)}`;
+    const headers: Record<string, string> = {
+      Accept: "application/json",
+    };
+    if (apiKey) {
+      headers["X-API-Key"] = apiKey;
+    }
+
+    const res = await fetch(url, {
+      method: "GET",
+      headers,
     });
 
     const data = (await res.json().catch(() => ({}))) as Partial<VerifyPaymentResult> & {
-      error?: { message?: string };
+      error?: string | { message?: string };
     };
 
     if (!res.ok) {
+      const errText =
+        typeof data.error === "string"
+          ? data.error
+          : data.error?.message || data.message || `WathanPay verification returned HTTP ${res.status}`;
       return {
         ok: false,
         verified: false,
         status: data.status || "failed",
-        message: data.message || data.error?.message || `WathanPay returned HTTP ${res.status}`,
+        message: errText,
       };
     }
 
     return {
       ok: Boolean(data.ok),
       verified: Boolean(data.verified),
-      status: data.status || "not_found",
+      status: data.status || (data.ok ? "succeeded" : "not_found"),
       transactionId: data.transactionId || input.transactionId,
       shopOrderId: data.shopOrderId || input.shopOrderId,
       amountKs: typeof data.amountKs === "number" ? data.amountKs : input.amountKs,
+      paidAt: data.paidAt,
       message: data.message,
     };
   } catch (err: unknown) {
@@ -132,5 +145,6 @@ export async function verifyWathanPayPayment(
     };
   }
 }
+
 
 

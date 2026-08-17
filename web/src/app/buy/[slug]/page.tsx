@@ -8,6 +8,7 @@ import { ShopShell } from "@/components/ShopShell";
 import { useAuth } from "@/components/Auth";
 import { api } from "@/lib/api";
 import { copyText } from "@/lib/clipboard";
+import { WathanPay } from "@/sdk/wathanpay";
 import { formatDataGb, formatDuration, formatKs, formatOffBadge, planDiscount } from "@/lib/format";
 import type { Plan, Server } from "@/lib/types";
 
@@ -26,12 +27,18 @@ async function payWithWathanPay(input: {
   title?: string;
   subtitle?: string;
 }) {
-  const pay = window.WathanPay?.pay;
-  if (!pay) throw new Error("Open this shop from WathanPay to pay.");
-  const result = await pay(input);
-  if (!result?.ok) throw new Error(result?.message || "Payment cancelled.");
+  const result = await WathanPay.pay({
+    orderId: input.orderId,
+    amount: input.amountKs,
+    title: input.title,
+    subtitle: input.subtitle,
+  });
+  if (!result.ok) {
+    throw new Error(result.error || "Payment cancelled.");
+  }
   return String(result.txid || "");
 }
+
 
 export default function BuyPage() {
   const { slug } = useParams<{ slug: string }>();

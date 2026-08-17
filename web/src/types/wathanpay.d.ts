@@ -1,16 +1,26 @@
 export {};
 
+export interface WathanPayNativePayInput {
+  orderId: string;
+  amount?: number;
+  amountKs?: number;
+  title?: string;
+  subtitle?: string;
+}
+
+export interface WathanPayNativePayResult {
+  ok?: boolean;
+  txid?: string;
+  error?: string;
+  message?: string;
+}
+
 declare global {
   interface Window {
     WathanPay?: {
       accessToken?: string;
       close?: () => void;
-      pay?: (input: {
-        orderId: string;
-        amountKs: number;
-        title?: string;
-        subtitle?: string;
-      }) => Promise<{ ok?: boolean; txid?: string; message?: string }>;
+      pay?: (input: WathanPayNativePayInput) => Promise<WathanPayNativePayResult>;
     };
     google?: {
       accounts?: {
@@ -35,3 +45,4 @@ declare global {
     };
   }
 }
+

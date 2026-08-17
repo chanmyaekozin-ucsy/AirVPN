@@ -66,13 +66,15 @@ export async function POST(
         );
       }
 
+      const confirmedTxid = verification.transactionId || txid;
+
       const user = store.users.find((u) => u.id === session.sub);
       const payerName =
         String(body.payeeName ?? body.payerName ?? "").trim() ||
         (user?.name && user.name !== "WathanPay" ? user.name : "WathanPay User");
 
       order.paymentMethod = "WathanPay";
-      order.txid = txid;
+      order.txid = confirmedTxid;
       order.payeeName = payerName;
       order.payeePhone = user?.phone || null;
       order.depositId = null;
@@ -88,7 +90,7 @@ export async function POST(
         userId: order.userId,
         amountKs: order.amountKs,
         method: "WathanPay",
-        txid,
+        txid: confirmedTxid,
         status: "succeeded",
         note: "WathanPay in-app (verified)",
         createdAt: new Date().toISOString(),
