@@ -151,6 +151,12 @@ export async function provisionVps(input: ProvisionInput): Promise<ProvisionResu
     }
     return parseResult(combined);
   } finally {
+    try {
+      await exec(conn, "rm -f /tmp/airvpn-remote-bootstrap-*.sh").catch(() => false);
+    } catch {
+      // ignore cleanup error
+    }
     conn.end();
   }
 }
+
