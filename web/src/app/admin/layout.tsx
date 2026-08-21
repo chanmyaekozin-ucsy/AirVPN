@@ -35,12 +35,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
     <div className="shell">
       <aside className="nav">
         <div className="nav-brand" style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <AirVpnLogo size={30} />
+          <AirVpnLogo size={32} />
           <div style={{ display: "flex", flexDirection: "column" }}>
-            <span style={{ fontWeight: 750, fontSize: 16, letterSpacing: "-0.03em", color: "var(--navy)", lineHeight: 1.1 }}>
+            <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.02em", color: "#ffffff", lineHeight: 1.1 }}>
               AirVPN
             </span>
-            <span style={{ fontSize: 11, color: "var(--text-2)", letterSpacing: "0.02em" }}>
+            <span style={{ fontSize: 11, color: "rgba(255, 255, 255, 0.65)", letterSpacing: "0.04em", textTransform: "uppercase" }}>
               Admin
             </span>
           </div>
