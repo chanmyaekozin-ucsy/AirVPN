@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "@/components/Auth";
+import { AirVpnLogo } from "@/components/AirVpnLogo";
 
 const NAV = [
   { href: "/admin/dashboard", label: "Dashboard" },
@@ -33,9 +34,16 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <div className="shell">
       <aside className="nav">
-        <div className="nav-brand">
-          <div className="mark">AV</div>
-          AirVPN
+        <div className="nav-brand" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <AirVpnLogo size={32} />
+          <div style={{ display: "flex", flexDirection: "column" }}>
+            <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.02em", lineHeight: 1.1 }}>
+              Air<span style={{ color: "#0ea5e9" }}>VPN</span>
+            </span>
+            <span style={{ fontSize: 10, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+              Admin
+            </span>
+          </div>
         </div>
         {NAV.map((item) => {
           const on =

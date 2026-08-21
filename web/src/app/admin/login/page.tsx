@@ -4,6 +4,7 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/components/Auth";
+import { AirVpnLogo } from "@/components/AirVpnLogo";
 
 export default function AdminLoginPage() {
   const router = useRouter();
@@ -58,7 +59,9 @@ export default function AdminLoginPage() {
   return (
     <div className="auth-wrap">
       <form className="auth-card" onSubmit={onSubmit}>
-        <div className="mark">AV</div>
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>
+          <AirVpnLogo size={56} />
+        </div>
         <h1>Admin Sign In</h1>
         <p>{require2fa ? "Google Authenticator 2FA Verification" : "AirVPN Management Control Panel"}</p>
         {error ? <p className="err">{error}</p> : null}
