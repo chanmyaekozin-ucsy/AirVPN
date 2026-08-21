@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { jsonError, requireUser } from "@/lib/auth";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { updateStore } from "@/lib/store";
 import { notifyKeyReplacementRequest } from "@/lib/telegram";
 
@@ -9,6 +10,10 @@ export async function POST(
 ) {
   try {
     const session = await requireUser();
+    const ip = getClientIp(req);
+    const rl = checkRateLimit(`replace-req:${session.sub}:${ip}`, 5, 60 * 1000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     const { id } = await params;
     const body = (await req.json().catch(() => ({}))) as {
       reason?: string;

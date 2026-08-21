@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { jsonError, requireUser } from "@/lib/auth";
 import { fulfillOrder, markFulfillFailed } from "@/lib/fulfill";
 import { PanelError } from "@/lib/panel";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { updateStore } from "@/lib/store";
 import { notifyPurchaseSuccess } from "@/lib/telegram";
 import { verifyWathanPayPayment } from "@/lib/wathanpay";
@@ -13,6 +14,10 @@ export async function POST(
 ) {
   try {
     const session = await requireUser();
+    const ip = getClientIp(req);
+    const rl = checkRateLimit(`paid:${session.sub}:${ip}`, 10, 60 * 1000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     const { id } = await params;
     const body = (await req.json()) as {
       txid?: string;

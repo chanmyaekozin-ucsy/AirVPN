@@ -1,11 +1,38 @@
 import { readStore } from "@/lib/store";
 import { formatKeyRemark } from "@/lib/format";
 import { buildVlessUrl } from "@/lib/panel";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
+import type { Server } from "@/lib/types";
+
+interface PanelStatsCache {
+  timestamp: number;
+  stats: { email: string; up: number; down: number }[];
+}
+
+const statsCache = new Map<string, PanelStatsCache>();
+
+async function getCachedPanelStats(server: Server) {
+  const now = Date.now();
+  const cached = statsCache.get(server.id);
+  if (cached && now - cached.timestamp < 60_000) {
+    return cached.stats;
+  }
+  const { PanelClient } = await import("@/lib/panel");
+  const client = new PanelClient(server);
+  await client.login();
+  const stats = await client.getClientStats();
+  statsCache.set(server.id, { timestamp: now, stats });
+  return stats;
+}
 
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ token: string }> },
 ) {
+  const ip = getClientIp(req);
+  const rl = checkRateLimit(`sub_token:${ip}`, 60, 60 * 1000);
+  if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
   const { token } = await params;
   const store = await readStore();
   const sub = store.subscriptions.find(
@@ -39,15 +66,12 @@ export async function GET(
   const totalBytes = sub.dataGb > 0 ? Math.round(sub.dataGb * 1024 ** 3) : 0;
   const expireUnix = sub.expiresAt ? Math.round(Date.parse(sub.expiresAt) / 1000) : 0;
 
-  // Try to get live usage from panel (best-effort, don't block)
+  // Try to get live usage from panel with 60s cache (best-effort, don't block)
   let uploadBytes = 0;
   let downloadBytes = 0;
   if (server) {
     try {
-      const { PanelClient } = await import("@/lib/panel");
-      const client = new PanelClient(server);
-      await client.login();
-      const stats = await client.getClientStats();
+      const stats = await getCachedPanelStats(server);
       const match = stats.find((s) => s.email === sub.panelEmail);
       if (match) {
         uploadBytes = match.up;

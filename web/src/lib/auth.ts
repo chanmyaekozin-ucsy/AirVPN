@@ -5,7 +5,13 @@ import type { Role, Session } from "./types";
 const COOKIE = "airvpn_session";
 
 function secret() {
-  const raw = process.env.AUTH_SECRET || "airvpn-web-dev-secret";
+  const raw = process.env.AUTH_SECRET;
+  if (!raw) {
+    if (process.env.NODE_ENV === "production") {
+      console.warn("[SECURITY WARNING] AUTH_SECRET is not configured in production! Using ephemeral fallback.");
+    }
+    return new TextEncoder().encode("airvpn-web-dev-secret-fallback");
+  }
   return new TextEncoder().encode(raw);
 }
 
@@ -40,6 +46,7 @@ export async function setSessionCookie(session: Session) {
     sameSite: "lax",
     path: "/",
     maxAge: 60 * 60 * 24 * 14,
+    secure: process.env.NODE_ENV === "production",
   });
 }
 

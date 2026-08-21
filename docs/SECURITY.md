@@ -1,67 +1,37 @@
 # AirVPN Security Checklist
 
-Use this checklist before running the bot in production.
+Use this checklist before running AirVPN in production.
 
-## Secrets and access
+---
 
-- [ ] `.env` and `kbz_session.json` are **not** committed to git
-- [ ] `ADMIN_TELEGRAM_IDS` lists only trusted operators
-- [ ] `PANEL_PASSWORD` is strong and panel URL is not publicly exposed without auth
-- [ ] KBZ session token is rotated if compromised
+## 1. Secrets and Access Control
 
-## VPS and VPN provisioning
+- [ ] `.env` is **never** committed to version control.
+- [ ] `ADMIN_PASSWORD` / `ADMIN_PIN` is strong and changed from defaults.
+- [ ] `AUTH_SECRET` / `JWT_SECRET` is a secure 32+ character random string.
+- [ ] `ADMIN_TELEGRAM_IDS` and `PAYMENTS_PROOFS_GROUP_ID` are configured to restrict administrative alerts and actions.
 
-- [ ] `DEV_MOCK_VPN=false` in production
-- [ ] `PANEL_URL` and `VPS_HOST` are set — bot refuses to start without them
-- [ ] `PANEL_VERIFY_SSL=true` unless you use a valid private CA
-- [ ] 3x-ui panel is reachable only over HTTPS / VPN / firewall
+---
 
-## Payments
+## 2. Payments & Zero-Trust Verification
 
-- [ ] Transaction IDs are **globally unique** in the database (replay blocked)
-- [ ] Payment approval is atomic — only one approve succeeds per pending payment
-- [ ] Users can only submit receipts for their own pending payments
-- [ ] Failed verifications do not leak amount/receiver details to users
-- [ ] Stale pending payments are cancelled when a user starts a new purchase
+- [ ] **WathanPay Mini-App**: Payment verification enforces Zero-Trust server-to-server validation against official merchant API (`/v1/mini-apps/verify-payment`).
+- [ ] **Dominate Gateway**: Signatures and transaction IDs are verified before key fulfillment.
+- [ ] Stale orders automatically expire after 3 hours to prevent payment drift.
+- [ ] Subscriptions are idempotent and bound to unique order IDs.
 
-## Rate limiting
+---
 
-Default limits (configurable in `.env`):
+## 3. VPS & 3x-ui Panel Hardening
 
-| Action | Default limit |
-|--------|---------------|
-| Daily gift claim | 1 per day per user |
-| New payment | 5 per hour per user |
-| Receipt screenshot | 2 per minute per user |
-| KBZ verify | 10 per hour per user |
+- [ ] 3x-ui panel ports are protected behind firewall or accessible via secret panel URL tokens.
+- [ ] VLESS Reality keys (`PBK`, `SID`, `SNI`) use valid camouflage domains (`www.microsoft.com`, `aws.amazon.com`).
+- [ ] Panel credentials (`panelUsername`, `panelPassword`, `panelSecret`) are stored encrypted/safely in `store.json`.
 
-## Admin operations
+---
 
-- [ ] Admin actions require Telegram ID in `ADMIN_TELEGRAM_IDS`
-- [ ] Internal errors are logged server-side, not shown in Telegram alerts
-- [ ] Ban/unban is available for abusive users (`Admin → Ban/Unban`)
+## 4. Subscription & Data Persistence
 
-## Database
+- [ ] Persistent volume `/app/data` is mapped in Coolify / Docker to safeguard `store.json`.
+- [ ] Subscription tokens (`/sub/[token]`) use cryptographically random 32-character hex tokens.
 
-- [ ] SQLite file permissions restrict read/write to the bot user
-- [ ] Regular backups of `airvpn.sqlite3`
-- [ ] WAL mode enabled (default) for safer concurrent access
-
-## Monitoring
-
-- [ ] Bot logs reviewed for `Panel error`, `provision failed`, `Tx replay blocked`
-- [ ] KBZ `token_invalid` alerts trigger session refresh
-- [ ] Unhandled errors captured by the global error handler in `bot.py`
-
-## Known limitations
-
-- Admin auth is Telegram ID allowlist only (no 2FA)
-- Rate limits are in-memory (reset on bot restart; use one bot instance)
-- Panel client uses read-modify-write on inbound settings (low concurrency risk)
-
-## Incident response
-
-1. **Leaked bot token** — Revoke via BotFather, deploy new token
-2. **Leaked KBZ session** — Invalidate session, capture new token, update `kbz_session.json`
-3. **Compromised panel** — Rotate panel password, audit inbound clients
-4. **Payment fraud** — Ban user, check `payments` table for `receipt_tx_id` patterns

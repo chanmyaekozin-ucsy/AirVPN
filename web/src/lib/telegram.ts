@@ -1,6 +1,18 @@
+import { createHash } from "crypto";
 import { loadShopEnv } from "./shop-env";
 import { formatDataGb, formatDuration, formatKs } from "./format";
 import type { Order, Subscription, User } from "./types";
+
+export function getTelegramWebhookSecret(): string {
+  loadShopEnv();
+  if (process.env.TELEGRAM_WEBHOOK_SECRET) {
+    return process.env.TELEGRAM_WEBHOOK_SECRET.trim();
+  }
+  const token = process.env.BOT_TOKEN || "";
+  const authSecret = process.env.AUTH_SECRET || "airvpn-secret";
+  if (!token) return "";
+  return createHash("sha256").update(`tg_webhook:${token}:${authSecret}`).digest("hex").slice(0, 32);
+}
 
 export type TelegramNotificationOptions = {
   chatId?: string | number;

@@ -24,6 +24,8 @@ export type User = {
   telegramId?: string;
   language?: "my" | "en";
   notes?: string;
+  twoFactorSecret?: string;
+  twoFactorEnabled?: boolean;
   createdAt?: string;
 };
 

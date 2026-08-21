@@ -1,10 +1,15 @@
 import { NextRequest } from "next/server";
 import { jsonError, setSessionCookie } from "@/lib/auth";
 import { decodeWathanpayToken, hashPin } from "@/lib/hash";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { updateStore } from "@/lib/store";
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = getClientIp(req);
+    const rl = checkRateLimit(`auth_wathanpay:${ip}`, 15, 60 * 1000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     const body = (await req.json()) as {
       accessToken?: string;
       name?: string;
@@ -36,7 +41,7 @@ export async function POST(req: NextRequest) {
           role: "user",
           loginMethod: "wathanpay",
           pinHash: hashPin(token.slice(-6).padStart(6, "0")),
-          balanceKs: 250000,
+          balanceKs: 0,
           wathanpaySub: sub,
           createdAt: new Date().toISOString(),
         };

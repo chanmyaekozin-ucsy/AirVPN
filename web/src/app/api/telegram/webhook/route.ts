@@ -3,9 +3,10 @@ import { createDeposit, listPaymentMethods, paidStatus, verifyDepositLast5 } fro
 import { formatDataGb, formatDuration, formatKs, formatWhen } from "@/lib/format";
 import { fulfillOrder, markFulfillFailed } from "@/lib/fulfill";
 import { PanelError } from "@/lib/panel";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { loadShopEnv } from "@/lib/shop-env";
 import { readStore, updateStore } from "@/lib/store";
-import { notifyKeyReplacementRequest, notifyPurchaseSuccess } from "@/lib/telegram";
+import { getTelegramWebhookSecret, notifyKeyReplacementRequest, notifyPurchaseSuccess } from "@/lib/telegram";
 import type { Order, Transaction, User } from "@/lib/types";
 
 type TelegramFrom = {
@@ -940,6 +941,19 @@ Our administrators have been notified. A new key will be issued promptly.
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = getClientIp(req);
+    const rl = checkRateLimit(`tg_webhook:${ip}`, 120, 60 * 1000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
+    // Verify Telegram Secret Token header if secret is configured
+    const expectedSecret = getTelegramWebhookSecret();
+    if (expectedSecret) {
+      const incomingSecret = req.headers.get("x-telegram-bot-api-secret-token");
+      if (incomingSecret !== expectedSecret) {
+        return Response.json({ error: "Unauthorized webhook caller" }, { status: 401 });
+      }
+    }
+
     const update = (await req.json().catch(() => ({}))) as TelegramUpdate;
 
     // ─── 1. Handle Inline Button Callbacks ──────────────────────────────────

@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { jsonError, requireUser } from "@/lib/auth";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { readStore, updateStore } from "@/lib/store";
 import type { Order } from "@/lib/types";
 
@@ -19,6 +20,10 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   try {
     const session = await requireUser();
+    const ip = getClientIp(req);
+    const rl = checkRateLimit(`order:${session.sub}:${ip}`, 20, 60 * 1000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     const body = (await req.json()) as { planId?: string };
     const planId = String(body.planId ?? "").trim();
     const order = await updateStore((store) => {

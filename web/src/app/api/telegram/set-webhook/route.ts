@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { jsonError, requireAdmin } from "@/lib/auth";
 import { loadShopEnv } from "@/lib/shop-env";
+import { getTelegramWebhookSecret } from "@/lib/telegram";
 
 export async function GET(req: NextRequest) {
   try {
@@ -15,12 +16,23 @@ export async function GET(req: NextRequest) {
     const proto = req.headers.get("x-forwarded-proto") || "https";
     const defaultUrl = `${proto}://${host}/api/telegram/webhook`;
     const targetUrl = req.nextUrl.searchParams.get("url") || defaultUrl;
+    const secretToken = getTelegramWebhookSecret();
 
-    const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(targetUrl)}`);
+    const setUrl = secretToken
+      ? `https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(targetUrl)}&secret_token=${encodeURIComponent(secretToken)}`
+      : `https://api.telegram.org/bot${token}/setWebhook?url=${encodeURIComponent(targetUrl)}`;
+
+    const res = await fetch(setUrl);
     const data = await res.json().catch(() => ({}));
 
-    return Response.json({ ok: true, webhookUrl: targetUrl, telegramResponse: data });
+    return Response.json({
+      ok: true,
+      webhookUrl: targetUrl,
+      secretProtected: Boolean(secretToken),
+      telegramResponse: data,
+    });
   } catch (err) {
     return jsonError(err);
   }
 }
+

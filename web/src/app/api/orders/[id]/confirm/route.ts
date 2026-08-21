@@ -3,6 +3,7 @@ import { jsonError, requireUser } from "@/lib/auth";
 import { failedStatus, paidStatus, verifyDepositLast5 } from "@/lib/dominate";
 import { fulfillOrder, markFulfillFailed } from "@/lib/fulfill";
 import { PanelError } from "@/lib/panel";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { readStore, updateStore } from "@/lib/store";
 import { notifyPurchaseSuccess } from "@/lib/telegram";
 import { chargeWathanPay } from "@/lib/wathanpay";
@@ -48,6 +49,10 @@ export async function POST(
 ) {
   try {
     const session = await requireUser();
+    const ip = getClientIp(req);
+    const rl = checkRateLimit(`order_confirm:${session.sub}:${ip}`, 10, 60 * 1000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
     const { id } = await params;
     const body = (await req.json()) as { last5?: string; accessToken?: string };
     const last5 = String(body.last5 ?? "").replace(/\D/g, "").slice(0, 5);
@@ -55,6 +60,7 @@ export async function POST(
       return Response.json({ error: "Enter the last 5 digits of the TxID." }, { status: 400 });
     }
 
+    const isDev = process.env.NODE_ENV !== "production";
     const preview = await readStore();
     const existing = preview.orders.find((o) => o.id === id && o.userId === session.sub);
     if (!existing) return Response.json({ error: "Order not found." }, { status: 404 });
@@ -62,6 +68,7 @@ export async function POST(
       return Response.json({ error: "This order is already closed." }, { status: 409 });
     }
 
+    // ── Dominate Payment Gateway Path ─────────────────────────────────────────
     if (existing.depositId) {
       const deposit = await verifyDepositLast5(existing.depositId, last5);
       const status = String(deposit.status || "");
@@ -89,12 +96,14 @@ export async function POST(
           createdAt: new Date().toISOString(),
         };
         store.transactions.push(txn);
-        if (failedStatus(status) || !paidStatus(status) || last5 === "99999") {
+
+        const isTestFail = isDev && last5 === "99999";
+        if (failedStatus(status) || !paidStatus(status) || isTestFail) {
           markFailed(order, txn, {
             txid,
             message:
-              last5 === "99999"
-                ? "Delivery failed. Payment will be reviewed."
+              isTestFail
+                ? "Delivery failed (dev simulation). Payment will be reviewed."
                 : deposit.verify_reason || "Payment failed.",
           });
           return { order, transaction: txn, subscription: null };
@@ -107,12 +116,21 @@ export async function POST(
       return Response.json(result);
     }
 
+    // ── WathanPay Direct Charge Path ──────────────────────────────────────────
     const remote = await chargeWathanPay({
       accessToken: body.accessToken,
       amountKs: existing.amountKs,
       orderId: id,
       last5,
     });
+
+    // In production, require verified remote payment result
+    if (!remote && !isDev) {
+      return Response.json(
+        { error: "Direct wallet payment is not available. Please use WathanPay In-App Checkout or KBZPay." },
+        { status: 400 },
+      );
+    }
 
     const result = await updateStore(async (store) => {
       const user = store.users.find((u) => u.id === session.sub);
@@ -139,20 +157,21 @@ export async function POST(
       store.transactions.push(txn);
 
       const payFailed =
-        last5 === "00000" ||
+        (isDev && last5 === "00000") ||
         remote?.ok === false ||
-        (!remote && user.balanceKs < order.amountKs);
+        (!remote && isDev && user.balanceKs < order.amountKs);
+
       if (payFailed) {
         const message =
           remote?.message ||
-          (last5 === "00000" ? "Payment was declined." : "Not enough WathanPay balance.");
+          (isDev && last5 === "00000" ? "Payment was declined (dev simulation)." : "Not enough WathanPay balance.");
         markFailed(order, txn, { txid, message });
         return { order, transaction: txn, subscription: null };
       }
 
-      if (!remote) user.balanceKs -= order.amountKs;
-      if (last5 === "99999") {
-        markFailed(order, txn, { txid, message: "Delivery failed. Payment will be reviewed." });
+      if (!remote && isDev) user.balanceKs -= order.amountKs;
+      if (isDev && last5 === "99999") {
+        markFailed(order, txn, { txid, message: "Delivery failed (dev simulation)." });
         return { order, transaction: txn, subscription: null };
       }
 
@@ -168,3 +187,4 @@ export async function POST(
     return jsonError(err);
   }
 }
+

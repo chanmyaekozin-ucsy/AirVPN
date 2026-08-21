@@ -1,36 +1,31 @@
 import { NextRequest } from "next/server";
 import { jsonError, setSessionCookie } from "@/lib/auth";
-import { decodeGoogleToken, hashPin } from "@/lib/hash";
+import { verifyGoogleIdToken } from "@/lib/google-auth";
+import { hashPin } from "@/lib/hash";
+import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { updateStore } from "@/lib/store";
 
 export async function POST(req: NextRequest) {
   try {
-    const body = (await req.json()) as {
+    const ip = getClientIp(req);
+    const rl = checkRateLimit(`auth_google:${ip}`, 10, 60 * 1000);
+    if (!rl.ok) return rateLimitResponse(rl.resetAt);
+
+    const body = (await req.json().catch(() => ({}))) as {
       credential?: string;
-      email?: string;
-      name?: string;
-      sub?: string;
     };
 
-    let email = "";
-    let name = "";
-    let sub = "";
-
-    if (body.credential) {
-      const decoded = decodeGoogleToken(body.credential);
-      if (!decoded || !decoded.email) {
-        return Response.json({ error: "Invalid Google token." }, { status: 400 });
-      }
-      email = decoded.email.toLowerCase().trim();
-      name = decoded.name || decoded.given_name || "Google User";
-      sub = decoded.sub;
-    } else if (body.email && body.sub) {
-      email = String(body.email).toLowerCase().trim();
-      name = String(body.name || "Google User").trim();
-      sub = String(body.sub).trim();
-    } else {
-      return Response.json({ error: "Missing Google credentials." }, { status: 400 });
+    const credential = String(body.credential ?? "").trim();
+    if (!credential) {
+      return Response.json({ error: "Missing Google ID token credential." }, { status: 400 });
     }
+
+    const verified = await verifyGoogleIdToken(credential);
+    if (!verified || !verified.email) {
+      return Response.json({ error: "Google token verification failed." }, { status: 401 });
+    }
+
+    const { email, name, sub } = verified;
 
     const user = await updateStore((store) => {
       let found = store.users.find(
@@ -50,7 +45,7 @@ export async function POST(req: NextRequest) {
           loginMethod: "google",
           googleSub: sub,
           pinHash: hashPin(`goog_${sub.slice(-6)}`),
-          balanceKs: 250000,
+          balanceKs: 0,
           createdAt: new Date().toISOString(),
         };
         store.users.push(found);
@@ -79,3 +74,4 @@ export async function POST(req: NextRequest) {
     return jsonError(err);
   }
 }
+
