@@ -44,17 +44,29 @@ async function readRaw(): Promise<Store> {
     }
     if (dirty) await writeRaw(store);
     return store;
-  } catch {
+  } catch (err) {
+    if (err && typeof err === "object" && "code" in err && (err as { code: string }).code !== "ENOENT") {
+      console.error("[Store] Error reading store.json:", err);
+    }
     const seeded = seedStore();
-    await mkdir(path.dirname(FILE), { recursive: true });
-    await writeFile(FILE, JSON.stringify(seeded, null, 2) + "\n", "utf8");
+    try {
+      await mkdir(path.dirname(FILE), { recursive: true });
+      await writeFile(FILE, JSON.stringify(seeded, null, 2) + "\n", "utf8");
+    } catch (writeErr) {
+      console.error("[Store] Error writing seeded store.json (check folder permissions):", writeErr);
+    }
     return seeded;
   }
 }
 
 async function writeRaw(store: Store) {
-  await mkdir(path.dirname(FILE), { recursive: true });
-  await writeFile(FILE, JSON.stringify(store, null, 2) + "\n", "utf8");
+  try {
+    await mkdir(path.dirname(FILE), { recursive: true });
+    await writeFile(FILE, JSON.stringify(store, null, 2) + "\n", "utf8");
+  } catch (err) {
+    console.error("[Store] Error writing to store.json:", err);
+    throw err;
+  }
 }
 
 export function readStore(): Promise<Store> {
