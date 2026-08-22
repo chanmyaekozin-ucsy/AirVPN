@@ -1,17 +1,16 @@
-import { createHash } from "crypto";
 import { loadShopEnv } from "./shop-env";
 import { formatDataGb, formatDuration, formatKs } from "./format";
 import type { Order, Subscription, User } from "./types";
 
+/**
+ * Webhook secret for Telegram's X-Telegram-Bot-Api-Secret-Token check.
+ * Must be a dedicated random value from env — never derived from BOT_TOKEN
+ * or AUTH_SECRET (both were historically leaked via .env.example).
+ * Generate with: openssl rand -hex 32
+ */
 export function getTelegramWebhookSecret(): string {
   loadShopEnv();
-  if (process.env.TELEGRAM_WEBHOOK_SECRET) {
-    return process.env.TELEGRAM_WEBHOOK_SECRET.trim();
-  }
-  const token = process.env.BOT_TOKEN || "";
-  const authSecret = process.env.AUTH_SECRET || "airvpn-secret";
-  if (!token) return "";
-  return createHash("sha256").update(`tg_webhook:${token}:${authSecret}`).digest("hex").slice(0, 32);
+  return process.env.TELEGRAM_WEBHOOK_SECRET?.trim() || "";
 }
 
 export type TelegramNotificationOptions = {

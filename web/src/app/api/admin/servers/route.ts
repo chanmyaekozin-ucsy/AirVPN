@@ -4,6 +4,16 @@ import { isServerProvisionReady, normalizeServer } from "@/lib/server-config";
 import { readStore, updateStore } from "@/lib/store";
 import type { Server } from "@/lib/types";
 
+/** Strip panel credentials before sending servers over the wire. */
+function redactServer(s: Server) {
+  return {
+    ...s,
+    panelPassword: s.panelPassword ? "__SET__" : "",
+    panelSecret: s.panelSecret ? "__SET__" : "",
+    configured: isServerProvisionReady(s),
+  };
+}
+
 export async function GET() {
   try {
     await requireAdmin();
@@ -12,10 +22,7 @@ export async function GET() {
       settings: store.settings,
       servers: [...store.servers]
         .sort((a, b) => a.sortOrder - b.sortOrder)
-        .map((s) => ({
-          ...s,
-          configured: isServerProvisionReady(s),
-        })),
+        .map(redactServer),
     });
   } catch (err) {
     return jsonError(err);
@@ -47,10 +54,7 @@ export async function PATCH(req: NextRequest) {
         });
         return [...store.servers]
           .sort((a, b) => a.sortOrder - b.sortOrder)
-          .map((s) => ({
-            ...s,
-            configured: isServerProvisionReady(s),
-          }));
+          .map(redactServer);
       });
       return Response.json({ servers });
     }
@@ -68,9 +72,18 @@ export async function PATCH(req: NextRequest) {
       const found = store.servers.find((s) => s.id === id);
       if (!found) throw Object.assign(new Error("Server not found."), { status: 404 });
 
+      // Blank/redacted credential values must not overwrite stored secrets.
+      const patch: Partial<Server> = { ...body };
+      if (patch.panelPassword === "__SET__" || patch.panelPassword === "") {
+        delete patch.panelPassword;
+      }
+      if (patch.panelSecret === "__SET__" || patch.panelSecret === "") {
+        delete patch.panelSecret;
+      }
+
       const next = normalizeServer({
         ...found,
-        ...body,
+        ...patch,
         id: found.id,
         slug: typeof body.slug === "string" && body.slug.trim() ? body.slug.trim() : found.slug,
       });
@@ -79,7 +92,7 @@ export async function PATCH(req: NextRequest) {
       return found;
     });
     return Response.json({
-      server: { ...server, configured: isServerProvisionReady(server) },
+      server: redactServer(server),
     });
   } catch (err) {
     return jsonError(err);

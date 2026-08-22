@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import { jsonError, setSessionCookie } from "@/lib/auth";
-import { hashPin } from "@/lib/hash";
+import { hashPin, verifyPin } from "@/lib/hash";
 import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { updateStore } from "@/lib/store";
 import { verifyTotpCode } from "@/lib/totp";
@@ -13,19 +13,21 @@ export async function POST(req: NextRequest) {
 
     const body = (await req.json()) as {
       identifier?: string;
-      pin?: string;
+      password?: string;
       totpCode?: string;
     };
     const identifier = String(body.identifier ?? "").trim().toLowerCase();
-    const pin = String(body.pin ?? "").trim();
+    const password = String(body.password ?? "");
     const totpCode = String(body.totpCode ?? "").trim();
 
-    if (!identifier || pin.length !== 6) {
-      return Response.json({ error: "Phone/email and 6-digit PIN required." }, { status: 400 });
+    if (!identifier || !password) {
+      return Response.json(
+        { error: "Email/phone and password are required." },
+        { status: 400 },
+      );
     }
 
-    const isEmail = identifier.includes("@");
-    const method = isEmail ? "email" : "phone";
+    const method = identifier.includes("@") ? "email" : "phone";
 
     let require2fa = false;
     let twoFactorSecret: string | undefined;
@@ -36,8 +38,14 @@ export async function POST(req: NextRequest) {
           (u.phone && u.phone.replace(/\s/g, "") === identifier.replace(/\s/g, "")) ||
           (u.email && u.email.toLowerCase() === identifier),
       );
-      if (!found || found.pinHash !== hashPin(pin)) {
-        return null;
+      if (!found) return null;
+
+      const { ok, legacy } = verifyPin(password, found.passwordHash);
+      if (!ok) return null;
+
+      // Transparently upgrade legacy unsalted hashes to scrypt
+      if (legacy && found.passwordHash) {
+        found.passwordHash = hashPin(password);
       }
 
       if (found.twoFactorEnabled && found.twoFactorSecret) {
@@ -45,14 +53,15 @@ export async function POST(req: NextRequest) {
         twoFactorSecret = found.twoFactorSecret;
       }
 
-      if (!found.loginMethod) {
+      if (found.role !== "admin" && !found.loginMethod) {
         found.loginMethod = method;
       }
       return found;
     });
 
     if (!user) {
-      return Response.json({ error: "Wrong phone, email, or PIN." }, { status: 401 });
+      // Generic message — do not reveal whether the account exists.
+      return Response.json({ error: "Invalid credentials." }, { status: 401 });
     }
 
     // Handle 2FA verification step for accounts with 2FA enabled
@@ -60,7 +69,6 @@ export async function POST(req: NextRequest) {
       if (!totpCode) {
         return Response.json({
           require2fa: true,
-          email: user.email,
           message: "Please enter your 6-digit Google Authenticator code.",
         });
       }
@@ -88,5 +96,3 @@ export async function POST(req: NextRequest) {
     return jsonError(err);
   }
 }
-
-

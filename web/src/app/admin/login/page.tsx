@@ -10,7 +10,7 @@ export default function AdminLoginPage() {
   const router = useRouter();
   const { refresh } = useAuth();
   const [identifier, setIdentifier] = useState("");
-  const [pin, setPin] = useState("");
+  const [password, setPassword] = useState("");
   const [totpCode, setTotpCode] = useState("");
   const [require2fa, setRequire2fa] = useState(false);
   const [error, setError] = useState("");
@@ -30,7 +30,7 @@ export default function AdminLoginPage() {
         method: "POST",
         body: JSON.stringify({
           identifier,
-          pin,
+          password,
           totpCode: require2fa ? totpCode : undefined,
         }),
       });
@@ -74,22 +74,26 @@ export default function AdminLoginPage() {
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 autoComplete="username"
-                placeholder="admin@airvpn.mm"
+                placeholder="admin@example.com"
                 required
               />
             </label>
             <label className="field">
-              6-Digit PIN
+              Password
               <input
-                value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                inputMode="numeric"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                type="password"
                 autoComplete="current-password"
-                placeholder="••••••"
+                placeholder="••••••••••"
                 required
               />
             </label>
-            <button className="btn" disabled={busy || !identifier || pin.length !== 6} type="submit">
+            <button
+              className="btn"
+              disabled={busy || !identifier || !password}
+              type="submit"
+            >
               {busy ? "Authenticating…" : "Continue"}
             </button>
           </>
@@ -123,7 +127,7 @@ export default function AdminLoginPage() {
                 setError("");
               }}
             >
-              Back to PIN
+              Back to Password
             </button>
           </>
         )}
@@ -131,4 +135,3 @@ export default function AdminLoginPage() {
     </div>
   );
 }
-

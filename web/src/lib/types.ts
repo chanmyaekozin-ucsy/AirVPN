@@ -16,7 +16,8 @@ export type User = {
   phone?: string;
   email?: string;
   role: Role;
-  pinHash?: string;
+  /** scrypt password hash (also accepts legacy SHA-256 during migration). */
+  passwordHash?: string;
   balanceKs: number;
   loginMethod?: LoginMethod;
   googleSub?: string;

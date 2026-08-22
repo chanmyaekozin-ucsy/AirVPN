@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import type { Client as SshClient, ConnectConfig } from "ssh2";
 import { requireAdmin } from "@/lib/auth";
 import { readStore } from "@/lib/store";
+import { tofuHostVerifier } from "@/lib/ssh-hosts";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -107,7 +108,8 @@ export async function POST(
         send({ type: "log", line: `Connecting to root@${ip}…` });
         conn = await sshConnect({
           host: ip, port: 22, username: "root", password,
-          readyTimeout: 20_000, hostVerifier: () => true,
+          readyTimeout: 20_000,
+          hostVerifier: tofuHostVerifier(`${ip}:22`).verify,
         });
 
         send({ type: "status", phase: "running" });

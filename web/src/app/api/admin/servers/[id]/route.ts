@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import type { Client as SshClient, ConnectConfig } from "ssh2";
 import { requireAdmin } from "@/lib/auth";
 import { updateStore } from "@/lib/store";
+import { forgetHostKey, tofuHostVerifier } from "@/lib/ssh-hosts";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -120,7 +121,7 @@ export async function DELETE(
           username: "root",
           password,
           readyTimeout: 30_000,
-          hostVerifier: () => true,
+          hostVerifier: tofuHostVerifier(`${ip}:22`).verify,
         });
 
         const log = (line: string) => send({ type: "log", line });
@@ -157,6 +158,8 @@ export async function DELETE(
         send({ type: "log", line: "Removing server record anyway…" });
       } finally {
         conn?.end();
+        // Server is gone — drop its host-key pin so a rebuilt VPS can be re-pinned.
+        forgetHostKey(`${ip}:22`);
       }
 
       // Always remove the store record after uninstall attempt

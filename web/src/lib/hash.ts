@@ -1,7 +1,59 @@
-import { createHash } from "crypto";
+import { createHash, randomBytes, scryptSync, timingSafeEqual } from "crypto";
 
-export function hashPin(pin: string) {
-  return createHash("sha256").update(`cgs:${pin}`).digest("hex");
+const SCRYPT_KEYLEN = 64;
+const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
+/** Prefix marking hashes produced by hashPin() (scrypt, salted). */
+export const PIN_HASH_PREFIX = "scrypt$";
+
+/**
+ * Hash a PIN/password with scrypt + per-value random salt.
+ * Format: scrypt$<N>:<r>:<p>$<saltHex>$<hashHex>
+ */
+export function hashPin(secret: string): string {
+  const salt = randomBytes(16);
+  const derived = scryptSync(secret.normalize("NFKC"), salt, SCRYPT_KEYLEN, SCRYPT_PARAMS);
+  return (
+    `${PIN_HASH_PREFIX}${SCRYPT_PARAMS.N}:${SCRYPT_PARAMS.r}:${SCRYPT_PARAMS.p}$` +
+    `${salt.toString("hex")}$${derived.toString("hex")}`
+  );
+}
+
+/**
+ * Verify a PIN/password against a stored hash.
+ * Supports legacy unsalted `sha256("cgs:"+pin)` hashes for migration:
+ * returns { ok, legacy } so callers can transparently upgrade the stored hash.
+ */
+export function verifyPin(
+  input: string,
+  stored: string | undefined | null,
+): { ok: boolean; legacy: boolean } {
+  if (!input || !stored) return { ok: false, legacy: false };
+
+  if (stored.startsWith(PIN_HASH_PREFIX)) {
+    try {
+      const [, params, saltHex, hashHex] = stored.split("$");
+      const [nStr, rStr, pStr] = params.split(":");
+      const derived = scryptSync(input.normalize("NFKC"), Buffer.from(saltHex, "hex"), Buffer.from(hashHex, "hex").length, {
+        N: Number(nStr),
+        r: Number(rStr),
+        p: Number(pStr),
+      });
+      const expected = Buffer.from(hashHex, "hex");
+      return {
+        ok: derived.length === expected.length && timingSafeEqual(derived, expected),
+        legacy: false,
+      };
+    } catch {
+      return { ok: false, legacy: false };
+    }
+  }
+
+  // Legacy unsalted SHA-256 ("cgs:<pin>") — constant-time compare, flag for rehash
+  const legacy = createHash("sha256").update(`cgs:${input}`).digest("hex");
+  const a = Buffer.from(legacy);
+  const b = Buffer.from(stored);
+  const ok = a.length === b.length && timingSafeEqual(a, b);
+  return { ok, legacy: true };
 }
 
 export function hashToken(token: string) {
@@ -9,7 +61,9 @@ export function hashToken(token: string) {
 }
 
 /**
- * Decodes the JSON payload from a JWT without signature verification.
+ * Decodes a JWT payload WITHOUT signature verification.
+ * Never use for authentication decisions — kept only for non-security
+ * purposes (e.g. reading claims for logging).
  */
 export function decodeJwtPayload<T = Record<string, unknown>>(token: string): T | null {
   const parts = token.split(".");
@@ -23,52 +77,3 @@ export function decodeJwtPayload<T = Record<string, unknown>>(token: string): T 
   }
   return null;
 }
-
-export type WathanPayPayload = {
-  sub?: string;
-  id?: string;
-  name?: string;
-  username?: string;
-  phone?: string;
-  email?: string;
-  role?: string;
-};
-
-export function decodeWathanpayToken(token: string): {
-  subKey: string;
-  name: string;
-  phone: string;
-  email: string;
-} {
-  const payload = decodeJwtPayload<WathanPayPayload>(token);
-  const rawSub = String(payload?.sub || payload?.id || "").trim();
-  const subKey = rawSub ? hashToken(rawSub) : hashToken(token);
-  const name = String(payload?.name || payload?.username || "").trim();
-  const phone = String(payload?.phone || "").trim();
-  const email = String(payload?.email || "").trim();
-  return { subKey, name, phone, email };
-}
-
-/**
- * WathanPay mini-app accessToken is a short-lived JWT (`{ sub: userId, role }`,
- * ~15min TTL) — a fresh token is issued on every mini-app open, but `sub` stays
- * constant for the same WathanPay account.
- */
-export function wathanpaySubject(token: string): string {
-  return decodeWathanpayToken(token).subKey;
-}
-
-export type GooglePayload = {
-  sub: string;
-  email: string;
-  name?: string;
-  given_name?: string;
-  family_name?: string;
-  picture?: string;
-  email_verified?: boolean;
-};
-
-export function decodeGoogleToken(idToken: string): GooglePayload | null {
-  return decodeJwtPayload<GooglePayload>(idToken);
-}
-

@@ -1,6 +1,7 @@
 import { readFileSync } from "fs";
 import path from "path";
 import { Client, type ConnectConfig } from "ssh2";
+import { tofuHostVerifier } from "./ssh-hosts";
 
 export type ProvisionMode = "fresh" | "reuse" | "auto";
 
@@ -104,8 +105,8 @@ export async function provisionVps(input: ProvisionInput): Promise<ProvisionResu
     username: input.sshUser || "root",
     password,
     readyTimeout: 30_000,
-    // Accept first-time host keys (same as one-click script).
-    hostVerifier: () => true,
+    // TOFU: pin the host key on first connect, reject changes afterwards.
+    hostVerifier: tofuHostVerifier(`${ip}:22`).verify,
   });
 
   try {

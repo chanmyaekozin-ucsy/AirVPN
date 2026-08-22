@@ -1,7 +1,8 @@
 import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
+import { decryptField, encryptField, isEncrypted } from "./crypto-fields";
 import { mergeCatalog, seedStore, syncAdminFromEnv } from "./seed";
-import type { Store } from "./types";
+import type { Server, Store } from "./types";
 
 const FILE = path.join(process.cwd(), "data", "store.json");
 const AWAITING_PAYMENT_MS = 3 * 60 * 60 * 1000;
@@ -23,6 +24,36 @@ function expireStaleOrders(store: Store) {
 
 let queue: Promise<unknown> = Promise.resolve();
 
+/**
+ * Panel credentials are encrypted at rest with STORE_SECRET (AES-256-GCM).
+ * In-memory copies are plaintext; disk copies are ciphertext. Values written
+ * before STORE_SECRET existed are encrypted lazily on the next write.
+ */
+function decryptServers(store: Store) {
+  const keepCiphertext = (value: string | undefined): string => {
+    if (!value || !isEncrypted(value)) return value ?? "";
+    // Without STORE_SECRET we cannot decrypt; keeping the ciphertext preserves
+    // the credential so it recovers when the correct secret is restored.
+    if (!process.env.STORE_SECRET?.trim()) return value;
+    return decryptField(value) || value;
+  };
+  for (const s of store.servers) {
+    s.panelPassword = keepCiphertext(s.panelPassword);
+    s.panelSecret = keepCiphertext(s.panelSecret);
+  }
+}
+
+function encryptServers(store: Store) {
+  for (const s of store.servers) {
+    if (s.panelPassword && !isEncrypted(s.panelPassword)) {
+      s.panelPassword = encryptField(s.panelPassword);
+    }
+    if (s.panelSecret && !isEncrypted(s.panelSecret)) {
+      s.panelSecret = encryptField(s.panelSecret);
+    }
+  }
+}
+
 async function readRaw(): Promise<Store> {
   try {
     const raw = await readFile(FILE, "utf8");
@@ -31,6 +62,7 @@ async function readRaw(): Promise<Store> {
     if (!store.plans) store.plans = [];
     if (!store.subscriptions) store.subscriptions = [];
     if (!store.settings) store.settings = { subPublicBaseUrl: "", deletedPlanIds: [] };
+    decryptServers(store);
     const beforeServers = store.servers.map((s) => s.id).join(",");
     const beforePlans = store.plans.length;
     mergeCatalog(store);
@@ -60,9 +92,11 @@ async function readRaw(): Promise<Store> {
 }
 
 async function writeRaw(store: Store) {
+  const snapshot: Store = JSON.parse(JSON.stringify(store));
+  encryptServers(snapshot);
   try {
     await mkdir(path.dirname(FILE), { recursive: true });
-    await writeFile(FILE, JSON.stringify(store, null, 2) + "\n", "utf8");
+    await writeFile(FILE, JSON.stringify(snapshot, null, 2) + "\n", "utf8");
   } catch (err) {
     console.error("[Store] Error writing to store.json:", err);
     throw err;
@@ -92,3 +126,5 @@ export function updateStore<T>(fn: (store: Store) => T | Promise<T>): Promise<T>
   );
   return next;
 }
+
+export type { Server };

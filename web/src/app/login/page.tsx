@@ -10,7 +10,7 @@ function LoginForm() {
   const search = useSearchParams();
   const { refresh } = useAuth();
   const [identifier, setIdentifier] = useState("");
-  const [pin, setPin] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -69,7 +69,7 @@ function LoginForm() {
     try {
       await api("/api/auth/login", {
         method: "POST",
-        body: JSON.stringify({ identifier, pin }),
+        body: JSON.stringify({ identifier, password }),
       });
       await refresh();
       const next = search.get("next");
@@ -120,17 +120,17 @@ function LoginForm() {
             />
           </label>
           <label className="field">
-            6-Digit PIN
+            Password
             <input
-              value={pin}
-              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
-              inputMode="numeric"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              type="password"
               autoComplete="current-password"
-              placeholder="••••••"
+              placeholder="••••••••••"
             />
           </label>
           <button className="btn" disabled={busy} type="submit" style={{ width: "100%" }}>
-            {busy ? "Signing in…" : "Sign In with PIN"}
+            {busy ? "Signing in…" : "Sign In"}
           </button>
         </form>
       </div>

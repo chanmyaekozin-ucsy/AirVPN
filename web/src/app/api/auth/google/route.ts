@@ -1,7 +1,6 @@
 import { NextRequest } from "next/server";
 import { jsonError, setSessionCookie } from "@/lib/auth";
 import { verifyGoogleIdToken } from "@/lib/google-auth";
-import { hashPin } from "@/lib/hash";
 import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { updateStore } from "@/lib/store";
 
@@ -44,7 +43,7 @@ export async function POST(req: NextRequest) {
           role: "user",
           loginMethod: "google",
           googleSub: sub,
-          pinHash: hashPin(`goog_${sub.slice(-6)}`),
+          // No password credential — Google users sign in via Google only.
           balanceKs: 0,
           createdAt: new Date().toISOString(),
         };

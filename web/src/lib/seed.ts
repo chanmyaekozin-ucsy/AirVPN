@@ -1,4 +1,5 @@
-import { hashPin } from "./hash";
+import { randomBytes } from "crypto";
+import { hashPin, PIN_HASH_PREFIX, verifyPin } from "./hash";
 import { DEFAULT_SETTINGS, normalizeServer } from "./server-config";
 import { loadShopEnv } from "./shop-env";
 import type { Plan, Server, Store, User } from "./types";
@@ -7,12 +8,23 @@ const UNLIMITED_DAYS = 36500;
 
 export function adminCredentials() {
   loadShopEnv();
-  const email = (process.env.ADMIN_EMAIL || "admin@airvpn.mm").trim().toLowerCase();
-  const pin = (process.env.ADMIN_PIN || "123456").trim();
-  return {
-    email: email || "admin@airvpn.mm",
-    pin: pin.length === 6 ? pin : "123456",
-  };
+  const email = (process.env.ADMIN_EMAIL || "admin@airvpn.com").trim().toLowerCase();
+  const password = (process.env.ADMIN_PASSWORD || "").trim();
+  return { email: email || "admin@airvpn.com", password };
+}
+
+function adminSecretHash(): string | undefined {
+  const { password } = adminCredentials();
+  return password ? hashPin(password) : undefined;
+}
+
+/** True when the stored admin hash no longer matches ADMIN_PASSWORD from env. */
+export function adminCredentialChanged(storedHash: string | undefined): boolean {
+  if (!storedHash) return true;
+  const { password } = adminCredentials();
+  if (!password) return false; // nothing configured — leave stored credentials alone
+  if (!storedHash.startsWith(PIN_HASH_PREFIX)) return true;
+  return !verifyPin(password, storedHash).ok;
 }
 
 function usPlans(serverId: string): Plan[] {
@@ -38,7 +50,7 @@ function usPlans(serverId: string): Plan[] {
   }));
 }
 
-/** Catalog server — panel settings match production us1 (editable later in Admin). */
+/** Catalog server — panel settings intentionally left blank; configure in Admin → Servers. */
 function us1Server(): Server {
   return normalizeServer({
     id: "us1",
@@ -48,21 +60,14 @@ function us1Server(): Server {
     region: "US",
     isActive: true,
     sortOrder: 1,
-    panelUrl: "http://23.94.229.119:51826/XIzeqcH8HdFgvQ1Aqv",
-    panelUsername: "dominate",
+    panelUrl: "",
+    panelUsername: "",
     panelPassword: "",
     panelSecret: "",
     panelInboundId: 1,
-    panelVerifySsl: true,
-    host: "23.94.229.119",
-    port: 50708,
-    vlessSecurity: "reality",
-    vlessFlow: "xtls-rprx-vision",
+    host: "",
+    port: 443,
     vlessSni: "aws.amazon.com",
-    vlessFp: "chrome",
-    vlessPbk: "h1O2p4CwZv26wliFcB88M3DxLgen-lPHXu5ngXtPGjA",
-    vlessSid: "03c1e6a63273",
-    vlessSpx: "/",
   });
 }
 
@@ -73,7 +78,7 @@ export function seedStore(): Store {
   return {
     settings: {
       ...DEFAULT_SETTINGS,
-      subPublicBaseUrl: "https://airnetworkshop.flash-myanmar.com",
+      subPublicBaseUrl: process.env.APP_URL?.replace(/\/$/, "") || "",
     },
     users: [
       {
@@ -82,7 +87,6 @@ export function seedStore(): Store {
         phone: "09970000000",
         email: "user@airvpn.mm",
         role: "user",
-        pinHash: hashPin("123456"),
         balanceKs: 500000,
       },
       {
@@ -90,9 +94,9 @@ export function seedStore(): Store {
         name: "Admin",
         phone: "09970000001",
         email: admin.email,
-        role: "admin",
-        pinHash: hashPin(admin.pin),
-        balanceKs: 0,
+      role: "admin",
+      ...(admin.password ? { passwordHash: adminSecretHash()! } : {}),
+      balanceKs: 0,
       },
     ],
     servers,
@@ -104,8 +108,7 @@ export function seedStore(): Store {
 }
 
 export function syncAdminFromEnv(store: Store) {
-  const { email, pin } = adminCredentials();
-  const pinHash = hashPin(pin);
+  const { email, password } = adminCredentials();
   const admin = store.users.find((u) => u.id === "user_admin" || u.role === "admin");
   if (!admin) {
     const created: User = {
@@ -114,20 +117,27 @@ export function syncAdminFromEnv(store: Store) {
       phone: "09970000001",
       email,
       role: "admin",
-      pinHash,
+      ...(password ? { passwordHash: hashPin(password) } : {}),
       balanceKs: 0,
     };
     store.users.push(created);
     return true;
   }
   let changed = false;
-  if (admin.email !== email) {
+  if (email && admin.email !== email) {
     admin.email = email;
     changed = true;
   }
-  if (admin.pinHash !== pinHash) {
-    admin.pinHash = pinHash;
+  if (password && (admin.passwordHash === undefined || adminCredentialChanged(admin.passwordHash))) {
+    // Covers both fresh accounts and records that only carry a legacy pinHash.
+    admin.passwordHash = hashPin(password);
     changed = true;
+  }
+  if (!password && !admin.passwordHash) {
+    console.error(
+      "[Seed] ADMIN_PASSWORD is not set and the admin account has no usable password. " +
+        "Set ADMIN_PASSWORD in .env to enable admin sign-in.",
+    );
   }
   if (admin.role !== "admin") {
     admin.role = "admin";
@@ -140,9 +150,6 @@ export function mergeCatalog(store: Store) {
   if (!store.settings) store.settings = { ...DEFAULT_SETTINGS };
   if (typeof store.settings.subPublicBaseUrl !== "string") {
     store.settings.subPublicBaseUrl = "";
-  }
-  if (!store.settings.subPublicBaseUrl) {
-    store.settings.subPublicBaseUrl = "https://airnetworkshop.flash-myanmar.com";
   }
   if (!Array.isArray(store.settings.deletedPlanIds)) {
     store.settings.deletedPlanIds = [];
@@ -157,30 +164,11 @@ export function mergeCatalog(store: Store) {
       store.servers.push(server);
       continue;
     }
-    // Keep admin toggles; refresh identity from seed. Fill panel only when unset.
+    // Keep admin toggles; refresh identity from seed. Never overwrite configured panels.
     existing.name = server.name;
     existing.nameMy = server.nameMy;
     existing.region = server.region;
     existing.slug = server.slug;
-    if (!existing.panelUrl) {
-      Object.assign(existing, {
-        panelUrl: server.panelUrl,
-        panelUsername: server.panelUsername,
-        panelPassword: server.panelPassword || existing.panelPassword,
-        panelSecret: server.panelSecret,
-        panelInboundId: server.panelInboundId,
-        panelVerifySsl: server.panelVerifySsl,
-        host: server.host,
-        port: server.port,
-        vlessSecurity: server.vlessSecurity,
-        vlessFlow: server.vlessFlow,
-        vlessSni: server.vlessSni,
-        vlessFp: server.vlessFp,
-        vlessPbk: server.vlessPbk,
-        vlessSid: server.vlessSid,
-        vlessSpx: server.vlessSpx,
-      });
-    }
     Object.assign(existing, normalizeServer(existing));
   }
 
@@ -208,4 +196,9 @@ export function mergeCatalog(store: Store) {
     if (!sub.panelEmail) sub.panelEmail = "";
     if (!sub.clientUuid) sub.clientUuid = "";
   }
+}
+
+/** Random id helper for records that need uniqueness without a counter. */
+export function randomId(bytes = 8): string {
+  return randomBytes(bytes).toString("hex");
 }

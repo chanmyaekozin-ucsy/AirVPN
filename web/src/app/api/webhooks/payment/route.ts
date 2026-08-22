@@ -7,24 +7,46 @@ import { updateStore } from "@/lib/store";
 import { notifyPurchaseSuccess, sendTelegramMessage } from "@/lib/telegram";
 import type { Transaction } from "@/lib/types";
 
-function verifySignature(rawBody: string, signature: string, secret: string): boolean {
-  if (!secret || !signature) return true;
-  try {
-    const hmac = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
-    return crypto.timingSafeEqual(Buffer.from(hmac, "utf8"), Buffer.from(signature, "utf8"));
-  } catch {
-    return false;
+const WEBHOOK_REPLAY_WINDOW_MS = 10 * 60 * 1000;
+const processedWebhooks = new Map<string, number>();
+
+setInterval(() => {
+  const cutoff = Date.now() - WEBHOOK_REPLAY_WINDOW_MS;
+  for (const [key, seen] of processedWebhooks) {
+    if (seen < cutoff) processedWebhooks.delete(key);
   }
+}, 60 * 1000).unref?.();
+
+function verifySignature(rawBody: string, signature: string, secret: string): boolean {
+  if (!secret || !signature) return false;
+  const expected = crypto.createHmac("sha256", secret).update(rawBody).digest("hex");
+  const a = Buffer.from(expected, "utf8");
+  const b = Buffer.from(signature.trim(), "utf8");
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function replayCheck(eventKey: string): boolean {
+  const now = Date.now();
+  const seen = processedWebhooks.get(eventKey);
+  if (seen && now - seen < WEBHOOK_REPLAY_WINDOW_MS) return false;
+  processedWebhooks.set(eventKey, now);
+  return true;
 }
 
 export async function POST(req: NextRequest) {
   try {
     const rawBody = await req.text();
-    const signature = req.headers.get("x-signature-sha256") || req.headers.get("x-signature") || "";
+    const signature =
+      req.headers.get("x-signature-sha256") || req.headers.get("x-signature") || "";
     const { webhookSecret, key } = dominateConfig();
     const secret = webhookSecret || key;
 
-    if (secret && signature && !verifySignature(rawBody, signature, secret)) {
+    // Fail closed: a valid HMAC signature is mandatory.
+    if (!secret) {
+      console.error("[PGW Webhook] No webhook secret or gateway key configured — rejecting.");
+      return Response.json({ error: "Webhook not configured" }, { status: 503 });
+    }
+    if (!verifySignature(rawBody, signature, secret)) {
       return Response.json({ error: "Invalid signature" }, { status: 401 });
     }
 
@@ -46,6 +68,12 @@ export async function POST(req: NextRequest) {
 
     if (status !== "paid") {
       return Response.json({ ok: true, status, message: "Non-paid status ignored" }, { status: 200 });
+    }
+
+    // Replay protection: identical paid notifications within the window are no-ops
+    const eventKey = `${depositId}:${externalRef}`;
+    if (!replayCheck(eventKey)) {
+      return Response.json({ ok: true, message: "Duplicate webhook ignored" }, { status: 200 });
     }
 
     const result = await updateStore(async (store) => {

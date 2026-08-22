@@ -38,10 +38,9 @@ export function useAuth() {
 function detectMiniAppSignals(): {
   isMiniApp: boolean;
   authData: string | null;
-  token: string | null;
   user: MiniAppUser | null;
 } {
-  if (typeof window === "undefined") return { isMiniApp: false, authData: null, token: null, user: null };
+  if (typeof window === "undefined") return { isMiniApp: false, authData: null, user: null };
 
   const urlParams = new URLSearchParams(window.location.search);
   const authDataFromUrl = urlParams.get("authData") || urlParams.get("auth_data") || null;
@@ -49,12 +48,9 @@ function detectMiniAppSignals(): {
     window.WathanPay?.authData ||
     (typeof window.WathanPay?.getAuthData === "function" ? window.WathanPay.getAuthData() : null) ||
     null;
+  // Signed authData is the only accepted credential — accessToken/JWT
+  // fallbacks removed (server rejects them; WathanPay officially supports authData).
   const authData = bridgeAuthData || authDataFromUrl || null;
-
-  const tokenFromUrl =
-    urlParams.get("token") || urlParams.get("accessToken") || urlParams.get("access_token");
-  const bridgeToken = window.WathanPay?.accessToken || null;
-  const token = bridgeToken || tokenFromUrl || null;
 
   const wpUser =
     window.WathanPay?.user ||
@@ -73,18 +69,17 @@ function detectMiniAppSignals(): {
   const hasBridge = !!(
     window.WathanPay?.ready ||
     window.WathanPay?.pay ||
-    window.WathanPay?.accessToken ||
     window.WathanPay?.authData
   );
 
-  const isMiniApp = !!(authData || token || urlFlag || uaFlag || storageFlag || hasBridge || wpUser);
+  const isMiniApp = !!(authData || urlFlag || uaFlag || storageFlag || hasBridge || wpUser);
 
   if (isMiniApp && typeof sessionStorage !== "undefined") {
     sessionStorage.setItem("wathanpay_miniapp", "true");
     document.documentElement.dataset.miniApp = "true";
   }
 
-  return { isMiniApp, authData, token, user: wpUser };
+  return { isMiniApp, authData, user: wpUser };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -94,11 +89,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const authAttempted = useRef(false);
 
   const authenticateWathanPay = async (
-    credentials: { authData?: string | null; token?: string | null },
+    credentials: { authData?: string | null },
     profileUser?: MiniAppUser | null,
   ) => {
     if (authAttempted.current) return;
-    if (!credentials.authData && !credentials.token) return;
+    if (!credentials.authData) return;
     authAttempted.current = true;
     setMiniApp(true);
     if (typeof sessionStorage !== "undefined") {
@@ -110,7 +105,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         method: "POST",
         body: JSON.stringify({
           authData: credentials.authData || undefined,
-          accessToken: credentials.token || undefined,
           name: profileUser?.name,
           phone: profileUser?.phone || profileUser?.maskedPhone,
           avatarUrl: profileUser?.avatarUrl,
@@ -142,13 +136,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    const { isMiniApp, authData, token, user: wpUser } = detectMiniAppSignals();
+    const { isMiniApp, authData, user: wpUser } = detectMiniAppSignals();
     if (isMiniApp) {
       setMiniApp(true);
     }
 
-    if (authData || token) {
-      void authenticateWathanPay({ authData, token }, wpUser);
+    if (authData) {
+      void authenticateWathanPay({ authData }, wpUser);
       return;
     }
 
@@ -163,12 +157,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (detected.isMiniApp && !miniApp) {
         setMiniApp(true);
       }
-      if ((detected.authData || detected.token) && !authAttempted.current) {
+      if (detected.authData && !authAttempted.current) {
         clearInterval(interval);
-        void authenticateWathanPay(
-          { authData: detected.authData, token: detected.token },
-          detected.user,
-        );
+        void authenticateWathanPay({ authData: detected.authData }, detected.user);
       }
       if (elapsed > 3000) {
         clearInterval(interval);
@@ -178,11 +169,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const onBridgeReady = () => {
       const detected = detectMiniAppSignals();
       setMiniApp(true);
-      if ((detected.authData || detected.token) && !authAttempted.current) {
-        void authenticateWathanPay(
-          { authData: detected.authData, token: detected.token },
-          detected.user,
-        );
+      if (detected.authData && !authAttempted.current) {
+        void authenticateWathanPay({ authData: detected.authData }, detected.user);
       }
     };
 

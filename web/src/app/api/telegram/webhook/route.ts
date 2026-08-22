@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import crypto from "crypto";
 import { createDeposit, listPaymentMethods, paidStatus, verifyDepositLast5 } from "@/lib/dominate";
 import { formatDataGb, formatDuration, formatKs, formatWhen } from "@/lib/format";
 import { fulfillOrder, markFulfillFailed } from "@/lib/fulfill";
@@ -80,21 +81,31 @@ function getAppBaseUrl(): string {
 }
 
 async function findOrCreateTgUser(from: TelegramFrom): Promise<User> {
-  const tgId = from.username || String(from.id);
   const fullName = [from.first_name, from.last_name].filter(Boolean).join(" ") || `TG User ${from.id}`;
 
   return updateStore<User>((store) => {
-    const existing = store.users.find(
-      (u) =>
-        u.telegramId === tgId ||
-        (from.username && u.telegramId?.toLowerCase() === from.username.toLowerCase()) ||
-        u.id === `tg_${from.id}`,
-    );
+    // Match primarily by immutable numeric Telegram id (`tg_<id>`). Username
+    // matches are a fallback only for legacy rows — usernames are recyclable,
+    // so they must never grant ownership of an id-keyed account.
+    let existing = store.users.find((u) => u.id === `tg_${from.id}`);
+
+    if (!existing) {
+      const byUsername =
+        from.username && from.username.length > 0
+          ? store.users.find(
+              (u) =>
+                !u.id.startsWith("tg_") &&
+                u.telegramId?.toLowerCase() === from.username!.toLowerCase(),
+            )
+          : undefined;
+      if (byUsername) {
+        byUsername.id = `tg_${from.id}`;
+        existing = byUsername;
+      }
+    }
 
     if (existing) {
-      if (from.username && (!existing.telegramId || existing.telegramId !== from.username)) {
-        existing.telegramId = from.username;
-      }
+      existing.telegramId = from.username || String(from.id);
       if (fullName && (!existing.name || existing.name.startsWith("TG User"))) {
         existing.name = fullName;
       }
@@ -713,7 +724,12 @@ async function handleCheckOrder(chatId: number, user: User, orderId: string, lan
   }
 
   if (order.status === "success") {
-    await handleMyKeys(chatId, { id: Number(user.id.replace(/\D/g, "") || "0"), username: user.telegramId }, lang);
+    const numericId = Number(user.id.replace(/^tg_/, "").replace(/\D/g, "") || "0");
+    await handleMyKeys(
+      chatId,
+      { id: numericId, username: user.telegramId?.startsWith("@") ? user.telegramId.slice(1) : user.telegramId },
+      lang,
+    );
     return;
   }
 
@@ -801,16 +817,17 @@ async function handlePlans(chatId: number, lang: Lang) {
 /** View My Keys */
 async function handleMyKeys(chatId: number, from: TelegramFrom, lang: Lang) {
   const store = await readStore();
-  const tgId = (from.username || "").toLowerCase();
   const tgUserId = `tg_${from.id}`;
 
-  const userSubs = store.subscriptions.filter(
-    (s) =>
-      s.userId === tgUserId ||
-      (tgId && s.userEmail?.toLowerCase().includes(tgId)) ||
-      (tgId && s.userName?.toLowerCase().includes(tgId)) ||
-      (tgId && s.notes?.toLowerCase().includes(tgId)),
-  );
+  // Exact ownership match only. Substring matching on username/email/notes
+  // previously leaked other customers' VLESS keys (e.g. anyone named "dominate").
+  const ownerIds = new Set([tgUserId, String(from.id)]);
+  const userSubs = store.subscriptions.filter((s) => {
+    if (ownerIds.has(s.userId)) return true;
+    if (!s.userId.startsWith("tg_")) return false;
+    const ownerId = s.userId.replace(/^tg_/, "");
+    return /^\d+$/.test(ownerId) && ownerId === String(from.id);
+  });
 
   if (userSubs.length === 0) {
     const emptyText = lang === "my"
@@ -966,13 +983,23 @@ export async function POST(req: NextRequest) {
     const rl = checkRateLimit(`tg_webhook:${ip}`, 120, 60 * 1000);
     if (!rl.ok) return rateLimitResponse(rl.resetAt);
 
-    // Verify Telegram Secret Token header if secret is configured
+    // Verify Telegram Secret Token header. Mandatory when TELEGRAM_WEBHOOK_SECRET
+    // is set; in production the webhook must not be registered without it.
     const expectedSecret = getTelegramWebhookSecret();
     if (expectedSecret) {
-      const incomingSecret = req.headers.get("x-telegram-bot-api-secret-token");
-      if (incomingSecret !== expectedSecret) {
+      const incomingSecret = req.headers.get("x-telegram-bot-api-secret-token") || "";
+      if (
+        incomingSecret.length !== expectedSecret.length ||
+        !crypto.timingSafeEqual(Buffer.from(incomingSecret), Buffer.from(expectedSecret))
+      ) {
         return Response.json({ error: "Unauthorized webhook caller" }, { status: 401 });
       }
+    } else if (process.env.NODE_ENV === "production") {
+      console.error(
+        "[Telegram Webhook] TELEGRAM_WEBHOOK_SECRET is not set — refusing updates. " +
+          "Set a random value (openssl rand -hex 32) and re-register the webhook with setWebhook.",
+      );
+      return Response.json({ error: "Webhook secret not configured" }, { status: 503 });
     }
 
     const update = (await req.json().catch(() => ({}))) as TelegramUpdate;

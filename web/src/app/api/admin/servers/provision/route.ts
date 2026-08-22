@@ -105,7 +105,12 @@ export async function POST(req: NextRequest) {
         const server = await updateStore((store) => applyProvisionedServer(store, result));
         send({
           type: "done",
-          server: { ...server, configured: isServerProvisionReady(server) },
+          server: {
+            ...server,
+            panelPassword: server.panelPassword ? "__SET__" : "",
+            panelSecret: server.panelSecret ? "__SET__" : "",
+            configured: isServerProvisionReady(server),
+          },
           meta: result.meta ?? null,
         });
       } catch (err) {
