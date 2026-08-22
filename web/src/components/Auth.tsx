@@ -111,7 +111,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }),
       });
       setMe(data.user);
-    } catch {
+    } catch (err) {
+      console.error(
+        "[Auth] WathanPay auto-login failed:",
+        err instanceof Error ? err.message : err,
+        "| hadAuthData:",
+        Boolean(credentials.authData),
+      );
       // Fall back to general session
       await refresh();
     } finally {
@@ -141,6 +147,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setMiniApp(true);
     }
 
+    if (process.env.NODE_ENV !== "production") {
+      console.log("[Auth] mini-app signals:", {
+        isMiniApp,
+        hasAuthData: Boolean(authData),
+        bridgeAuthData: typeof window !== "undefined" ? Boolean(window.WathanPay?.authData || window.WathanPay?.getAuthData) : false,
+        urlAuthData: typeof window !== "undefined" ? Boolean(new URLSearchParams(window.location.search).get("authData") || new URLSearchParams(window.location.search).get("auth_data")) : false,
+        bridgeUser: Boolean(wpUser),
+      });
+    }
     if (authData) {
       void authenticateWathanPay({ authData }, wpUser);
       return;
