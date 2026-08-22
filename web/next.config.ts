@@ -21,7 +21,7 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org https://*.telegram.org https://accounts.google.com",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://telegram.org https://*.telegram.org https://accounts.google.com https://api.wathanpay.com",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: https: blob: https://cdn.jsdelivr.net",
       "font-src 'self' data:",

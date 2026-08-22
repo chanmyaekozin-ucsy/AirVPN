@@ -1,8 +1,8 @@
 /**
- * WathanPay wallet charge.
- * When WATHANPAY_API_URL is set, debit the player's WathanPay balance.
- * Until then, AirVPN web uses the local demo wallet.
+ * WathanPay wallet charge and server-to-server ledger verification.
+ * See SDK_INTEGRATION.md for reference.
  */
+
 export type ChargeInput = {
   accessToken?: string;
   amountKs: number;
@@ -63,7 +63,7 @@ export type VerifyPaymentInput = {
 export type VerifyPaymentResult = {
   ok: boolean;
   verified: boolean;
-  status: "succeeded" | "pending" | "failed" | "not_found";
+  status: "succeeded" | "pending" | "failed" | "not_found" | string;
   transactionId?: string;
   shopOrderId?: string;
   amountKs?: number;
@@ -72,8 +72,8 @@ export type VerifyPaymentResult = {
 };
 
 /**
- * Server-to-Server Payment Verification (Zero-Trust Security Rule).
- * Official endpoint: GET /v1/mini-apps/verify-payment?shopOrderId={shopOrderId}
+ * Server-to-Server Zero-Trust Payment Verification.
+ * Official endpoint: GET https://api.wathanpay.com/v1/merchant/verify-payment?shopOrderId={shopOrderId}
  * Header: X-API-Key: {process.env.WATHANPAY_API_KEY}
  */
 export async function verifyWathanPayPayment(
@@ -96,7 +96,6 @@ export async function verifyWathanPayPayment(
   }
 
   try {
-    const url = `${base}/v1/mini-apps/verify-payment?shopOrderId=${encodeURIComponent(input.shopOrderId)}`;
     const headers: Record<string, string> = {
       Accept: "application/json",
     };
@@ -104,13 +103,35 @@ export async function verifyWathanPayPayment(
       headers["X-API-Key"] = apiKey;
     }
 
-    const res = await fetch(url, {
+    // Try official merchant verification endpoint first
+    let url = `${base}/v1/merchant/verify-payment?shopOrderId=${encodeURIComponent(input.shopOrderId)}`;
+    if (input.transactionId) {
+      url += `&transactionId=${encodeURIComponent(input.transactionId)}`;
+    }
+    if (typeof input.amountKs === "number") {
+      url += `&amountKs=${encodeURIComponent(input.amountKs)}`;
+    }
+
+    let res = await fetch(url, {
       method: "GET",
       headers,
     });
 
+    // Fallback to legacy endpoint if 404
+    if (res.status === 404) {
+      const fallbackUrl = `${base}/v1/mini-apps/verify-payment?shopOrderId=${encodeURIComponent(input.shopOrderId)}`;
+      const fallbackRes = await fetch(fallbackUrl, {
+        method: "GET",
+        headers,
+      });
+      if (fallbackRes.ok) {
+        res = fallbackRes;
+      }
+    }
+
     const data = (await res.json().catch(() => ({}))) as Partial<VerifyPaymentResult> & {
       error?: string | { message?: string };
+      message?: string;
     };
 
     if (!res.ok) {
@@ -126,10 +147,12 @@ export async function verifyWathanPayPayment(
       };
     }
 
+    const isVerified = Boolean(data.verified || (data.ok && data.status === "succeeded"));
+
     return {
       ok: Boolean(data.ok),
-      verified: Boolean(data.verified),
-      status: data.status || (data.ok ? "succeeded" : "not_found"),
+      verified: isVerified,
+      status: data.status || (isVerified ? "succeeded" : "not_found"),
       transactionId: data.transactionId || input.transactionId,
       shopOrderId: data.shopOrderId || input.shopOrderId,
       amountKs: typeof data.amountKs === "number" ? data.amountKs : input.amountKs,
@@ -145,6 +168,3 @@ export async function verifyWathanPayPayment(
     };
   }
 }
-
-
-

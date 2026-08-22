@@ -15,7 +15,7 @@ Use this checklist before running AirVPN in production.
 
 ## 2. Payments & Zero-Trust Verification
 
-- [ ] **WathanPay Mini-App**: Payment verification enforces Zero-Trust server-to-server validation against official merchant API (`/v1/mini-apps/verify-payment`).
+- [ ] **WathanPay Mini-App**: Payment verification enforces Zero-Trust server-to-server validation against official merchant API (`/v1/merchant/verify-payment`).
 - [ ] **Dominate Gateway**: Signatures and transaction IDs are verified before key fulfillment.
 - [ ] Stale orders automatically expire after 3 hours to prevent payment drift.
 - [ ] Subscriptions are idempotent and bound to unique order IDs.

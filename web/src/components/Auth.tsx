@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
+import type { MiniAppUser } from "@/types/wathanpay";
 
 export type Me = {
   id: string;
@@ -9,6 +10,7 @@ export type Me = {
   role: "user" | "admin";
   phone?: string;
   email?: string;
+  avatarUrl?: string | null;
   loginMethod?: "email" | "google" | "wathanpay" | "phone";
   telegramId?: string;
   balanceKs: number;
@@ -33,13 +35,23 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
-function detectMiniAppSignals(): { isMiniApp: boolean; token: string | null } {
-  if (typeof window === "undefined") return { isMiniApp: false, token: null };
+function detectMiniAppSignals(): {
+  isMiniApp: boolean;
+  token: string | null;
+  user: MiniAppUser | null;
+} {
+  if (typeof window === "undefined") return { isMiniApp: false, token: null, user: null };
 
   const urlParams = new URLSearchParams(window.location.search);
-  const tokenFromUrl = urlParams.get("token") || urlParams.get("accessToken") || urlParams.get("access_token");
+  const tokenFromUrl =
+    urlParams.get("token") || urlParams.get("accessToken") || urlParams.get("access_token");
   const bridgeToken = window.WathanPay?.accessToken || null;
   const token = bridgeToken || tokenFromUrl || null;
+
+  const wpUser =
+    window.WathanPay?.user ||
+    (typeof window.WathanPay?.getUser === "function" ? window.WathanPay.getUser() : null) ||
+    null;
 
   const urlFlag =
     urlParams.get("miniapp") === "1" ||
@@ -50,16 +62,16 @@ function detectMiniAppSignals(): { isMiniApp: boolean; token: string | null } {
   const uaFlag = typeof navigator !== "undefined" && /wathanpay/i.test(navigator.userAgent || "");
   const storageFlag =
     typeof sessionStorage !== "undefined" && sessionStorage.getItem("wathanpay_miniapp") === "true";
-  const hasBridge = !!(window.WathanPay?.pay || window.WathanPay?.accessToken);
+  const hasBridge = !!(window.WathanPay?.ready || window.WathanPay?.pay || window.WathanPay?.accessToken);
 
-  const isMiniApp = !!(token || urlFlag || uaFlag || storageFlag || hasBridge);
+  const isMiniApp = !!(token || urlFlag || uaFlag || storageFlag || hasBridge || wpUser);
 
   if (isMiniApp && typeof sessionStorage !== "undefined") {
     sessionStorage.setItem("wathanpay_miniapp", "true");
     document.documentElement.dataset.miniApp = "true";
   }
 
-  return { isMiniApp, token };
+  return { isMiniApp, token, user: wpUser };
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -68,7 +80,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [miniApp, setMiniApp] = useState(false);
   const authAttempted = useRef(false);
 
-  const authenticateWathanPay = async (token: string) => {
+  const authenticateWathanPay = async (token: string, profileUser?: MiniAppUser | null) => {
     if (authAttempted.current) return;
     authAttempted.current = true;
     setMiniApp(true);
@@ -79,7 +91,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const data = await api<{ user: Me }>("/api/auth/wathanpay", {
         method: "POST",
-        body: JSON.stringify({ accessToken: token }),
+        body: JSON.stringify({
+          accessToken: token,
+          name: profileUser?.name,
+          phone: profileUser?.phone,
+          avatarUrl: profileUser?.avatarUrl,
+        }),
       });
       setMe(data.user);
     } catch {
@@ -107,13 +124,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   useEffect(() => {
-    const { isMiniApp, token } = detectMiniAppSignals();
+    const { isMiniApp, token, user: wpUser } = detectMiniAppSignals();
     if (isMiniApp) {
       setMiniApp(true);
     }
 
     if (token) {
-      void authenticateWathanPay(token);
+      void authenticateWathanPay(token, wpUser);
       return;
     }
 
@@ -130,7 +147,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
       if (detected.token && !authAttempted.current) {
         clearInterval(interval);
-        void authenticateWathanPay(detected.token);
+        void authenticateWathanPay(detected.token, detected.user);
       }
       if (elapsed > 3000) {
         clearInterval(interval);
@@ -141,16 +158,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const detected = detectMiniAppSignals();
       setMiniApp(true);
       if (detected.token && !authAttempted.current) {
-        void authenticateWathanPay(detected.token);
+        void authenticateWathanPay(detected.token, detected.user);
       }
     };
 
     window.addEventListener("WathanPayReady", onBridgeReady);
+    window.addEventListener("WathanPayBridgeReady", onBridgeReady);
     window.addEventListener("wathanpay:ready", onBridgeReady);
 
     return () => {
       clearInterval(interval);
       window.removeEventListener("WathanPayReady", onBridgeReady);
+      window.removeEventListener("WathanPayBridgeReady", onBridgeReady);
       window.removeEventListener("wathanpay:ready", onBridgeReady);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

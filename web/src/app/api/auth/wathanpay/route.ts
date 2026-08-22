@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
       name?: string;
       phone?: string;
       email?: string;
+      avatarUrl?: string;
     };
     const token = String(body.accessToken ?? "").trim();
     if (!token) {
@@ -29,6 +30,7 @@ export async function POST(req: NextRequest) {
       "WathanPay User";
     const phone = String(body.phone ?? "").trim() || decoded.phone;
     const email = String(body.email ?? "").trim() || decoded.email;
+    const avatarUrl = String(body.avatarUrl ?? "").trim() || null;
 
     const user = await updateStore((store) => {
       let found = store.users.find((u) => u.wathanpaySub === sub || u.id === sub);
@@ -38,6 +40,7 @@ export async function POST(req: NextRequest) {
           name: displayName,
           phone,
           email,
+          avatarUrl,
           role: "user",
           loginMethod: "wathanpay",
           pinHash: hashPin(token.slice(-6).padStart(6, "0")),
@@ -53,6 +56,7 @@ export async function POST(req: NextRequest) {
         }
         if (phone && !found.phone) found.phone = phone;
         if (email && !found.email) found.email = email;
+        if (avatarUrl && !found.avatarUrl) found.avatarUrl = avatarUrl;
       }
       return found;
     });
@@ -67,6 +71,7 @@ export async function POST(req: NextRequest) {
         loginMethod: user.loginMethod,
         phone: user.phone,
         email: user.email,
+        avatarUrl: user.avatarUrl,
         miniApp: true,
       },
     });
@@ -74,4 +79,3 @@ export async function POST(req: NextRequest) {
     return jsonError(err);
   }
 }
-

@@ -21,6 +21,7 @@ export type User = {
   loginMethod?: LoginMethod;
   googleSub?: string;
   wathanpaySub?: string;
+  avatarUrl?: string | null;
   telegramId?: string;
   language?: "my" | "en";
   notes?: string;

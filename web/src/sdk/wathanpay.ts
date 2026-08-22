@@ -4,67 +4,95 @@
  * See SDK_INTEGRATION.md for reference.
  */
 
-export interface PayParams {
-  /** Your store's unique order reference (e.g. 'ORD_109283') */
-  orderId: string;
-  /** Amount in Myanmar Kyats (minimum 100 Ks) */
-  amount: number;
-  /** Legacy alias for amount */
-  amountKs?: number;
-  /** Short title displayed on customer's confirmation screen */
-  title?: string;
-  /** Secondary note (e.g. 'Server node / Package') */
-  subtitle?: string;
-}
+import type {
+  MiniAppUser,
+  WathanPayPayParams,
+  WathanPayPayResult,
+  WathanPaySDK,
+} from "@/types/wathanpay";
 
-export interface PayResult {
-  /** True if payment succeeded */
-  ok: boolean;
-  /** 7-digit Transaction ID (e.g. '0000085') */
-  txid?: string;
-  /** Error message if payment failed or was cancelled */
-  error?: string;
-}
+export type { MiniAppUser, WathanPayPayParams, WathanPayPayResult, WathanPaySDK };
+export type PayParams = WathanPayPayParams;
+export type PayResult = WathanPayPayResult;
 
-export const WathanPay = {
+export const WathanPay: WathanPaySDK = {
+  get ready() {
+    if (typeof window === "undefined") return false;
+    return Boolean(window.WathanPay?.ready);
+  },
+
+  get user(): MiniAppUser | null {
+    if (typeof window === "undefined") return null;
+    return (
+      window.WathanPay?.user ||
+      (typeof window.WathanPay?.getUser === "function"
+        ? window.WathanPay.getUser()
+        : null) ||
+      null
+    );
+  },
+
+  getUser(): MiniAppUser | null {
+    return this.user ?? null;
+  },
+
+  get accessToken() {
+    if (typeof window === "undefined") return undefined;
+    return window.WathanPay?.accessToken;
+  },
+
   /**
    * Opens the native WathanPay PIN and biometric slide-up sheet.
    */
-  async pay(params: PayParams): Promise<PayResult> {
-    const rawAmount = typeof params.amount === "number" ? params.amount : (params.amountKs ?? 0);
-    const bridge = typeof window !== "undefined" ? window.WathanPay : undefined;
+  async pay(params: WathanPayPayParams): Promise<WathanPayPayResult> {
+    if (typeof window === "undefined") {
+      return { ok: false, error: "Window is not defined", message: "Window is not defined" };
+    }
 
-    if (!bridge || typeof bridge.pay !== "function") {
+    if (!window.WathanPay?.pay) {
       return {
         ok: false,
-        error: "WathanPay SDK is not available. Please open this store inside the WathanPay mobile app.",
+        error:
+          "WathanPay SDK is not available. Please open inside the WathanPay mobile app or ensure sdk.js is loaded.",
+        message:
+          "WathanPay SDK is not available. Please open inside the WathanPay mobile app or ensure sdk.js is loaded.",
       };
     }
 
     try {
-      const result = await bridge.pay({
+      const normalizedParams: WathanPayPayParams = {
         orderId: params.orderId,
-        amount: rawAmount,
-        amountKs: rawAmount,
+        amount: params.amount ?? params.amountKs ?? 0,
+        amountKs: params.amountKs ?? params.amount ?? 0,
         title: params.title,
         subtitle: params.subtitle,
-      });
+        requestId: params.requestId,
+      };
+
+      const result = await window.WathanPay.pay(normalizedParams);
 
       if (result && result.ok) {
         return {
           ok: true,
           txid: String(result.txid || ""),
+          requestId: result.requestId || params.requestId,
         };
       }
 
       return {
         ok: false,
+        txid: result?.txid,
         error: result?.error || result?.message || "Payment cancelled or rejected.",
+        message: result?.message || result?.error || "Payment cancelled or rejected.",
+        requestId: result?.requestId || params.requestId,
       };
     } catch (err: unknown) {
+      const errorMsg = err instanceof Error ? err.message : "Payment request failed.";
       return {
         ok: false,
-        error: err instanceof Error ? err.message : "Payment request failed.",
+        error: errorMsg,
+        message: errorMsg,
+        requestId: params.requestId,
       };
     }
   },
@@ -75,6 +103,42 @@ export const WathanPay = {
   close(): void {
     if (typeof window !== "undefined" && typeof window.WathanPay?.close === "function") {
       window.WathanPay.close();
+    }
+  },
+
+  /**
+   * Toggles immersive fullscreen mode.
+   */
+  setFullScreen(enabled: boolean): void {
+    if (typeof window !== "undefined" && typeof window.WathanPay?.setFullScreen === "function") {
+      window.WathanPay.setFullScreen(enabled);
+    }
+  },
+
+  /**
+   * Sets viewport orientation for games / media.
+   */
+  setOrientation(mode: "portrait" | "landscape" | "auto"): void {
+    if (typeof window !== "undefined" && typeof window.WathanPay?.setOrientation === "function") {
+      window.WathanPay.setOrientation(mode);
+    }
+  },
+
+  /**
+   * Switches app orientation to landscape mode.
+   */
+  requestLandscape(): void {
+    if (typeof window !== "undefined" && typeof window.WathanPay?.requestLandscape === "function") {
+      window.WathanPay.requestLandscape();
+    }
+  },
+
+  /**
+   * Switches app orientation to portrait mode.
+   */
+  requestPortrait(): void {
+    if (typeof window !== "undefined" && typeof window.WathanPay?.requestPortrait === "function") {
+      window.WathanPay.requestPortrait();
     }
   },
 };
