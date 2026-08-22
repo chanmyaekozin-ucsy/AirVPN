@@ -22,16 +22,71 @@ if (typeof cleanupTimer === "object" && typeof cleanupTimer.unref === "function"
 }
 
 /**
- * Trusted proxy configuration. Only requests that actually arrived through a
- * configured proxy may influence the client IP. Set TRUSTED_PROXIES to a
- * comma-separated list of proxy IPs/CIDRs (e.g. your Cloudflare/NGINX edge).
- * Unset = no proxy is trusted and spoofable headers are ignored entirely.
+ * Official Cloudflare edge ranges (https://www.cloudflare.com/ips/).
+ * TRUSTED_PROXIES=cloudflare expands to these.
  */
+const CLOUDFLARE_CIDRS = [
+  "173.245.48.0/20",
+  "103.21.244.0/22",
+  "103.22.200.0/22",
+  "103.31.4.0/22",
+  "141.101.64.0/18",
+  "108.162.192.0/18",
+  "190.93.240.0/20",
+  "188.114.96.0/20",
+  "197.234.240.0/22",
+  "198.41.128.0/17",
+  "162.158.0.0/15",
+  "104.16.0.0/13",
+  "104.24.0.0/14",
+  "172.64.0.0/13",
+  "131.0.72.0/22",
+  "2400:cb00::/32",
+  "2606:4700::/32",
+  "2803:f800::/32",
+  "2405:b500::/32",
+  "2405:8100::/32",
+  "2a06:98c0::/29",
+  "2c0f:f248::/32",
+];
+
 function trustedProxyCidrs(): string[] {
-  return (process.env.TRUSTED_PROXIES || "")
+  const raw = (process.env.TRUSTED_PROXIES || "")
     .split(",")
-    .map((s) => s.trim())
+    .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
+  const out: string[] = [];
+  for (const entry of raw) {
+    if (entry === "cloudflare" || entry === "cf") out.push(...CLOUDFLARE_CIDRS);
+    else out.push(entry);
+  }
+  return out;
+}
+
+function ipv6ToBigInt(ip: string): bigint | null {
+  if (!ip.includes(":")) return null;
+  // Strip zone index (%eth0) if present
+  const clean = ip.split("%")[0];
+  const [head, tail] = clean.split("::");
+  const expand = (part: string) =>
+    part ? part.split(":").map((g) => g || "0") : [];
+  let groups: string[];
+  if (tail === undefined) {
+    groups = expand(head);
+  } else {
+    const left = expand(head);
+    const right = expand(tail);
+    const missing = 8 - left.length - right.length;
+    if (missing < 1 && !(left.length === 0 && right.length === 0)) return null;
+    groups = [...left, ...Array(Math.max(missing, 0)).fill("0"), ...right];
+  }
+  if (groups.length !== 8) return null;
+  let value = 0n;
+  for (const group of groups) {
+    if (!/^[0-9a-f]{1,4}$/.test(group)) return null;
+    value = (value << 16n) | BigInt(parseInt(group, 16));
+  }
+  return value;
 }
 
 function ipToLong(ip: string): number | null {
@@ -48,6 +103,18 @@ function ipToLong(ip: string): number | null {
 
 function ipInCidr(ip: string, cidr: string): boolean {
   const [range, bitsRaw] = cidr.split("/");
+  const isV6 = range.includes(":");
+
+  if (isV6) {
+    const bits = bitsRaw === undefined ? 128 : Number(bitsRaw);
+    const ipBig = ipv6ToBigInt(ip);
+    const rangeBig = ipv6ToBigInt(range);
+    if (ipBig === null || rangeBig === null || !Number.isInteger(bits)) return false;
+    if (bits <= 0) return true;
+    const mask = bits >= 128 ? ~0n : ((1n << BigInt(bits)) - 1n) << BigInt(128 - bits);
+    return (ipBig & mask) === (rangeBig & mask);
+  }
+
   const bits = bitsRaw === undefined ? 32 : Number(bitsRaw);
   const ipLong = ipToLong(ip);
   const rangeLong = ipToLong(range);
