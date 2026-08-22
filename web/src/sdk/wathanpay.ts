@@ -21,6 +21,21 @@ export const WathanPay: WathanPaySDK = {
     return Boolean(window.WathanPay?.ready);
   },
 
+  get authData(): string {
+    if (typeof window === "undefined") return "";
+    return (
+      window.WathanPay?.authData ||
+      (typeof window.WathanPay?.getAuthData === "function"
+        ? window.WathanPay.getAuthData()
+        : "") ||
+      ""
+    );
+  },
+
+  getAuthData(): string {
+    return this.authData || "";
+  },
+
   get user(): MiniAppUser | null {
     if (typeof window === "undefined") return null;
     return (

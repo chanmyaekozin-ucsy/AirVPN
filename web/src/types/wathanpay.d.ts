@@ -1,7 +1,8 @@
 export interface MiniAppUser {
   id?: string;
   name?: string;
-  phone?: string;
+  phone?: string;          // Masked format: "09*****9939"
+  maskedPhone?: string;    // Masked format: "09*****9939"
   avatarUrl?: string | null;
 }
 
@@ -50,6 +51,12 @@ export type WathanPayNativePayResult = WathanPayPayResult;
 export interface WathanPaySDK {
   /** true when running inside the WathanPay native container */
   ready?: boolean;
+
+  /** Cryptographically signed HMAC-SHA256 string for zero-trust backend authentication */
+  authData?: string;
+
+  /** Helper function returning the authData string */
+  getAuthData?: () => string;
 
   /** Logged-in user safe public profile */
   user?: MiniAppUser | null;
@@ -111,5 +118,6 @@ declare global {
   interface WindowEventMap {
     WathanPayReady: CustomEvent<{ bridge: WathanPaySDK }>;
     WathanPayBridgeReady: CustomEvent<{ bridge: WathanPaySDK }>;
+    "wathanpay:ready": CustomEvent<{ bridge: WathanPaySDK }>;
   }
 }

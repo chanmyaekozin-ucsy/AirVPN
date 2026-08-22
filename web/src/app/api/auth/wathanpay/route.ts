@@ -3,6 +3,7 @@ import { jsonError, setSessionCookie } from "@/lib/auth";
 import { decodeWathanpayToken, hashPin } from "@/lib/hash";
 import { checkRateLimit, getClientIp, rateLimitResponse } from "@/lib/rate-limit";
 import { updateStore } from "@/lib/store";
+import { verifyWathanPayAuth } from "@/lib/wathanpay";
 
 export async function POST(req: NextRequest) {
   try {
@@ -11,26 +12,59 @@ export async function POST(req: NextRequest) {
     if (!rl.ok) return rateLimitResponse(rl.resetAt);
 
     const body = (await req.json()) as {
+      authData?: string;
       accessToken?: string;
       name?: string;
       phone?: string;
       email?: string;
       avatarUrl?: string;
     };
+
+    const authData = String(body.authData ?? "").trim();
     const token = String(body.accessToken ?? "").trim();
-    if (!token) {
-      return Response.json({ error: "Missing WathanPay token." }, { status: 401 });
+
+    if (!authData && !token) {
+      return Response.json(
+        { error: "Missing WathanPay authData or accessToken." },
+        { status: 401 },
+      );
     }
 
-    const decoded = decodeWathanpayToken(token);
-    const sub = `wp_${decoded.subKey}`;
-    const displayName =
-      String(body.name ?? "").trim() ||
-      decoded.name ||
-      "WathanPay User";
-    const phone = String(body.phone ?? "").trim() || decoded.phone;
-    const email = String(body.email ?? "").trim() || decoded.email;
-    const avatarUrl = String(body.avatarUrl ?? "").trim() || null;
+    let sub = "";
+    let displayName = "WathanPay User";
+    let phone: string | undefined = undefined;
+    let email: string | undefined = undefined;
+    let avatarUrl: string | null = null;
+    let pinSeed = "";
+
+    if (authData) {
+      // 🛡️ Cryptographic Zero-Trust verification against Merchant Secret Key
+      const verified = verifyWathanPayAuth(authData);
+      if (!verified.ok) {
+        return Response.json(
+          { error: verified.error || "Invalid cryptographic signature." },
+          { status: 401 },
+        );
+      }
+
+      const authUser = verified.user;
+      const rawId = String(authUser?.id ?? "").trim();
+      sub = rawId ? (rawId.startsWith("wp_") ? rawId : `wp_${rawId}`) : `wp_${Date.now().toString(36)}`;
+      displayName = authUser?.name || String(body.name ?? "").trim() || "WathanPay User";
+      phone = authUser?.phone || authUser?.maskedPhone || String(body.phone ?? "").trim() || undefined;
+      email = String(body.email ?? "").trim() || undefined;
+      avatarUrl = authUser?.avatarUrl || String(body.avatarUrl ?? "").trim() || null;
+      pinSeed = rawId || authData.slice(-6);
+    } else {
+      // Legacy JWT fallback
+      const decoded = decodeWathanpayToken(token);
+      sub = `wp_${decoded.subKey}`;
+      displayName = String(body.name ?? "").trim() || decoded.name || "WathanPay User";
+      phone = String(body.phone ?? "").trim() || decoded.phone || undefined;
+      email = String(body.email ?? "").trim() || decoded.email || undefined;
+      avatarUrl = String(body.avatarUrl ?? "").trim() || null;
+      pinSeed = token.slice(-6);
+    }
 
     const user = await updateStore((store) => {
       let found = store.users.find((u) => u.wathanpaySub === sub || u.id === sub);
@@ -43,7 +77,7 @@ export async function POST(req: NextRequest) {
           avatarUrl,
           role: "user",
           loginMethod: "wathanpay",
-          pinHash: hashPin(token.slice(-6).padStart(6, "0")),
+          pinHash: hashPin(pinSeed.padStart(6, "0")),
           balanceKs: 0,
           wathanpaySub: sub,
           createdAt: new Date().toISOString(),

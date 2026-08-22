@@ -17,6 +17,7 @@ export type { MiniAppUser, PayResult };
 export function useWathanPay() {
   const [isReady, setIsReady] = useState(false);
   const [user, setUser] = useState<MiniAppUser | null>(null);
+  const [authData, setAuthData] = useState<string>("");
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -30,16 +31,25 @@ export function useWathanPay() {
             ? window.WathanPay.getUser()
             : null);
         setUser(currentUser || null);
+        setAuthData(
+          window.WathanPay.authData ||
+            (typeof window.WathanPay.getAuthData === "function"
+              ? window.WathanPay.getAuthData()
+              : "") ||
+            ""
+        );
       }
     }
 
     checkBridge();
     window.addEventListener("WathanPayReady", checkBridge);
     window.addEventListener("WathanPayBridgeReady", checkBridge);
+    window.addEventListener("wathanpay:ready", checkBridge);
 
     return () => {
       window.removeEventListener("WathanPayReady", checkBridge);
       window.removeEventListener("WathanPayBridgeReady", checkBridge);
+      window.removeEventListener("wathanpay:ready", checkBridge);
     };
   }, []);
 
@@ -89,6 +99,7 @@ export function useWathanPay() {
     isInsideApp: isReady,
     isReady,
     user,
+    authData,
     pay,
     close,
     setFullScreen,
