@@ -73,6 +73,7 @@ export default function OrderResultPage() {
   const [payStep, setPayStep] = useState<"idle" | "methods" | "confirm">("idle");
   const [methods, setMethods] = useState<PayMethod[]>([]);
   const [selected, setSelected] = useState<PayMethod | null>(null);
+  const [qrPng, setQrPng] = useState<string | null>(null);
   const [last5, setLast5] = useState("");
   const [copied, setCopied] = useState("");
   const [replaceModalOpen, setReplaceModalOpen] = useState(false);
@@ -191,11 +192,16 @@ export default function OrderResultPage() {
     setBusy(true);
     setError("");
     try {
-      const paid = await api<{ order: Order }>(`/api/orders/${order.id}/pay`, {
+      const paid = await api<{
+        order: Order;
+        deposit?: { qrPngBase64?: string | null };
+        payee?: { qrPngBase64?: string | null };
+      }>(`/api/orders/${order.id}/pay`, {
         method: "POST",
         body: JSON.stringify({ accountId: selected.id }),
       });
       setOrder(paid.order);
+      setQrPng(paid.deposit?.qrPngBase64 || paid.payee?.qrPngBase64 || null);
       setPayStep("confirm");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not start payment");
@@ -383,6 +389,28 @@ export default function OrderResultPage() {
 
             {awaiting && payStep === "confirm" ? (
               <>
+                {qrPng ? (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      margin: "14px 0",
+                      padding: "16px",
+                      background: "#ffffff",
+                      borderRadius: 14,
+                      border: "1px solid var(--border)",
+                      boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                    }}
+                  >
+                    <img
+                      src={qrPng.startsWith("data:") ? qrPng : `data:image/png;base64,${qrPng}`}
+                      alt="Payment QR Code"
+                      style={{ width: 170, height: 170, objectFit: "contain", margin: "0 auto", display: "block" }}
+                    />
+                    <p style={{ fontSize: 12, color: "var(--text-2)", marginTop: 8, fontWeight: 500 }}>
+                      Scan with {order.paymentMethod || "Wallet"} App to pay exact {formatKs(order.amountKs)}
+                    </p>
+                  </div>
+                ) : null}
                 <label className="field">
                   TxID last 5
                   <input

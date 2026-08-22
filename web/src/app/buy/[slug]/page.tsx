@@ -62,9 +62,13 @@ export default function BuyPage() {
   const [methodsLoading, setMethodsLoading] = useState(false);
   const [selected, setSelected] = useState<PayMethod | null>(null);
   const [orderId, setOrderId] = useState("");
-  const [payee, setPayee] = useState<{ name: string | null; phone: string | null; method: string } | null>(
-    null,
-  );
+  const [payee, setPayee] = useState<{
+    name: string | null;
+    phone: string | null;
+    method: string;
+    qrPngBase64?: string | null;
+    qrPayload?: string | null;
+  } | null>(null);
   const [last5, setLast5] = useState("");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
@@ -406,6 +410,28 @@ export default function BuyPage() {
                 </div>
               ) : null}
             </div>
+            {payee?.qrPngBase64 ? (
+              <div
+                style={{
+                  textAlign: "center",
+                  margin: "14px 0",
+                  padding: "16px",
+                  background: "#ffffff",
+                  borderRadius: 14,
+                  border: "1px solid var(--border)",
+                  boxShadow: "0 2px 8px rgba(0,0,0,0.04)",
+                }}
+              >
+                <img
+                  src={payee.qrPngBase64.startsWith("data:") ? payee.qrPngBase64 : `data:image/png;base64,${payee.qrPngBase64}`}
+                  alt="Payment QR Code"
+                  style={{ width: 170, height: 170, objectFit: "contain", margin: "0 auto", display: "block" }}
+                />
+                <p style={{ fontSize: 12, color: "var(--text-2)", marginTop: 8, fontWeight: 500 }}>
+                  Scan with {payee.method} App to pay exact {formatKs(plan?.priceKs || 0)}
+                </p>
+              </div>
+            ) : null}
             {payee?.phone ? (
               <button
                 className="btn ghost"

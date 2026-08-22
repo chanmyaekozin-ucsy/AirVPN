@@ -72,7 +72,17 @@ export async function POST(
     if (existing.depositId) {
       const deposit = await verifyDepositLast5(existing.depositId, last5);
       const status = String(deposit.status || "");
-      const txid = String(deposit.bank_trx_id || deposit.trx_id || last5);
+      const txid = String(deposit.matched_order_id || deposit.bank_trx_id || deposit.trx_id || last5);
+
+      if (deposit.retry) {
+        return Response.json(
+          {
+            error: "Payment provider is currently busy or refreshing sessions. Please try submitting your 5 digits again in a few seconds.",
+            retry: true,
+          },
+          { status: 503 },
+        );
+      }
 
       if (status === "pending") {
         return Response.json(

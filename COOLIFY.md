@@ -55,7 +55,7 @@ PAYMENTS_PROOFS_GROUP_ID=-1001234567890
 ADMIN_TELEGRAM_IDS=123456789
 
 # Payment Gateway (Dominate)
-DOMINATE_GATEWAY_URL=https://api.dominate.to
+DOMINATE_GATEWAY_URL=https://pgw.flash-myanmar.com
 DOMINATE_GATEWAY_API_KEY=your_dominate_key
 
 # WathanPay

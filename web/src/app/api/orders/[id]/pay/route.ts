@@ -55,11 +55,16 @@ export async function POST(
       return found;
     });
 
+    const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
+    const callbackUrl = process.env.DOMINATE_WEBHOOK_URL || (appUrl ? `${appUrl}/api/webhooks/payment` : undefined);
+
     const deposit = await createDeposit({
       accountId: method.id,
       amountKs: preview.amountKs,
       orderId: preview.id,
+      callbackUrl,
     });
+
     const payee = deposit.payee || {};
     const order = await updateStore((store) => {
       const found = store.orders.find((o) => o.id === id && o.userId === session.sub);
@@ -72,10 +77,20 @@ export async function POST(
 
     return Response.json({
       order,
+      deposit: {
+        id: deposit.id,
+        status: deposit.status,
+        expiresAt: deposit.expires_at,
+        qrPayload: deposit.qr_payload,
+        qrPngBase64: deposit.qr_png_base64,
+      },
       payee: {
         name: order.payeeName,
         phone: order.payeePhone,
         method: method.method,
+        qrPngBase64: deposit.qr_png_base64,
+        qrPayload: deposit.qr_payload,
+        expiresAt: deposit.expires_at,
       },
     });
   } catch (err) {

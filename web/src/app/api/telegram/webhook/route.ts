@@ -432,10 +432,14 @@ async function handleCreateDeposit(chatId: number, user: User, planId: string, a
 
   // Call Dominate Gateway to create deposit
   try {
+    const appUrl = (process.env.APP_URL || process.env.NEXT_PUBLIC_APP_URL || "").replace(/\/$/, "");
+    const callbackUrl = process.env.DOMINATE_WEBHOOK_URL || (appUrl ? `${appUrl}/api/webhooks/payment` : undefined);
+
     const deposit = await createDeposit({
       accountId: method.id,
       amountKs: plan.priceKs,
       orderId: order.id,
+      callbackUrl,
     });
     const payee = deposit.payee || {};
 
@@ -551,7 +555,24 @@ async function handleTxidSubmission(chatId: number, user: User, inputTxid: strin
     try {
       const deposit = await verifyDepositLast5(order.depositId, last5);
       const isPaid = paidStatus(deposit.status);
-      const txid = String(deposit.bank_trx_id || deposit.trx_id || last5);
+      const txid = String(deposit.matched_order_id || deposit.bank_trx_id || deposit.trx_id || last5);
+
+      if (deposit.retry) {
+        const busyMsg = lang === "my"
+          ? "ဘဏ်/ပိုက်ဆံအိတ် စနစ်မှ ဆာဗာ အလုပ်များနေပါသဖြင့် (Provider Session Refreshing)၊ ၅ စက္ကန့်ခန့်စောင့်ပြီး TxID ၅ လုံးကို ပြန်လည်ပို့ပေးပါ။"
+          : "Payment provider is currently busy or refreshing session. Please wait 5 seconds and send your 5 digits again.";
+        await sendTg("sendMessage", {
+          chat_id: chatId,
+          text: busyMsg,
+          parse_mode: "HTML",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: lang === "my" ? "ပြန်လည်စစ်ဆေးမည်" : "Check Again", callback_data: `check_ord:${order.id}` }],
+            ],
+          },
+        });
+        return;
+      }
 
       if (!isPaid) {
         const notFoundText = lang === "my"
