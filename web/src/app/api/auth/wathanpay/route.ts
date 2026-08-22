@@ -22,6 +22,11 @@ export async function POST(req: NextRequest) {
     // accepted credential. accessToken/JWT fallbacks were removed (forgeable).
     const authData = String(body.authData ?? "").trim();
     if (!authData) {
+      console.error("[WathanPay Auth] REJECTED: no authData in request body", {
+        hasName: Boolean(body.name),
+        hasPhone: Boolean(body.phone),
+        ip,
+      });
       return Response.json(
         { error: "Missing WathanPay authData. Update your WathanPay app." },
         { status: 401 },
@@ -37,6 +42,16 @@ export async function POST(req: NextRequest) {
     // 🛡️ Cryptographic Zero-Trust verification against Merchant Secret Key
     const verified = verifyWathanPayAuth(authData);
     if (!verified.ok) {
+      // Log param names + auth_date for diagnosis — never values or hashes.
+      const params = new URLSearchParams(authData);
+      console.error("[WathanPay Auth] REJECTED:", verified.error, {
+        receivedParams: Array.from(params.keys()),
+        authDate: params.get("auth_date"),
+        merchantSecretSet: Boolean(
+          process.env.WATHANPAY_MERCHANT_SECRET || process.env.WATHANPAY_API_KEY,
+        ),
+        ip,
+      });
       return Response.json(
         { error: verified.error || "Invalid cryptographic signature." },
         { status: 401 },
